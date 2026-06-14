@@ -29,6 +29,11 @@ impl Document {
     /// Borra el *grafema* previo al cursor (un emoji/bandera/cluster ZWJ entero,
     /// no un char suelto). Si col == 0, junta con la linea de arriba.
     pub fn backspace(&mut self) {
+        // Si hay seleccion activa, borrarla en vez del grafema previo.
+        if self.selection_range().is_some() {
+            self.delete_selection();
+            return;
+        }
         if self.col == 0 && self.line == 0 {
             return; // inicio del documento: nada que borrar
         }
@@ -54,6 +59,11 @@ impl Document {
     /// Borra el *grafema* bajo el cursor (la 'x' de Vim). No hace nada si el
     /// cursor esta al final de la linea.
     pub fn delete_char(&mut self) {
+        // Si hay seleccion activa, borrarla en vez del grafema bajo el cursor.
+        if self.selection_range().is_some() {
+            self.delete_selection();
+            return;
+        }
         let g = self.graphemes(self.line);
         if self.col >= g.len_chars() {
             return; // no hay grafema bajo el cursor (estamos al final)
@@ -91,6 +101,16 @@ impl Document {
     /// En todos los casos el cursor queda sobre el MISMO char de contenido que
     /// antes (o entre los marcadores en el caso vacio).
     pub fn toggle_inline(&mut self, kind: InlineKind) {
+        // Con seleccion activa: envolver EL RANGO seleccionado (sin detectar
+        // enfasis existente; ver limitacion en `toggle_inline_selection`).
+        if let Some(range) = self.selection_range() {
+            self.toggle_inline_selection(kind, range);
+            self.clear_selection();
+            self.clamp_col();
+            self.sync_preferred();
+            self.dirty = true;
+            return;
+        }
         let byte_off = self.buffer.char_to_byte(self.cursor_char_idx());
         match crate::markdown::enclosing(&self.text(), byte_off, kind) {
             Some(markers) => self.destoggle_inline(&markers),
@@ -377,6 +397,30 @@ mod tests {
         d.toggle_inline(InlineKind::Code);
         assert_eq!(d.text(), "``");
         assert_eq!((d.line, d.col), (0, 1)); // entre los backticks
+    }
+
+    // --- Operaciones sobre la seleccion ------------------------------------
+
+    #[test]
+    fn backspace_con_seleccion_borra_la_seleccion() {
+        let mut d = doc_with("hola mundo");
+        d.col = 0;
+        d.start_selection();
+        d.col = 5; // seleccion [0, 5) = "hola "
+        d.backspace();
+        assert_eq!(d.text(), "mundo");
+        assert_eq!(d.col, 0);
+    }
+
+    #[test]
+    fn delete_char_con_seleccion_borra_la_seleccion() {
+        let mut d = doc_with("hola mundo");
+        d.col = 5;
+        d.start_selection();
+        d.col = 10; // seleccion [5, 10) = "mundo"
+        d.delete_char();
+        assert_eq!(d.text(), "hola ");
+        assert_eq!(d.col, 5);
     }
 
     #[test]

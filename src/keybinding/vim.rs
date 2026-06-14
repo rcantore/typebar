@@ -26,9 +26,33 @@ impl VimKeymap {
             KeyCode::Char('j') | KeyCode::Down => Resolve::Action(Action::CursorDown),
             KeyCode::Char('i') => Resolve::Action(Action::EnterInsert),
             KeyCode::Char('a') => Resolve::Action(Action::InsertAfter),
+            KeyCode::Char('v') => Resolve::Action(Action::EnterVisual),
             KeyCode::Char('x') => Resolve::Action(Action::DeleteChar),
             KeyCode::Char('o') => Resolve::Action(Action::OpenLineBelow),
             KeyCode::Char('q') => Resolve::Action(Action::Quit),
+            _ => Resolve::None,
+        }
+    }
+
+    /// Resolucion de teclas en modo Visual: las teclas de movimiento extienden
+    /// la seleccion, `x`/`d` la borran, `Esc` vuelve a Normal. El chord de
+    /// formato `Ctrl-P` se maneja aparte (ver `resolve`) y opera sobre la
+    /// seleccion.
+    fn resolve_visual(&self, key: KeyEvent) -> Resolve {
+        if has_ctrl(key) {
+            return match key.code {
+                KeyCode::Char('s') => Resolve::Action(Action::Save),
+                KeyCode::Char('p') => Resolve::Pending,
+                _ => Resolve::None,
+            };
+        }
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Left => Resolve::Action(Action::SelectLeft),
+            KeyCode::Char('l') | KeyCode::Right => Resolve::Action(Action::SelectRight),
+            KeyCode::Char('k') | KeyCode::Up => Resolve::Action(Action::SelectUp),
+            KeyCode::Char('j') | KeyCode::Down => Resolve::Action(Action::SelectDown),
+            KeyCode::Char('x') | KeyCode::Char('d') => Resolve::Action(Action::DeleteSelection),
+            KeyCode::Esc => Resolve::Action(Action::EnterNormal),
             _ => Resolve::None,
         }
     }
@@ -62,6 +86,7 @@ impl Keymap for VimKeymap {
             [single] => match mode {
                 Mode::Normal => self.resolve_normal(*single),
                 Mode::Insert => self.resolve_insert(*single),
+                Mode::Visual => self.resolve_visual(*single),
             },
             _ => Resolve::None,
         }
@@ -180,11 +205,64 @@ mod tests {
     }
 
     #[test]
+    fn vim_normal_v_entra_a_visual() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Normal, key(KeyCode::Char('v'))),
+            Resolve::Action(Action::EnterVisual)
+        );
+    }
+
+    #[test]
+    fn vim_visual_movimiento_extiende_seleccion() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Char('h'))),
+            Resolve::Action(Action::SelectLeft)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Char('l'))),
+            Resolve::Action(Action::SelectRight)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Char('k'))),
+            Resolve::Action(Action::SelectUp)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Char('j'))),
+            Resolve::Action(Action::SelectDown)
+        );
+    }
+
+    #[test]
+    fn vim_visual_esc_vuelve_a_normal() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Esc)),
+            Resolve::Action(Action::EnterNormal)
+        );
+    }
+
+    #[test]
+    fn vim_visual_d_y_x_borran_seleccion() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Char('d'))),
+            Resolve::Action(Action::DeleteSelection)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Char('x'))),
+            Resolve::Action(Action::DeleteSelection)
+        );
+    }
+
+    #[test]
     fn vim_chord_formato_en_cualquier_modo() {
-        // El chord de formato es agnostico al modo: anda igual en Normal e Insert.
+        // El chord de formato es agnostico al modo: anda igual en Normal, Insert
+        // y Visual (en Visual opera sobre la seleccion).
         let km = VimKeymap;
         let p = ctrl(KeyCode::Char('p'));
-        for mode in [Mode::Normal, Mode::Insert] {
+        for mode in [Mode::Normal, Mode::Insert, Mode::Visual] {
             assert_eq!(
                 km.resolve(mode, &[p, key(KeyCode::Char('b'))]),
                 Resolve::Action(Action::ToggleBold)

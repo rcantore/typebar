@@ -192,13 +192,39 @@ devolviendo los rangos en bytes de sus marcadores de apertura y cierre. Con eso
 `markdown.rs` aisla todo el uso de tree-sitter para consultas semanticas, para
 que `document.rs` no dependa de la gramatica directamente.
 
+#### Modelo de seleccion (`src/document/select.rs`)
+
+La seleccion se guarda en `Document` como un *ancla* opcional
+(`selection_anchor: Option<usize>`), un char-index ABSOLUTO en el buffer. El
+rango seleccionado va del min al max entre el ancla y el cursor (character-wise,
+ordenado); `None` o un rango vacio = sin seleccion. `selection_range()` devuelve
+el rango en chars y `selection_byte_range()` el mismo en bytes (para el render),
+sin exponer el buffer.
+
+- **Movimiento**: cada movimiento tiene un nucleo `*_core` que solo mueve el
+  cursor. Los `move_*` publicos colapsan la seleccion antes de moverse; los
+  `extend_*` fijan el ancla antes de moverse. Asi la logica grapheme-based del
+  movimiento no se duplica.
+- **Vim**: la tecla `v` entra a `Mode::Visual`; en Visual `h/j/k/l`/flechas
+  extienden, `x`/`d` borran la seleccion, `Esc` vuelve a Normal. El chord de
+  formato `Ctrl-P B/I/C` opera sobre la seleccion y consume el modo (vuelve a
+  Normal).
+- **Presets modeless** (standard/wordstar): `Shift`+flechas extienden la
+  seleccion (las flechas sin shift colapsan). No usan `Mode::Visual`: la
+  seleccion vive solo en el ancla, y la status bar muestra `SEL` si esta activa.
+- **Operaciones**: `toggle_inline` con seleccion envuelve EL RANGO con el
+  marcador (sin detectar enfasis existente: siempre envuelve, nunca destogglea —
+  limitacion conocida). `delete_selection` borra el rango y reubica el cursor en
+  el inicio; `backspace`/`delete_char` borran la seleccion si hay una activa.
+- **Resaltado**: `render(source, selection)` recibe el rango en BYTES y, tras
+  armar el mapa de estilo por byte, pisa el `bg` de los bytes seleccionados
+  (`SELECTION_BG`) preservando fg/modifiers del texto.
+
 **Proximos pasos** (fuera del scope actual):
 
-- **Modelo de seleccion** (Visual mode / shift+flechas): hoy el toggle opera
-  sobre la palabra bajo el cursor; el siguiente milestone es togglear sobre el
-  rango seleccionado (y eventualmente multiples palabras / multilinea). El motor
-  `toggle_inline` se potenciara para recibir un rango en vez de derivar la
-  palabra.
+- **Clipboard** (yank/paste): hoy no hay portapapeles; la seleccion solo se
+  togglea o se borra. El siguiente paso es copiar/cortar el rango y pegarlo.
+- Seleccion por palabra/linea (`vw`, `V` de Vim): hoy es solo character-wise.
 - Movimiento por palabra (`Ctrl-A`/`Ctrl-F` de WordStar, requiere acciones de
   word-motion).
 - Config TOML de keybindings.

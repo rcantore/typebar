@@ -134,7 +134,7 @@ fn draw(
     }
 
     let block = Block::bordered().title(format!(" typebar · {} ", doc.path.display()));
-    let lines = render::render(&doc.text());
+    let lines = render::render(&doc.text(), doc.selection_byte_range());
     let paragraph = Paragraph::new(lines)
         .block(block)
         .scroll((*scroll as u16, 0));
@@ -161,10 +161,18 @@ fn status_bar(doc: &Document, keymap: &dyn Keymap, pending: &[KeyEvent]) -> Line
         let mode = match doc.mode {
             Mode::Normal => "NORMAL",
             Mode::Insert => "INSERT",
+            Mode::Visual => "VISUAL",
         };
         format!(" {} · {} · {} ", keymap.name(), mode, doc.path.display())
     } else {
-        format!(" {} · {} ", keymap.name(), doc.path.display())
+        // En modeless no hay modo; si hay una seleccion activa lo indicamos con
+        // un sufijo SEL (en Vim eso ya lo cubre VISUAL).
+        let sel = if doc.selection_range().is_some() {
+            " · SEL"
+        } else {
+            ""
+        };
+        format!(" {} · {}{} ", keymap.name(), doc.path.display(), sel)
     };
     let dirty = if doc.dirty { "[+] " } else { "" };
     let left = format!("{}{}", left, dirty);
@@ -231,11 +239,36 @@ fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
             return Ok(true);
         }
         Action::Quit => return Ok(true),
-        Action::ToggleBold => doc.toggle_inline(InlineKind::Bold),
-        Action::ToggleItalic => doc.toggle_inline(InlineKind::Italic),
-        Action::ToggleCode => doc.toggle_inline(InlineKind::Code),
+        Action::ToggleBold => toggle_inline_action(doc, InlineKind::Bold),
+        Action::ToggleItalic => toggle_inline_action(doc, InlineKind::Italic),
+        Action::ToggleCode => toggle_inline_action(doc, InlineKind::Code),
+        Action::EnterVisual => {
+            doc.mode = Mode::Visual;
+            doc.start_selection();
+        }
+        Action::SelectLeft => doc.extend_left(),
+        Action::SelectRight => doc.extend_right(),
+        Action::SelectUp => doc.extend_up(),
+        Action::SelectDown => doc.extend_down(),
+        Action::DeleteSelection => {
+            doc.delete_selection();
+            // Si veniamos de Visual (Vim), la seleccion se consumio: volver a
+            // Normal. En modeless no hay Visual, asi que esto no aplica.
+            if doc.mode == Mode::Visual {
+                doc.mode = Mode::Normal;
+            }
+        }
     }
     Ok(false)
+}
+
+/// Aplica un toggle de estilo inline. Si veniamos del modo Visual de Vim, la
+/// seleccion se consume con el toggle y volvemos a Normal.
+fn toggle_inline_action(doc: &mut Document, kind: InlineKind) {
+    doc.toggle_inline(kind);
+    if doc.mode == Mode::Visual {
+        doc.mode = Mode::Normal;
+    }
 }
 
 #[cfg(test)]

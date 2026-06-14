@@ -14,6 +14,7 @@
 
 mod edit;
 mod motion;
+mod select;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,10 @@ use crate::text::LineGraphemes;
 pub enum Mode {
     Normal,
     Insert,
+    /// Modo Visual de Vim: se extiende la seleccion con los movimientos y se
+    /// opera sobre ella (toggle de estilo, borrado). Solo lo usa el preset Vim;
+    /// los presets modeless manejan la seleccion sin cambiar de modo.
+    Visual,
 }
 
 /// Documento en memoria con cursor y estado de guardado.
@@ -44,6 +49,10 @@ pub struct Document {
     pub mode: Mode,
     pub path: PathBuf,
     pub dirty: bool,
+    /// Ancla de la seleccion: char-index ABSOLUTO donde empezo a seleccionarse.
+    /// `None` = sin seleccion. El rango va del min al max entre ancla y cursor
+    /// (ver `select`).
+    selection_anchor: Option<usize>,
 }
 
 impl Document {
@@ -64,6 +73,7 @@ impl Document {
             mode: Mode::Normal,
             path,
             dirty: false,
+            selection_anchor: None,
         })
     }
 
@@ -183,6 +193,7 @@ pub(crate) mod test_support {
             mode: Mode::Normal,
             path: PathBuf::from("scratch.md"),
             dirty: false,
+            selection_anchor: None,
         }
     }
 }

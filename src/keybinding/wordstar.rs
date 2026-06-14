@@ -17,6 +17,10 @@ impl WordstarKeymap {
     /// Resolucion de una unica tecla: diamante, edicion basica o prefijo de
     /// chord (`Ctrl-K`/`Ctrl-Q` solos devuelven `Pending`).
     fn resolve_single(&self, key: KeyEvent) -> Resolve {
+        // Shift+flecha extiende la seleccion (las flechas sin shift colapsan).
+        if let Some(action) = super::standard::shift_arrow_select(key) {
+            return Resolve::Action(action);
+        }
         if has_ctrl(key) {
             return match key.code {
                 // Diamante de navegacion.
@@ -101,9 +105,22 @@ impl Keymap for WordstarKeymap {
 mod tests {
     use super::WordstarKeymap;
     use crate::document::Mode;
-    use crate::keybinding::test_support::{ctrl, key, resolve1};
+    use crate::keybinding::test_support::{ctrl, key, resolve1, shift};
     use crate::keybinding::{Action, Keymap, Resolve};
     use ratatui::crossterm::event::KeyCode;
+
+    #[test]
+    fn wordstar_shift_flechas_extienden_seleccion() {
+        let km = WordstarKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, shift(KeyCode::Left)),
+            Resolve::Action(Action::SelectLeft)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, shift(KeyCode::Right)),
+            Resolve::Action(Action::SelectRight)
+        );
+    }
 
     #[test]
     fn wordstar_es_modeless_y_arranca_en_insert() {
