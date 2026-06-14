@@ -3,7 +3,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Keymap, Resolve, has_ctrl};
+use super::{Action, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
 use crate::document::Mode;
 
 pub struct VimKeymap;
@@ -14,6 +14,8 @@ impl VimKeymap {
         if has_ctrl(key) {
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
+                // Ctrl-P: prefijo de formato (agnostico al modo).
+                KeyCode::Char('p') => Resolve::Pending,
                 _ => Resolve::None,
             };
         }
@@ -36,6 +38,8 @@ impl VimKeymap {
         if has_ctrl(key) {
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
+                // Ctrl-P: prefijo de formato (agnostico al modo).
+                KeyCode::Char('p') => Resolve::Pending,
                 _ => Resolve::None,
             };
         }
@@ -51,13 +55,15 @@ impl VimKeymap {
 
 impl Keymap for VimKeymap {
     fn resolve(&self, mode: Mode, keys: &[KeyEvent]) -> Resolve {
-        // Sin chords: solo se resuelven secuencias de una sola tecla.
-        if keys.len() != 1 {
-            return Resolve::None;
-        }
-        match mode {
-            Mode::Normal => self.resolve_normal(keys[0]),
-            Mode::Insert => self.resolve_insert(keys[0]),
+        match keys {
+            // Chord de formato `Ctrl-P` + letra: funciona en CUALQUIER modo (el
+            // formato es agnostico al modo Vim).
+            [prefix, second] if is_format_prefix(*prefix) => resolve_format_second(*second),
+            [single] => match mode {
+                Mode::Normal => self.resolve_normal(*single),
+                Mode::Insert => self.resolve_insert(*single),
+            },
+            _ => Resolve::None,
         }
     }
 
@@ -158,5 +164,39 @@ mod tests {
             resolve1(&km, Mode::Insert, key(KeyCode::Char('a'))),
             Resolve::Action(Action::InsertChar('a'))
         );
+    }
+
+    #[test]
+    fn vim_ctrl_p_pendiente_en_ambos_modos() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Normal, ctrl(KeyCode::Char('p'))),
+            Resolve::Pending
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('p'))),
+            Resolve::Pending
+        );
+    }
+
+    #[test]
+    fn vim_chord_formato_en_cualquier_modo() {
+        // El chord de formato es agnostico al modo: anda igual en Normal e Insert.
+        let km = VimKeymap;
+        let p = ctrl(KeyCode::Char('p'));
+        for mode in [Mode::Normal, Mode::Insert] {
+            assert_eq!(
+                km.resolve(mode, &[p, key(KeyCode::Char('b'))]),
+                Resolve::Action(Action::ToggleBold)
+            );
+            assert_eq!(
+                km.resolve(mode, &[p, key(KeyCode::Char('i'))]),
+                Resolve::Action(Action::ToggleItalic)
+            );
+            assert_eq!(
+                km.resolve(mode, &[p, key(KeyCode::Char('c'))]),
+                Resolve::Action(Action::ToggleCode)
+            );
+        }
     }
 }

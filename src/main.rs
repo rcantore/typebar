@@ -11,11 +11,13 @@
 
 mod document;
 mod keybinding;
+mod markdown;
 mod render;
 mod text;
 
 use document::{Document, Mode};
 use keybinding::{Action, Keymap, Resolve, keymap_from_name};
+use markdown::InlineKind;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
@@ -229,6 +231,9 @@ fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
             return Ok(true);
         }
         Action::Quit => return Ok(true),
+        Action::ToggleBold => doc.toggle_inline(InlineKind::Bold),
+        Action::ToggleItalic => doc.toggle_inline(InlineKind::Italic),
+        Action::ToggleCode => doc.toggle_inline(InlineKind::Code),
     }
     Ok(false)
 }
