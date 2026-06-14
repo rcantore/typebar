@@ -237,6 +237,41 @@ impl Document {
         self.move_right();
     }
 
+    /// Mueve el cursor al inicio de la linea actual (col 0).
+    pub fn move_to_line_start(&mut self) {
+        self.col = 0;
+        self.sync_preferred();
+    }
+
+    /// Mueve el cursor al fin de la linea actual (despues del ultimo char).
+    pub fn move_to_line_end(&mut self) {
+        self.col = self.line_len_chars(self.line);
+        self.sync_preferred();
+    }
+
+    /// Mueve el cursor al inicio del documento (linea 0, col 0).
+    pub fn move_to_doc_start(&mut self) {
+        self.line = 0;
+        self.col = 0;
+        self.sync_preferred();
+    }
+
+    /// Mueve el cursor al fin del documento: ultima linea con contenido (mismo
+    /// criterio que `move_down`, que ignora la linea extra vacia que ropey
+    /// cuenta cuando el buffer termina en '\n'), col al final de esa linea.
+    pub fn move_to_doc_end(&mut self) {
+        // len_lines()-1 es la ultima linea; si el buffer termina en '\n' esa es
+        // la linea extra vacia, asi que retrocedemos a la anterior.
+        let last = self.buffer.len_lines().saturating_sub(1);
+        self.line = if last > 0 && self.line_len_chars(last) == 0 {
+            last - 1
+        } else {
+            last
+        };
+        self.col = self.line_len_chars(self.line);
+        self.sync_preferred();
+    }
+
     /// Abre una linea nueva debajo de la actual y deja el cursor ahi (la 'o').
     pub fn open_line_below(&mut self) {
         let line_end = self.buffer.line_to_char(self.line) + self.line_len_chars(self.line);
@@ -363,6 +398,48 @@ mod tests {
         d.open_line_below();
         assert_eq!(d.text(), "ab\n\ncd");
         assert_eq!((d.line, d.col), (1, 0));
+    }
+
+    #[test]
+    fn move_to_line_start_va_a_col_cero() {
+        let mut d = doc_with("hola");
+        d.col = 3;
+        d.move_to_line_start();
+        assert_eq!(d.col, 0);
+    }
+
+    #[test]
+    fn move_to_line_end_va_al_final() {
+        let mut d = doc_with("hola\nmundo");
+        d.line = 0;
+        d.col = 1;
+        d.move_to_line_end();
+        assert_eq!((d.line, d.col), (0, 4)); // "hola" tiene 4 chars
+    }
+
+    #[test]
+    fn move_to_doc_start_va_al_origen() {
+        let mut d = doc_with("ab\ncd");
+        d.line = 1;
+        d.col = 2;
+        d.move_to_doc_start();
+        assert_eq!((d.line, d.col), (0, 0));
+    }
+
+    #[test]
+    fn move_to_doc_end_ultima_linea_con_contenido() {
+        let mut d = doc_with("ab\ncd");
+        d.move_to_doc_end();
+        assert_eq!((d.line, d.col), (1, 2)); // fin de "cd"
+    }
+
+    #[test]
+    fn move_to_doc_end_ignora_newline_final() {
+        // El '\n' final hace que ropey cuente una linea extra vacia; el destino
+        // debe ser la ultima linea con contenido, igual que move_down.
+        let mut d = doc_with("ab\ncd\n");
+        d.move_to_doc_end();
+        assert_eq!((d.line, d.col), (1, 2)); // fin de "cd", no la linea vacia
     }
 
     #[test]
