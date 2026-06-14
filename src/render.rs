@@ -17,6 +17,7 @@ const HEADING_N: Color = Color::Rgb(0xa6, 0xd1, 0x89); // green
 const CODE_FG: Color = Color::Rgb(0xe7, 0x82, 0x84); // red
 const CODE_BG: Color = Color::Rgb(0x41, 0x45, 0x59); // surface0
 const MARKER: Color = Color::Rgb(0x73, 0x7a, 0x94); // overlay0 (dimmeado)
+const SELECTION_BG: Color = Color::Rgb(0x51, 0x57, 0x6d); // surface1 (resalte sutil)
 
 fn heading_style(level: usize) -> Style {
     let fg = match level {
@@ -119,7 +120,11 @@ fn collect_styles(source: &str) -> Vec<StyleSpan> {
 // --- Render a ratatui ------------------------------------------------------
 
 /// Convierte el documento Markdown en lineas estilizadas listas para ratatui.
-pub fn render(source: &str) -> Vec<Line<'static>> {
+///
+/// `selection` es un rango en BYTES del documento (ver `Document::selection_byte_range`):
+/// los bytes adentro reciben el `bg` de seleccion, preservando el fg/modifiers
+/// del estilo de texto que ya tenian (solo se pisa el fondo).
+pub fn render(source: &str, selection: Option<std::ops::Range<usize>>) -> Vec<Line<'static>> {
     let spans = collect_styles(source);
 
     // Estilo por byte. Pintamos los tramos de menor a mayor profundidad, asi
@@ -130,6 +135,17 @@ pub fn render(source: &str) -> Vec<Line<'static>> {
     for span in ordered {
         for slot in &mut by_byte[span.start..span.end] {
             *slot = span.style;
+        }
+    }
+
+    // Resalte de seleccion: solo cambia el `bg`, preservando fg/modifiers del
+    // texto. Se aplica al final asi gana sobre cualquier fondo previo.
+    if let Some(sel) = selection {
+        let end = sel.end.min(source.len());
+        if sel.start < end {
+            for slot in &mut by_byte[sel.start..end] {
+                *slot = slot.bg(SELECTION_BG);
+            }
         }
     }
 
@@ -183,7 +199,7 @@ mod tests {
     fn dump() {
         let source =
             std::fs::read_to_string("examples/sample.md").expect("falta examples/sample.md");
-        let lines = render(&source);
+        let lines = render(&source, None);
         println!(
             "\n--- volcado de estilos (.=plano B=bold I=italic C=code H=heading m=marker) ---"
         );
@@ -210,7 +226,7 @@ mod tests {
     #[test]
     fn inline_offsets_son_absolutos() {
         let source = "# T\n\nplano **negrita** fin\n";
-        let lines = render(source);
+        let lines = render(source, None);
         // Linea 2 (indice 2): "plano **negrita** fin"
         let line = &lines[2];
         // Reconstruir el estilo por char y chequear que los '*' esten dimmeados
@@ -237,5 +253,33 @@ mod tests {
         }
         // "plano " y " fin" -> '.'
         assert_eq!(per_char[0].1, '.');
+    }
+
+    #[test]
+    fn seleccion_pinta_el_bg_del_rango() {
+        // "hola mundo": seleccionar bytes [0,4) = "hola". Esos chars deben tener
+        // el bg de seleccion; el resto no.
+        let source = "hola mundo";
+        let lines = render(source, Some(0..4));
+        // Reconstruir el bg por char.
+        let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
+        for span in &lines[0].spans {
+            for ch in span.content.chars() {
+                per_char.push((ch, span.style.bg));
+            }
+        }
+        // "hola" (0..4) con bg de seleccion.
+        for slot in per_char.iter().take(4) {
+            assert_eq!(
+                slot.1,
+                Some(SELECTION_BG),
+                "'{}' deberia estar resaltado",
+                slot.0
+            );
+        }
+        // El resto sin bg de seleccion.
+        for slot in per_char.iter().skip(4) {
+            assert_ne!(slot.1, Some(SELECTION_BG));
+        }
     }
 }

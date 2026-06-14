@@ -2,10 +2,26 @@
 //! cursor. Es el comportamiento esperado por la mayoria de la gente (no hay
 //! modos). Default del editor.
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{Action, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
 use crate::document::Mode;
+
+/// Devuelve la accion de extender seleccion si `key` es una flecha con SHIFT, o
+/// `None` si no aplica. Las flechas SIN shift siguen el camino normal (que
+/// colapsa). Compartido por standard y wordstar.
+pub(super) fn shift_arrow_select(key: KeyEvent) -> Option<Action> {
+    if !key.modifiers.contains(KeyModifiers::SHIFT) {
+        return None;
+    }
+    match key.code {
+        KeyCode::Left => Some(Action::SelectLeft),
+        KeyCode::Right => Some(Action::SelectRight),
+        KeyCode::Up => Some(Action::SelectUp),
+        KeyCode::Down => Some(Action::SelectDown),
+        _ => None,
+    }
+}
 
 pub struct StandardKeymap;
 
@@ -13,6 +29,10 @@ impl StandardKeymap {
     /// Resolucion de una unica tecla. `Ctrl-P` solo queda pendiente (prefijo de
     /// formato, ver `resolve`).
     fn resolve_key(&self, key: KeyEvent) -> Resolve {
+        // Shift+flecha extiende la seleccion (las flechas sin shift colapsan).
+        if let Some(action) = shift_arrow_select(key) {
+            return Resolve::Action(action);
+        }
         // Atajos con CONTROL primero (no deben tipearse como texto).
         if has_ctrl(key) {
             return match key.code {
@@ -67,9 +87,30 @@ impl Keymap for StandardKeymap {
 mod tests {
     use super::StandardKeymap;
     use crate::document::Mode;
-    use crate::keybinding::test_support::{ctrl, key, resolve1};
+    use crate::keybinding::test_support::{ctrl, key, resolve1, shift};
     use crate::keybinding::{Action, Keymap, Resolve};
     use ratatui::crossterm::event::KeyCode;
+
+    #[test]
+    fn standard_shift_flechas_extienden_seleccion() {
+        let km = StandardKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, shift(KeyCode::Right)),
+            Resolve::Action(Action::SelectRight)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, shift(KeyCode::Left)),
+            Resolve::Action(Action::SelectLeft)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, shift(KeyCode::Up)),
+            Resolve::Action(Action::SelectUp)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, shift(KeyCode::Down)),
+            Resolve::Action(Action::SelectDown)
+        );
+    }
 
     #[test]
     fn standard_es_modeless_y_arranca_en_insert() {

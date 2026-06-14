@@ -64,6 +64,16 @@ pub enum Action {
     ToggleItalic,
     /// Togglear codigo inline (`` ` ``) sobre la palabra bajo el cursor.
     ToggleCode,
+    /// Entrar al modo Visual de Vim (empieza una seleccion en el cursor).
+    EnterVisual,
+    /// Extender la seleccion un grafema a la izquierda/derecha o una linea
+    /// arriba/abajo (Visual en Vim, Shift+flechas en presets modeless).
+    SelectLeft,
+    SelectRight,
+    SelectUp,
+    SelectDown,
+    /// Borrar el rango seleccionado.
+    DeleteSelection,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
@@ -146,6 +156,11 @@ pub(crate) mod test_support {
     /// KeyEvent con CONTROL.
     pub(crate) fn ctrl(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    /// KeyEvent con SHIFT (para las Shift+flechas de los presets modeless).
+    pub(crate) fn shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
     }
 
     /// Resuelve una secuencia de una sola tecla (atajo comun en los tests).
