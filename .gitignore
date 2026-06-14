@@ -1,6 +1,9 @@
 # Rust build artifacts
 /target
 
+# Archivo de trabajo del editor (default cuando no se pasa path)
+/scratch.md
+
 # Herramientas de IA / asistentes de codigo (cada quien usa la suya localmente)
 .claude/
 CLAUDE.md
