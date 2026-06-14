@@ -58,6 +58,12 @@ pub enum Action {
     /// Guardar y salir (el `Ctrl-K D`/`Ctrl-K X` de WordStar).
     SaveAndQuit,
     Quit,
+    /// Togglear negrita (`**`) sobre la palabra bajo el cursor.
+    ToggleBold,
+    /// Togglear italica (`*`) sobre la palabra bajo el cursor.
+    ToggleItalic,
+    /// Togglear codigo inline (`` ` ``) sobre la palabra bajo el cursor.
+    ToggleCode,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
@@ -84,10 +90,35 @@ pub trait Keymap {
     fn name(&self) -> &'static str;
 }
 
+use ratatui::crossterm::event::KeyCode;
+
 /// Devuelve true si la tecla trae el modificador CONTROL. Compartido por los
 /// submodulos de presets.
 fn has_ctrl(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+/// Devuelve true si `key` es el prefijo de formato `Ctrl-P`. El chord `Ctrl-P`
+/// seguido de una letra (`b`/`i`/`c`) togglea negrita/italica/codigo, uniforme
+/// en los tres presets.
+fn is_format_prefix(key: KeyEvent) -> bool {
+    has_ctrl(key) && matches!(key.code, KeyCode::Char('p'))
+}
+
+/// Resuelve la SEGUNDA tecla de un chord de formato `Ctrl-P` + letra
+/// (case-insensitive): `b` -> negrita, `i` -> italica, `c` -> codigo. Cualquier
+/// otra tecla cancela (`None`). Compartido por los tres presets.
+fn resolve_format_second(second: KeyEvent) -> Resolve {
+    let letter = match second.code {
+        KeyCode::Char(c) => c.to_ascii_lowercase(),
+        _ => return Resolve::None,
+    };
+    match letter {
+        'b' => Resolve::Action(Action::ToggleBold),
+        'i' => Resolve::Action(Action::ToggleItalic),
+        'c' => Resolve::Action(Action::ToggleCode),
+        _ => Resolve::None,
+    }
 }
 
 /// Construye el preset segun su nombre. Si no matchea ninguno conocido, cae al

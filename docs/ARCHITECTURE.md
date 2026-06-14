@@ -100,9 +100,9 @@ activo.
 
 | Preset | Modal | Comportamiento | Estado |
 |---|---|---|---|
-| `standard` (DEFAULT) | No (modeless) | Siempre inserta texto, flechas para moverse, `Ctrl-s` guarda, `Ctrl-q` sale | Implementado |
-| `vim` | Si (Normal/Insert) | Replica el Vim minimo: `hjkl`, `i`/`a`/`o`, `x`, `q`, `Esc` | Implementado |
-| `wordstar` | No (modeless + chords) | Homenaje al editor clasico: diamante `Ctrl-E/X/S/D` + chords `Ctrl-K`/`Ctrl-Q` | Implementado |
+| `standard` (DEFAULT) | No (modeless) | Siempre inserta texto, flechas para moverse, `Ctrl-s` guarda, `Ctrl-q` sale, `Ctrl-b` negrita, chord `Ctrl-P` formato | Implementado |
+| `vim` | Si (Normal/Insert) | Replica el Vim minimo: `hjkl`, `i`/`a`/`o`, `x`, `q`, `Esc`, chord `Ctrl-P` formato (en cualquier modo) | Implementado |
+| `wordstar` | No (modeless + chords) | Homenaje al editor clasico: diamante `Ctrl-E/X/S/D` + chords `Ctrl-K`/`Ctrl-Q`/`Ctrl-P` | Implementado |
 
 El default es modeless (`standard`): no hay modos Normal/Insert, lo que se
 tipea se inserta y las flechas mueven. El modo en la status bar solo se muestra
@@ -118,9 +118,20 @@ secuencia es prefijo de un chord, hay que esperar mas teclas) o `None` (no
 bindeada). El loop principal mantiene un `Vec<KeyEvent>` de teclas pendientes:
 en cada `Press` agrega la tecla y resuelve; ante `Action` aplica y limpia, ante
 `Pending` espera, ante `None` limpia (lo que cancela gratis un chord invalido o
-un `Esc` tras un prefijo). La status bar muestra un indicador `^K`/`^Q` cuando
-hay un chord en curso. No hay timeout: el prefijo queda pendiente hasta la
-proxima tecla.
+un `Esc` tras un prefijo). La status bar muestra un indicador `^K`/`^Q`/`^P`
+cuando hay un chord en curso (el indicador es generico para cualquier prefijo
+con Ctrl). No hay timeout: el prefijo queda pendiente hasta la proxima tecla.
+
+**Chord de formato `Ctrl-P` (uniforme en los tres presets):**
+
+El prefijo `Ctrl-P` seguido de una letra togglea un estilo inline sobre la
+palabra bajo el cursor: `Ctrl-P B` negrita, `Ctrl-P I` italica, `Ctrl-P C`
+codigo (segunda tecla case-insensitive). En `standard` ademas `Ctrl-B` togglea
+negrita directo (memoria muscular); NO se bindea `Ctrl-I` para italica porque en
+la terminal es indistinguible de `Tab`, por eso la via canonica es el prefijo
+`Ctrl-P`. En `vim` el chord funciona en CUALQUIER modo (el formato es agnostico
+al modo). El helper `resolve_format_second` se comparte entre los tres presets
+para mantener el mapeo unico.
 
 **Preset `wordstar` (homenaje):**
 
@@ -143,6 +154,7 @@ pub enum Action {
     EnterInsert, EnterNormal, InsertAfter, OpenLineBelow,
     LineStart, LineEnd, DocStart, DocEnd,
     Save, SaveAndQuit, Quit,
+    ToggleBold, ToggleItalic, ToggleCode,
 }
 
 pub enum Resolve {
@@ -159,10 +171,37 @@ pub trait Keymap {
 }
 ```
 
-**Proximos pasos** (fuera del scope actual): `Ctrl-P` para formato
-(bold/italic, requiere edicion de estilos markdown), movimiento por palabra
-(`Ctrl-A`/`Ctrl-F` de WordStar, requiere acciones de word-motion) y la config
-TOML de keybindings.
+**Edicion de estilos (AST-based, implementado):**
+
+El chord `Ctrl-P B/I/C` togglea negrita/italica/codigo sobre la palabra bajo el
+cursor. La deteccion del estilo existente NO es textual sino **AST-based**: el
+modulo `src/markdown.rs` parsea el documento con tree-sitter-md y la funcion
+`enclosing(text, byte_offset, kind)` busca el nodo inline mas interno
+(`strong_emphasis`/`emphasis`/`code_span`) que contiene el offset del cursor,
+devolviendo los rangos en bytes de sus marcadores de apertura y cierre. Con eso
+`Document::toggle_inline` decide:
+
+- **Cursor dentro de un enfasis del tipo** (`enclosing` devuelve `Some`):
+  destogglea quitando ambos marcadores (borra primero el cierre para no
+  invalidar indices) y reubica el cursor sobre el mismo char de contenido.
+- **Sin enfasis, con palabra bajo el cursor**: la envuelve con el marcador,
+  dejando el cursor sobre el mismo char.
+- **Sin palabra** (cursor en espacio/vacio): inserta el par de marcadores vacio
+  y deja el cursor entre ambos para tipear adentro.
+
+`markdown.rs` aisla todo el uso de tree-sitter para consultas semanticas, para
+que `document.rs` no dependa de la gramatica directamente.
+
+**Proximos pasos** (fuera del scope actual):
+
+- **Modelo de seleccion** (Visual mode / shift+flechas): hoy el toggle opera
+  sobre la palabra bajo el cursor; el siguiente milestone es togglear sobre el
+  rango seleccionado (y eventualmente multiples palabras / multilinea). El motor
+  `toggle_inline` se potenciara para recibir un rango en vez de derivar la
+  palabra.
+- Movimiento por palabra (`Ctrl-A`/`Ctrl-F` de WordStar, requiere acciones de
+  word-motion).
+- Config TOML de keybindings.
 
 **Objetivo de largo plazo (config TOML + acciones markdown):**
 

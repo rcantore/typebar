@@ -8,7 +8,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Keymap, Resolve, has_ctrl};
+use super::{Action, Keymap, Resolve, has_ctrl, resolve_format_second};
 use crate::document::Mode;
 
 pub struct WordstarKeymap;
@@ -24,8 +24,10 @@ impl WordstarKeymap {
                 KeyCode::Char('x') => Resolve::Action(Action::CursorDown),
                 KeyCode::Char('s') => Resolve::Action(Action::CursorLeft),
                 KeyCode::Char('d') => Resolve::Action(Action::CursorRight),
-                // Prefijos de chord: esperan una segunda tecla.
-                KeyCode::Char('k') | KeyCode::Char('q') => Resolve::Pending,
+                // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
+                // prefijo de formato (negrita/italica/codigo), uniforme con los
+                // otros presets.
+                KeyCode::Char('k') | KeyCode::Char('q') | KeyCode::Char('p') => Resolve::Pending,
                 _ => Resolve::None,
             };
         }
@@ -41,9 +43,14 @@ impl WordstarKeymap {
         }
     }
 
-    /// Resolucion de un chord de dos teclas: prefijo `Ctrl-K`/`Ctrl-Q` + una
-    /// letra plana (case-insensitive).
+    /// Resolucion de un chord de dos teclas: prefijo `Ctrl-K`/`Ctrl-Q`/`Ctrl-P`
+    /// + una letra plana (case-insensitive).
     fn resolve_chord(&self, prefix: KeyEvent, second: KeyEvent) -> Resolve {
+        // `Ctrl-P` + letra: formato (negrita/italica/codigo), compartido con los
+        // otros presets.
+        if matches!(prefix.code, KeyCode::Char('p')) {
+            return resolve_format_second(second);
+        }
         // La segunda tecla se acepta como letra plana, sin importar mayuscula.
         let letter = match second.code {
             KeyCode::Char(c) => c.to_ascii_lowercase(),
@@ -200,6 +207,37 @@ mod tests {
         assert_eq!(
             km.resolve(Mode::Insert, &[prefix, key(KeyCode::Char('c'))]),
             Resolve::Action(Action::DocEnd)
+        );
+    }
+
+    #[test]
+    fn wordstar_ctrl_p_pendiente_y_chord_formato() {
+        let km = WordstarKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('p'))),
+            Resolve::Pending
+        );
+        let p = ctrl(KeyCode::Char('p'));
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('b'))]),
+            Resolve::Action(Action::ToggleBold)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('i'))]),
+            Resolve::Action(Action::ToggleItalic)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('c'))]),
+            Resolve::Action(Action::ToggleCode)
+        );
+        // Case-insensitive y letra invalida cancela.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('C'))]),
+            Resolve::Action(Action::ToggleCode)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('z'))]),
+            Resolve::None
         );
     }
 

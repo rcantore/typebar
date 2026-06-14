@@ -4,19 +4,26 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Keymap, Resolve, has_ctrl};
+use super::{Action, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
 use crate::document::Mode;
 
 pub struct StandardKeymap;
 
 impl StandardKeymap {
-    /// Resolucion de una unica tecla (standard no tiene chords).
+    /// Resolucion de una unica tecla. `Ctrl-P` solo queda pendiente (prefijo de
+    /// formato, ver `resolve`).
     fn resolve_key(&self, key: KeyEvent) -> Resolve {
         // Atajos con CONTROL primero (no deben tipearse como texto).
         if has_ctrl(key) {
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 KeyCode::Char('q') => Resolve::Action(Action::Quit),
+                // Ctrl-B: negrita directa (memoria muscular). Ctrl-I no se
+                // bindea: en la terminal es indistinguible de Tab; por eso la
+                // italica va por el chord Ctrl-P I.
+                KeyCode::Char('b') => Resolve::Action(Action::ToggleBold),
+                // Ctrl-P: prefijo de formato, espera la segunda tecla.
+                KeyCode::Char('p') => Resolve::Pending,
                 _ => Resolve::None,
             };
         }
@@ -35,11 +42,12 @@ impl StandardKeymap {
 
 impl Keymap for StandardKeymap {
     fn resolve(&self, _mode: Mode, keys: &[KeyEvent]) -> Resolve {
-        // Sin chords: solo se resuelven secuencias de una sola tecla.
-        if keys.len() != 1 {
-            return Resolve::None;
+        match keys {
+            [single] => self.resolve_key(*single),
+            // Chord de formato: `Ctrl-P` + letra (b/i/c).
+            [prefix, second] if is_format_prefix(*prefix) => resolve_format_second(*second),
+            _ => Resolve::None,
         }
-        self.resolve_key(keys[0])
     }
 
     fn is_modal(&self) -> bool {
@@ -124,8 +132,8 @@ mod tests {
     }
 
     #[test]
-    fn standard_secuencia_larga_es_none() {
-        // Standard no tiene chords: cualquier secuencia de mas de una tecla
+    fn standard_secuencia_no_prefijo_es_none() {
+        // Una secuencia de dos teclas que no arranca con el prefijo de formato
         // no se resuelve.
         let km = StandardKeymap;
         assert_eq!(
@@ -134,6 +142,52 @@ mod tests {
                 &[key(KeyCode::Char('a')), key(KeyCode::Char('b'))]
             ),
             Resolve::None
+        );
+    }
+
+    #[test]
+    fn standard_ctrl_p_solo_da_pending() {
+        let km = StandardKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('p'))),
+            Resolve::Pending
+        );
+    }
+
+    #[test]
+    fn standard_chord_formato_togglea() {
+        let km = StandardKeymap;
+        let p = ctrl(KeyCode::Char('p'));
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('b'))]),
+            Resolve::Action(Action::ToggleBold)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('i'))]),
+            Resolve::Action(Action::ToggleItalic)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('c'))]),
+            Resolve::Action(Action::ToggleCode)
+        );
+        // Case-insensitive.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('B'))]),
+            Resolve::Action(Action::ToggleBold)
+        );
+        // Letra no bindeada cancela.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[p, key(KeyCode::Char('z'))]),
+            Resolve::None
+        );
+    }
+
+    #[test]
+    fn standard_ctrl_b_es_negrita() {
+        let km = StandardKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('b'))),
+            Resolve::Action(Action::ToggleBold)
         );
     }
 }

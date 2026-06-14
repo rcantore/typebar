@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use ropey::Rope;
 
+use crate::markdown::InlineKind;
 use crate::text::LineGraphemes;
 
 /// Modo de edicion estilo Vim minimo.
@@ -195,6 +196,129 @@ impl Document {
         self.clamp_col();
         self.sync_preferred();
         self.dirty = true;
+    }
+
+    // --- Estilos inline (toggle de negrita/italica/codigo) -----------------
+
+    /// Togglea el enfasis `kind` sobre la PALABRA bajo el cursor.
+    ///
+    /// - Si el cursor ya esta dentro de un enfasis de ese tipo (detectado via el
+    ///   AST de tree-sitter), DESTOGGLEA: quita los marcadores de apertura y
+    ///   cierre.
+    /// - Si no, y hay una palabra (corrida de alfanumericos) bajo el cursor, la
+    ///   ENVUELVE con el marcador.
+    /// - Si no hay palabra (cursor en espacio/vacio), inserta el par de
+    ///   marcadores vacio y deja el cursor entre ambos para tipear adentro.
+    ///
+    /// En todos los casos el cursor queda sobre el MISMO char de contenido que
+    /// antes (o entre los marcadores en el caso vacio).
+    pub fn toggle_inline(&mut self, kind: InlineKind) {
+        let byte_off = self.buffer.char_to_byte(self.cursor_char_idx());
+        match crate::markdown::enclosing(&self.text(), byte_off, kind) {
+            Some(markers) => self.destoggle_inline(&markers),
+            None => self.toggle_inline_word(kind),
+        }
+        self.clamp_col();
+        self.sync_preferred();
+        self.dirty = true;
+    }
+
+    /// Quita los marcadores `open`/`close` (en bytes) de un enfasis existente.
+    /// Borra primero el cierre (offset mayor) para no invalidar el rango de
+    /// apertura. Reubica el cursor restando el largo del marcador de apertura si
+    /// estaba en/despues del contenido.
+    fn destoggle_inline(&mut self, markers: &crate::markdown::Markers) {
+        let open_start = self.buffer.byte_to_char(markers.open.start);
+        let open_end = self.buffer.byte_to_char(markers.open.end);
+        let close_start = self.buffer.byte_to_char(markers.close.start);
+        let close_end = self.buffer.byte_to_char(markers.close.end);
+        let open_len = open_end - open_start;
+        let close_len = close_end - close_start;
+
+        let cursor_old = self.cursor_char_idx();
+
+        // Borrar primero el cierre (mayor), despues la apertura (menor).
+        self.buffer.remove(close_start..close_end);
+        self.buffer.remove(open_start..open_end);
+
+        // Ajustar el cursor segun de que lado de los marcadores estaba.
+        let mut new_idx = cursor_old;
+        if cursor_old >= close_end {
+            new_idx = cursor_old - open_len - close_len;
+        } else if cursor_old >= open_end {
+            new_idx = cursor_old - open_len;
+        } else if cursor_old >= open_start {
+            // Estaba sobre el marcador de apertura: cae al inicio del contenido.
+            new_idx = open_start;
+        }
+        self.set_cursor_char_idx(new_idx);
+    }
+
+    /// Envuelve la palabra bajo el cursor (o inserta un par vacio si no hay
+    /// palabra) con el marcador de `kind`.
+    fn toggle_inline_word(&mut self, kind: InlineKind) {
+        let marker = kind.marker();
+        let marker_len = kind.marker_len();
+        let base = self.buffer.line_to_char(self.line);
+
+        match self.word_under_cursor() {
+            Some((ws, we)) => {
+                // Insertar primero en la posicion mayor (`we`) para no correr la
+                // menor (`ws`).
+                self.buffer.insert(base + we, marker);
+                self.buffer.insert(base + ws, marker);
+                // El cursor estaba en/despues de `ws`: se corre por el marcador
+                // de apertura insertado a su izquierda.
+                if self.col >= ws {
+                    self.col += marker_len;
+                }
+            }
+            None => {
+                // Sin palabra: par vacio en el cursor, cursor entre ambos.
+                let idx = base + self.col;
+                self.buffer.insert(idx, marker);
+                self.buffer.insert(idx + marker_len, marker);
+                self.col += marker_len;
+            }
+        }
+    }
+
+    /// Corrida maximal de chars `is_alphanumeric()` alrededor del cursor en la
+    /// linea actual, como par de char-indices `[ws, we)` (relativos a la linea).
+    /// `None` si el cursor no esta sobre/junto a una palabra.
+    fn word_under_cursor(&self) -> Option<(usize, usize)> {
+        let line: Vec<char> = self.line_text(self.line).chars().collect();
+        let len = line.len();
+
+        // Hay palabra solo si el char BAJO el cursor es alfanumerico. Si el
+        // cursor esta sobre un espacio (o al final de la linea), no hay palabra
+        // y se inserta un par vacio.
+        if self.col >= len || !line[self.col].is_alphanumeric() {
+            return None;
+        }
+
+        // Expandir a izquierda mientras el char previo sea alfanumerico.
+        let mut ws = self.col;
+        while ws > 0 && line[ws - 1].is_alphanumeric() {
+            ws -= 1;
+        }
+        // Expandir a derecha mientras el char en la posicion sea alfanumerico.
+        let mut we = self.col;
+        while we < len && line[we].is_alphanumeric() {
+            we += 1;
+        }
+        Some((ws, we))
+    }
+
+    /// Reposiciona el cursor (line, col) a partir de un char-index absoluto,
+    /// clampeando al documento.
+    fn set_cursor_char_idx(&mut self, idx: usize) {
+        let max = self.buffer.len_chars();
+        let idx = idx.min(max);
+        let line = self.buffer.char_to_line(idx);
+        let line_start = self.buffer.line_to_char(line);
+        self.line = line;
+        self.col = idx - line_start;
     }
 
     // --- Movimiento --------------------------------------------------------
@@ -490,6 +614,107 @@ mod tests {
         d.col = 0;
         d.delete_char(); // borra el grafema completo, no solo la 'e'
         assert_eq!(d.text(), "z");
+    }
+
+    // --- Toggle de estilos inline ------------------------------------------
+
+    #[test]
+    fn toggle_envuelve_palabra_negrita() {
+        // "negro" con el cursor sobre la 'g' (col 2): togglear bold -> "**negro**"
+        // y el cursor sigue sobre la 'g'.
+        let mut d = doc_with("negro");
+        d.col = 2;
+        d.toggle_inline(InlineKind::Bold);
+        assert_eq!(d.text(), "**negro**");
+        assert_eq!((d.line, d.col), (0, 4)); // 'g' corrida 2 chars por "**"
+        assert!(d.dirty);
+    }
+
+    #[test]
+    fn toggle_envuelve_palabra_italica() {
+        let mut d = doc_with("negro");
+        d.col = 2;
+        d.toggle_inline(InlineKind::Italic);
+        assert_eq!(d.text(), "*negro*");
+        assert_eq!((d.line, d.col), (0, 3)); // corrida 1 char por "*"
+    }
+
+    #[test]
+    fn toggle_envuelve_palabra_codigo() {
+        let mut d = doc_with("negro");
+        d.col = 2;
+        d.toggle_inline(InlineKind::Code);
+        assert_eq!(d.text(), "`negro`");
+        assert_eq!((d.line, d.col), (0, 3));
+    }
+
+    #[test]
+    fn toggle_palabra_desde_inicio() {
+        // Cursor sobre la primer letra: la palabra entera se envuelve.
+        let mut d = doc_with("hola mundo");
+        d.col = 0;
+        d.toggle_inline(InlineKind::Bold);
+        assert_eq!(d.text(), "**hola** mundo");
+        assert_eq!((d.line, d.col), (0, 2)); // sobre la 'h'
+    }
+
+    #[test]
+    fn destoggle_negrita_con_cursor_adentro() {
+        // "**negro**" con el cursor sobre la 'g' (col 4): destogglear -> "negro"
+        // con el cursor todavia sobre la 'g' (col 2).
+        let mut d = doc_with("**negro**");
+        d.col = 4;
+        d.toggle_inline(InlineKind::Bold);
+        assert_eq!(d.text(), "negro");
+        assert_eq!((d.line, d.col), (0, 2));
+    }
+
+    #[test]
+    fn toggle_es_idempotente_ida_y_vuelta() {
+        // Togglear dos veces deja el texto y el cursor como al principio.
+        let mut d = doc_with("negro");
+        d.col = 2;
+        d.toggle_inline(InlineKind::Bold);
+        d.toggle_inline(InlineKind::Bold);
+        assert_eq!(d.text(), "negro");
+        assert_eq!((d.line, d.col), (0, 2));
+    }
+
+    #[test]
+    fn destoggle_italica() {
+        let mut d = doc_with("*x*");
+        d.col = 1; // sobre la 'x'
+        d.toggle_inline(InlineKind::Italic);
+        assert_eq!(d.text(), "x");
+        assert_eq!((d.line, d.col), (0, 0));
+    }
+
+    #[test]
+    fn toggle_sin_palabra_inserta_par_vacio() {
+        // Cursor en un espacio: inserta "****" y queda entre los marcadores.
+        let mut d = doc_with("a b");
+        d.col = 1; // sobre el espacio
+        d.toggle_inline(InlineKind::Bold);
+        assert_eq!(d.text(), "a**** b");
+        assert_eq!((d.line, d.col), (0, 3)); // entre los dos "**"
+    }
+
+    #[test]
+    fn toggle_en_linea_vacia_inserta_par_vacio() {
+        let mut d = doc_with("");
+        d.col = 0;
+        d.toggle_inline(InlineKind::Code);
+        assert_eq!(d.text(), "``");
+        assert_eq!((d.line, d.col), (0, 1)); // entre los backticks
+    }
+
+    #[test]
+    fn toggle_negrita_no_destogglea_italica() {
+        // Sobre "*x*" (italica), togglear BOLD no la detecta: envuelve la 'x'.
+        let mut d = doc_with("*x*");
+        d.col = 1; // sobre la 'x'
+        d.toggle_inline(InlineKind::Bold);
+        assert_eq!(d.text(), "***x***");
     }
 
     #[test]
