@@ -7,6 +7,7 @@
 
 mod document;
 mod render;
+mod text;
 
 use document::{Document, Mode};
 
@@ -75,8 +76,10 @@ fn draw(frame: &mut ratatui::Frame, doc: &Document, scroll: &mut usize) {
     frame.render_widget(status_bar(doc), status_area);
 
     // Cursor real de terminal: +1,+1 por el borde del Block, y restando scroll.
+    // La X es la columna *visual* (celdas), no el indice de char: asi cae sobre
+    // el glifo que dibujo el render aunque haya CJK/emoji de doble ancho.
     if doc.line >= *scroll {
-        let cursor_x = editor_area.x + 1 + doc.col as u16;
+        let cursor_x = editor_area.x + 1 + doc.display_col() as u16;
         let cursor_y = editor_area.y + 1 + (doc.line - *scroll) as u16;
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
@@ -90,7 +93,7 @@ fn status_bar(doc: &Document) -> Line<'static> {
     };
     let dirty = if doc.dirty { " [+]" } else { "" };
     let left = format!(" {} · {}{} ", mode, doc.path.display(), dirty);
-    let right = format!(" {}:{} ", doc.line + 1, doc.col + 1);
+    let right = format!(" {}:{} ", doc.line + 1, doc.display_col() + 1);
     Line::from(vec![
         Span::styled(left, Style::default().add_modifier(Modifier::REVERSED)),
         Span::raw(" "),

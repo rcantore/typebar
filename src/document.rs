@@ -1,14 +1,18 @@
 //! Modelo del documento editable: buffer de texto + estado del cursor.
 //!
-//! El buffer es un `ropey::Rope`. El cursor se guarda como (linea, columna) en
-//! *chars* (no bytes), porque la UI razona en columnas visuales y el render es
-//! 1:1 (los marcadores nunca se ocultan, asi que char == columna en pantalla,
-//! salvo anchos raros que quedan fuera de scope de este milestone).
+//! El buffer es un `ropey::Rope`. El cursor se guarda como (linea, `col`) donde
+//! `col` es un indice de *char* dentro de la linea, con la invariante de que
+//! siempre cae sobre un limite de grafema: el cursor se mueve y borra por
+//! grafema completo (nunca adentro de un cluster ZWJ, emoji o marca
+//! combinante). La columna *visual* (celdas de terminal) se calcula aparte con
+//! `display_col`, porque char != columna cuando hay CJK/emoji (ver `text.rs`).
 
 use std::io;
 use std::path::{Path, PathBuf};
 
 use ropey::Rope;
+
+use crate::text::LineGraphemes;
 
 /// Modo de edicion estilo Vim minimo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,11 +26,13 @@ pub struct Document {
     buffer: Rope,
     /// Linea del cursor (0-based).
     pub line: usize,
-    /// Columna del cursor en chars dentro de la linea (0-based).
+    /// Columna del cursor en chars dentro de la linea (0-based). Invariante:
+    /// siempre sobre un limite de grafema.
     pub col: usize,
-    /// Columna deseada para movimiento vertical: al subir/bajar tratamos de
-    /// volver a esta columna aunque hayamos pasado por lineas mas cortas.
-    preferred_col: usize,
+    /// Columna *visual* (en celdas) deseada para movimiento vertical: al
+    /// subir/bajar tratamos de volver a esta columna de pantalla aunque
+    /// pasemos por lineas mas cortas o con anchos distintos.
+    preferred_display_col: usize,
     pub mode: Mode,
     pub path: PathBuf,
     pub dirty: bool,
@@ -46,7 +52,7 @@ impl Document {
             buffer,
             line: 0,
             col: 0,
-            preferred_col: 0,
+            preferred_display_col: 0,
             mode: Mode::Normal,
             path,
             dirty: false,
@@ -103,14 +109,41 @@ impl Document {
         }
     }
 
+    /// Texto de una linea SIN el `\n` final, para analisis de grafemas.
+    fn line_text(&self, line: usize) -> String {
+        if line >= self.buffer.len_lines() {
+            return String::new();
+        }
+        let start = self.buffer.line_to_char(line);
+        let end = start + self.line_len_chars(line);
+        self.buffer.slice(start..end).to_string()
+    }
+
+    /// Analisis de grafemas de una linea (limites + anchos).
+    fn graphemes(&self, line: usize) -> LineGraphemes {
+        LineGraphemes::analyze(&self.line_text(line))
+    }
+
+    /// Columna *visual* (en celdas) del cursor en la linea actual. Es lo que la
+    /// UI usa para posicionar el cursor real de terminal.
+    pub fn display_col(&self) -> usize {
+        self.graphemes(self.line).display_col(self.col)
+    }
+
+    /// Fija la columna visual deseada a la actual (tras moverse en horizontal o
+    /// editar; NO se llama al moverse en vertical, para preservarla).
+    fn sync_preferred(&mut self) {
+        self.preferred_display_col = self.display_col();
+    }
+
     // --- Edicion -----------------------------------------------------------
 
-    /// Inserta un char imprimible en el cursor y avanza una columna.
+    /// Inserta un char imprimible en el cursor y avanza una columna (char).
     pub fn insert_char(&mut self, c: char) {
         let idx = self.cursor_char_idx();
         self.buffer.insert_char(idx, c);
         self.col += 1;
-        self.preferred_col = self.col;
+        self.sync_preferred();
         self.dirty = true;
     }
 
@@ -120,67 +153,71 @@ impl Document {
         self.buffer.insert_char(idx, '\n');
         self.line += 1;
         self.col = 0;
-        self.preferred_col = 0;
+        self.preferred_display_col = 0;
         self.dirty = true;
     }
 
-    /// Borra el char previo al cursor. Si col == 0, junta con la linea de
-    /// arriba (el cursor cae al punto de union).
+    /// Borra el *grafema* previo al cursor (un emoji/bandera/cluster ZWJ entero,
+    /// no un char suelto). Si col == 0, junta con la linea de arriba.
     pub fn backspace(&mut self) {
-        let idx = self.cursor_char_idx();
-        if idx == 0 {
+        if self.col == 0 && self.line == 0 {
             return; // inicio del documento: nada que borrar
         }
         if self.col > 0 {
-            self.buffer.remove(idx - 1..idx);
-            self.col -= 1;
+            let prev = self.graphemes(self.line).prev_boundary(self.col);
+            let base = self.buffer.line_to_char(self.line);
+            self.buffer.remove(base + prev..base + self.col);
+            self.col = prev;
         } else {
             // col == 0: unirse a la linea anterior. El cursor queda donde
             // terminaba esa linea.
             let prev = self.line - 1;
             let prev_len = self.line_len_chars(prev);
+            let idx = self.cursor_char_idx();
             self.buffer.remove(idx - 1..idx); // borra el '\n' anterior
             self.line = prev;
             self.col = prev_len;
         }
-        self.preferred_col = self.col;
+        self.sync_preferred();
         self.dirty = true;
     }
 
-    /// Borra el char bajo el cursor (la 'x' de Vim). No hace nada si el cursor
-    /// esta sobre el `\n` virtual del final de linea.
+    /// Borra el *grafema* bajo el cursor (la 'x' de Vim). No hace nada si el
+    /// cursor esta al final de la linea.
     pub fn delete_char(&mut self) {
-        let idx = self.cursor_char_idx();
-        if self.col >= self.line_len_chars(self.line) {
-            return; // no hay char bajo el cursor (estamos al final de la linea)
+        let g = self.graphemes(self.line);
+        if self.col >= g.len_chars() {
+            return; // no hay grafema bajo el cursor (estamos al final)
         }
-        self.buffer.remove(idx..idx + 1);
+        let next = g.next_boundary(self.col);
+        let base = self.buffer.line_to_char(self.line);
+        self.buffer.remove(base + self.col..base + next);
         self.clamp_col();
-        self.preferred_col = self.col;
+        self.sync_preferred();
         self.dirty = true;
     }
 
     // --- Movimiento --------------------------------------------------------
 
     pub fn move_left(&mut self) {
-        if self.col > 0 {
-            self.col -= 1;
-        }
-        self.preferred_col = self.col;
+        self.col = self.graphemes(self.line).prev_boundary(self.col);
+        self.sync_preferred();
     }
 
     pub fn move_right(&mut self) {
-        let max = self.max_col(self.line);
-        if self.col < max {
-            self.col += 1;
+        let g = self.graphemes(self.line);
+        if self.col < g.len_chars() {
+            self.col = g.next_boundary(self.col);
         }
-        self.preferred_col = self.col;
+        self.sync_preferred();
     }
 
     pub fn move_up(&mut self) {
         if self.line > 0 {
             self.line -= 1;
-            self.col = self.preferred_col.min(self.max_col(self.line));
+            self.col = self
+                .graphemes(self.line)
+                .col_for_display(self.preferred_display_col);
         }
     }
 
@@ -189,17 +226,15 @@ impl Document {
         // ropey cuenta una linea extra vacia; la permitimos como destino valido.
         if self.line + 1 < self.buffer.len_lines() {
             self.line += 1;
-            self.col = self.preferred_col.min(self.max_col(self.line));
+            self.col = self
+                .graphemes(self.line)
+                .col_for_display(self.preferred_display_col);
         }
     }
 
-    /// Entra a Insert *despues* del cursor (la 'a' de Vim).
+    /// Entra a Insert *despues* del cursor (la 'a' de Vim): avanza un grafema.
     pub fn move_right_for_append(&mut self) {
-        let max = self.max_col(self.line);
-        if self.col < max {
-            self.col += 1;
-        }
-        self.preferred_col = self.col;
+        self.move_right();
     }
 
     /// Abre una linea nueva debajo de la actual y deja el cursor ahi (la 'o').
@@ -208,7 +243,7 @@ impl Document {
         self.buffer.insert_char(line_end, '\n');
         self.line += 1;
         self.col = 0;
-        self.preferred_col = 0;
+        self.preferred_display_col = 0;
         self.dirty = true;
     }
 
@@ -231,7 +266,7 @@ mod tests {
             buffer: Rope::from_str(text),
             line: 0,
             col: 0,
-            preferred_col: 0,
+            preferred_display_col: 0,
             mode: Mode::Normal,
             path: PathBuf::from("scratch.md"),
             dirty: false,
@@ -305,7 +340,7 @@ mod tests {
     fn movimiento_clampa_a_lineas_cortas() {
         let mut d = doc_with("largo\nx\notra");
         d.col = 5; // fin de "largo"
-        d.preferred_col = 5;
+        d.preferred_display_col = 5;
         d.move_down(); // a "x" (len 1): col se clampa a 1
         assert_eq!((d.line, d.col), (1, 1));
         d.move_down(); // a "otra" (len 4): vuelve a preferred_col min 4
@@ -334,5 +369,60 @@ mod tests {
     fn line_len_ignora_newline() {
         let d = doc_with("hola\n");
         assert_eq!(d.line_len_chars(0), 4);
+    }
+
+    // --- Grafemas anchos / multi-char --------------------------------------
+
+    #[test]
+    fn display_col_cuenta_celdas_no_chars() {
+        // "a中b": el CJK ocupa 2 celdas. col es char-index; display_col es celdas.
+        let mut d = doc_with("a中b");
+        d.col = 0;
+        assert_eq!(d.display_col(), 0);
+        d.col = 1; // despues de 'a'
+        assert_eq!(d.display_col(), 1);
+        d.col = 2; // despues de '中' (2 celdas)
+        assert_eq!(d.display_col(), 3);
+    }
+
+    #[test]
+    fn move_right_salta_emoji_completo() {
+        // Familia con ZWJ: un solo grafema de varios chars.
+        let familia = "👨\u{200D}👩\u{200D}👧";
+        let mut d = doc_with(&format!("{familia}x"));
+        let fam_chars = familia.chars().count();
+        d.move_right(); // del inicio: salta TODO el cluster de una
+        assert_eq!(d.col, fam_chars);
+        assert_eq!(d.display_col(), 2); // el cluster ocupa 2 celdas
+    }
+
+    #[test]
+    fn backspace_borra_emoji_entero() {
+        let familia = "👨\u{200D}👩\u{200D}👧";
+        let mut d = doc_with(&format!("a{familia}"));
+        d.col = d.line_len_chars(0); // al final
+        d.backspace();
+        assert_eq!(d.text(), "a"); // el emoji familia se fue completo, no a pedazos
+        assert_eq!(d.col, 1);
+    }
+
+    #[test]
+    fn delete_char_borra_grafema_combinante() {
+        // "é" en NFD = 'e' + combinante U+0301: un grafema, dos chars.
+        let mut d = doc_with("e\u{301}z");
+        d.col = 0;
+        d.delete_char(); // borra el grafema completo, no solo la 'e'
+        assert_eq!(d.text(), "z");
+    }
+
+    #[test]
+    fn vertical_preserva_columna_visual_con_cjk() {
+        // Linea 0 con CJK; bajar debe respetar la COLUMNA (celdas), no el char.
+        let mut d = doc_with("中中中\nabcdef");
+        d.col = 2; // tras dos CJK -> columna visual 4
+        d.preferred_display_col = d.display_col();
+        assert_eq!(d.preferred_display_col, 4);
+        d.move_down(); // en "abcdef" la columna 4 es el char-index 4
+        assert_eq!(d.col, 4);
     }
 }
