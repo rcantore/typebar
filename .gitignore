@@ -1,1 +1,18 @@
+# Rust build artifacts
 /target
+
+# Herramientas de IA / asistentes de codigo (cada quien usa la suya localmente)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.cursor/
+.cursorrules
+.aider*
+.continue/
+.windsurfrules
+.github/copilot-instructions.md
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
