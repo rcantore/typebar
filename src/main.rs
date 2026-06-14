@@ -5,8 +5,9 @@
 //! posicion (linea, col) del buffer mapea directo a la columna en pantalla.
 //!
 //! El teclado se maneja por presets intercambiables (ver `keybinding`): por
-//! default `standard` (modeless, flechas), con `vim` (modal) opt-in via el flag
-//! `--keys`. `Ctrl-s` guarda en ambos.
+//! default `standard` (modeless, flechas), con `vim` (modal) y `wordstar`
+//! (modeless con chords tipo `Ctrl-K S`) opt-in via el flag `--keys`. El loop
+//! acumula teclas en un buffer `pending` para resolver secuencias multi-tecla.
 
 mod document;
 mod keybinding;
@@ -14,9 +15,9 @@ mod render;
 mod text;
 
 use document::{Document, Mode};
-use keybinding::{Action, Keymap, keymap_from_name};
+use keybinding::{Action, Keymap, Resolve, keymap_from_name};
 
-use ratatui::crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -78,22 +79,42 @@ fn run(
 ) -> std::io::Result<()> {
     // Offset vertical de scroll: primera linea visible del documento.
     let mut scroll: usize = 0;
+    // Buffer de teclas de un chord en curso (vacio si no hay nada pendiente).
+    let mut pending: Vec<KeyEvent> = Vec::new();
 
     loop {
-        terminal.draw(|frame| draw(frame, &doc, keymap, &mut scroll))?;
+        terminal.draw(|frame| draw(frame, &doc, keymap, &pending, &mut scroll))?;
 
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
-            && handle_key(&mut doc, keymap, key)?
         {
-            return Ok(());
+            pending.push(key);
+            match keymap.resolve(doc.mode, &pending) {
+                Resolve::Action(action) => {
+                    pending.clear();
+                    if apply_action(&mut doc, action)? {
+                        return Ok(());
+                    }
+                }
+                // La secuencia es prefijo de un chord: esperar mas teclas.
+                Resolve::Pending => {}
+                // Secuencia no bindeada: cancela el chord (o un Esc tras un
+                // prefijo) limpiando el buffer pendiente.
+                Resolve::None => pending.clear(),
+            }
         }
     }
 }
 
 /// Dibuja el editor. Devuelve via `scroll` (mut) el offset usado, ajustado para
 /// mantener el cursor visible.
-fn draw(frame: &mut ratatui::Frame, doc: &Document, keymap: &dyn Keymap, scroll: &mut usize) {
+fn draw(
+    frame: &mut ratatui::Frame,
+    doc: &Document,
+    keymap: &dyn Keymap,
+    pending: &[KeyEvent],
+    scroll: &mut usize,
+) {
     // Partir la pantalla: area de editor (resto) + 1 linea de status.
     let [editor_area, status_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
@@ -117,7 +138,7 @@ fn draw(frame: &mut ratatui::Frame, doc: &Document, keymap: &dyn Keymap, scroll:
         .scroll((*scroll as u16, 0));
     frame.render_widget(paragraph, editor_area);
 
-    frame.render_widget(status_bar(doc, keymap), status_area);
+    frame.render_widget(status_bar(doc, keymap, pending), status_area);
 
     // Cursor real de terminal: +1,+1 por el borde del Block, y restando scroll.
     // La X es la columna *visual* (celdas), no el indice de char: asi cae sobre
@@ -129,9 +150,9 @@ fn draw(frame: &mut ratatui::Frame, doc: &Document, keymap: &dyn Keymap, scroll:
     }
 }
 
-/// Construye la barra de estado: preset, modo (solo si es modal), path, dirty y
-/// linea:col.
-fn status_bar(doc: &Document, keymap: &dyn Keymap) -> Line<'static> {
+/// Construye la barra de estado: preset, modo (solo si es modal), path, dirty,
+/// chord en curso y linea:col.
+fn status_bar(doc: &Document, keymap: &dyn Keymap, pending: &[KeyEvent]) -> Line<'static> {
     // El modo solo tiene sentido en presets modales (Vim); en modeless no se
     // muestra "NORMAL/INSERT" porque no existen.
     let left = if keymap.is_modal() {
@@ -146,19 +167,33 @@ fn status_bar(doc: &Document, keymap: &dyn Keymap) -> Line<'static> {
     let dirty = if doc.dirty { "[+] " } else { "" };
     let left = format!("{}{}", left, dirty);
     let right = format!(" {}:{} ", doc.line + 1, doc.display_col() + 1);
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(left, Style::default().add_modifier(Modifier::REVERSED)),
         Span::raw(" "),
-        Span::raw(right),
-    ])
+    ];
+    // Indicador de chord en curso (prefijo esperando la proxima tecla), tipo
+    // "^K" / "^Q", para que el usuario sepa que esta en medio de una secuencia.
+    if let Some(chord) = chord_indicator(pending) {
+        spans.push(Span::styled(
+            format!(" {} ", chord),
+            Style::default().add_modifier(Modifier::REVERSED),
+        ));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::raw(right));
+    Line::from(spans)
 }
 
-/// Procesa una tecla resolviendola contra el keymap activo y aplicando la
-/// accion. Devuelve `Ok(true)` cuando hay que salir.
-fn handle_key(doc: &mut Document, keymap: &dyn Keymap, key: KeyEvent) -> std::io::Result<bool> {
-    match keymap.resolve(doc.mode, key) {
-        Some(action) => apply_action(doc, action),
-        None => Ok(false),
+/// Representa el chord pendiente como texto (ej `^K`), o `None` si no hay
+/// teclas pendientes. Se queda con la primer tecla del prefijo, que es la que
+/// identifica el chord.
+fn chord_indicator(pending: &[KeyEvent]) -> Option<String> {
+    let first = pending.first()?;
+    match first.code {
+        KeyCode::Char(c) if first.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(format!("^{}", c.to_ascii_uppercase()))
+        }
+        _ => None,
     }
 }
 
@@ -184,7 +219,15 @@ fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
             doc.open_line_below();
             doc.mode = Mode::Insert;
         }
+        Action::LineStart => doc.move_to_line_start(),
+        Action::LineEnd => doc.move_to_line_end(),
+        Action::DocStart => doc.move_to_doc_start(),
+        Action::DocEnd => doc.move_to_doc_end(),
         Action::Save => doc.save()?,
+        Action::SaveAndQuit => {
+            doc.save()?;
+            return Ok(true);
+        }
         Action::Quit => return Ok(true),
     }
     Ok(false)

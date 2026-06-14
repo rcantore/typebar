@@ -91,9 +91,10 @@ Transforma el AST de Markdown en widgets estilizados de ratatui.
 ### 3. Keybinding System (`src/keybinding.rs`)
 
 Sistema configurable con presets intercambiables. Desacopla la *tecla fisica*
-de la *accion semantica*: cada preset implementa el trait `Keymap` y traduce un
-`KeyEvent` (segun el modo actual) a una `Action`; el loop principal aplica la
-`Action` sobre el `Document` sin saber que preset esta activo.
+de la *accion semantica*: cada preset implementa el trait `Keymap` y traduce una
+*secuencia* de `KeyEvent` (segun el modo actual) a una `Action`; el loop
+principal aplica la `Action` sobre el `Document` sin saber que preset esta
+activo.
 
 **Presets:**
 
@@ -101,16 +102,37 @@ de la *accion semantica*: cada preset implementa el trait `Keymap` y traduce un
 |---|---|---|---|
 | `standard` (DEFAULT) | No (modeless) | Siempre inserta texto, flechas para moverse, `Ctrl-s` guarda, `Ctrl-q` sale | Implementado |
 | `vim` | Si (Normal/Insert) | Replica el Vim minimo: `hjkl`, `i`/`a`/`o`, `x`, `q`, `Esc` | Implementado |
-| `wordstar` | No (modeless + chords) | Homenaje al editor clasico, basado en chords tipo `Ctrl-K S` | Proximo paso |
+| `wordstar` | No (modeless + chords) | Homenaje al editor clasico: diamante `Ctrl-E/X/S/D` + chords `Ctrl-K`/`Ctrl-Q` | Implementado |
 
 El default es modeless (`standard`): no hay modos Normal/Insert, lo que se
 tipea se inserta y las flechas mueven. El modo en la status bar solo se muestra
 cuando el preset es modal.
 
-Seleccion via flag `--keys <nombre>` (sin config TOML por ahora). El preset
-`wordstar` requiere soporte de **chords** (secuencias multi-tecla tipo
-`Ctrl-K S`) que todavia no existe en el motor de teclado; queda como proximo
-milestone junto con la config TOML de keybindings.
+Seleccion via flag `--keys <nombre>` (sin config TOML por ahora).
+
+**Soporte de chords (secuencias multi-tecla):**
+
+El trait `resolve` recibe el *buffer* de teclas pendientes y devuelve un
+`Resolve`: `Action(a)` (la secuencia completa una accion), `Pending` (la
+secuencia es prefijo de un chord, hay que esperar mas teclas) o `None` (no
+bindeada). El loop principal mantiene un `Vec<KeyEvent>` de teclas pendientes:
+en cada `Press` agrega la tecla y resuelve; ante `Action` aplica y limpia, ante
+`Pending` espera, ante `None` limpia (lo que cancela gratis un chord invalido o
+un `Esc` tras un prefijo). La status bar muestra un indicador `^K`/`^Q` cuando
+hay un chord en curso. No hay timeout: el prefijo queda pendiente hasta la
+proxima tecla.
+
+**Preset `wordstar` (homenaje):**
+
+- **Diamante de navegacion** (Ctrl): `Ctrl-E` arriba, `Ctrl-X` abajo, `Ctrl-S`
+  IZQUIERDA, `Ctrl-D` derecha. (Si: en WordStar `Ctrl-S` es izquierda, no
+  guardar; guardar es un chord. Se respeta esa autenticidad.)
+- **Chord `Ctrl-K`** (bloque/archivo): `Ctrl-K S` guarda, `Ctrl-K D` y
+  `Ctrl-K X` guardan y salen, `Ctrl-K Q` sale.
+- **Chord `Ctrl-Q`** (movimiento rapido): `Ctrl-Q S` inicio de linea, `Ctrl-Q D`
+  fin de linea, `Ctrl-Q R` inicio del documento, `Ctrl-Q C` fin del documento.
+- La segunda tecla del chord se acepta case-insensitive. Las flechas y los
+  chars sin Ctrl funcionan normal (insercion modeless).
 
 **Diseno actual (simplificado del objetivo de largo plazo):**
 
@@ -119,16 +141,28 @@ pub enum Action {
     CursorLeft, CursorRight, CursorUp, CursorDown,
     InsertChar(char), InsertNewline, Backspace, DeleteChar,
     EnterInsert, EnterNormal, InsertAfter, OpenLineBelow,
-    Save, Quit,
+    LineStart, LineEnd, DocStart, DocEnd,
+    Save, SaveAndQuit, Quit,
+}
+
+pub enum Resolve {
+    Action(Action),  // la secuencia completa una accion
+    Pending,         // prefijo de un chord: esperar mas teclas
+    None,            // no bindeada
 }
 
 pub trait Keymap {
-    fn resolve(&self, mode: Mode, key: KeyEvent) -> Option<Action>;
+    fn resolve(&self, mode: Mode, keys: &[KeyEvent]) -> Resolve;
     fn is_modal(&self) -> bool;
     fn initial_mode(&self) -> Mode;
     fn name(&self) -> &'static str;
 }
 ```
+
+**Proximos pasos** (fuera del scope actual): `Ctrl-P` para formato
+(bold/italic, requiere edicion de estilos markdown), movimiento por palabra
+(`Ctrl-A`/`Ctrl-F` de WordStar, requiere acciones de word-motion) y la config
+TOML de keybindings.
 
 **Objetivo de largo plazo (config TOML + acciones markdown):**
 
@@ -334,7 +368,7 @@ language = "es"
 | Multi-buffer | Tabs (sin splits en v1) | Splits diferido post-MVP |
 | i18n | Custom ligero (TOML) | Helper t!() de ~30 lineas |
 | Undo/Redo | Lineal clasico (stack) | Sin undo tree UI |
-| Keybindings | Default `standard` (flechas, modeless); `vim` (modal) y `wordstar` (homenaje) opt-in | `wordstar` requiere chords (`Ctrl-K S`), proximo paso |
+| Keybindings | Default `standard` (flechas, modeless); `vim` (modal) y `wordstar` (homenaje, con chords) opt-in | Chords implementados via `Resolve` + buffer de teclas pendientes |
 
 ---
 
