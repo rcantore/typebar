@@ -5,9 +5,10 @@
 ## Vision
 
 typebar es un editor de Markdown WYSIWYG para terminal, con keybindings
-Vim-first, theming configurable para ricing, y diseno modular para
-contribuciones open source. Primera version: soporte exclusivo de Markdown
-con rendering inline "soft WYSIWYG" (Nivel 1).
+configurables por presets (default `standard` modeless, `vim` modal opt-in),
+theming configurable para ricing, y diseno modular para contribuciones open
+source. Primera version: soporte exclusivo de Markdown con rendering inline
+"soft WYSIWYG" (Nivel 1).
 
 El nombre viene de la pieza mecanica de la maquina de escribir: la barra que
 lleva el tipo grabado y lo imprime contra el papel a traves de la cinta. Igual
@@ -87,9 +88,49 @@ Transforma el AST de Markdown en widgets estilizados de ratatui.
 
 **Principio clave:** los markers de sintaxis NUNCA desaparecen en Nivel 1. Solo se dimmean. Esto elimina el problema de cursor mapping y mantiene la edicion predecible. El usuario siempre sabe que esta editando.
 
-### 3. Keybinding System (`src/keybindings/`)
+### 3. Keybinding System (`src/keybinding.rs`)
 
-Sistema configurable con presets. Vim como default.
+Sistema configurable con presets intercambiables. Desacopla la *tecla fisica*
+de la *accion semantica*: cada preset implementa el trait `Keymap` y traduce un
+`KeyEvent` (segun el modo actual) a una `Action`; el loop principal aplica la
+`Action` sobre el `Document` sin saber que preset esta activo.
+
+**Presets:**
+
+| Preset | Modal | Comportamiento | Estado |
+|---|---|---|---|
+| `standard` (DEFAULT) | No (modeless) | Siempre inserta texto, flechas para moverse, `Ctrl-s` guarda, `Ctrl-q` sale | Implementado |
+| `vim` | Si (Normal/Insert) | Replica el Vim minimo: `hjkl`, `i`/`a`/`o`, `x`, `q`, `Esc` | Implementado |
+| `wordstar` | No (modeless + chords) | Homenaje al editor clasico, basado en chords tipo `Ctrl-K S` | Proximo paso |
+
+El default es modeless (`standard`): no hay modos Normal/Insert, lo que se
+tipea se inserta y las flechas mueven. El modo en la status bar solo se muestra
+cuando el preset es modal.
+
+Seleccion via flag `--keys <nombre>` (sin config TOML por ahora). El preset
+`wordstar` requiere soporte de **chords** (secuencias multi-tecla tipo
+`Ctrl-K S`) que todavia no existe en el motor de teclado; queda como proximo
+milestone junto con la config TOML de keybindings.
+
+**Diseno actual (simplificado del objetivo de largo plazo):**
+
+```rust
+pub enum Action {
+    CursorLeft, CursorRight, CursorUp, CursorDown,
+    InsertChar(char), InsertNewline, Backspace, DeleteChar,
+    EnterInsert, EnterNormal, InsertAfter, OpenLineBelow,
+    Save, Quit,
+}
+
+pub trait Keymap {
+    fn resolve(&self, mode: Mode, key: KeyEvent) -> Option<Action>;
+    fn is_modal(&self) -> bool;
+    fn initial_mode(&self) -> Mode;
+    fn name(&self) -> &'static str;
+}
+```
+
+**Objetivo de largo plazo (config TOML + acciones markdown):**
 
 ```rust
 struct Keybinding {
@@ -293,6 +334,7 @@ language = "es"
 | Multi-buffer | Tabs (sin splits en v1) | Splits diferido post-MVP |
 | i18n | Custom ligero (TOML) | Helper t!() de ~30 lineas |
 | Undo/Redo | Lineal clasico (stack) | Sin undo tree UI |
+| Keybindings | Default `standard` (flechas, modeless); `vim` (modal) y `wordstar` (homenaje) opt-in | `wordstar` requiere chords (`Ctrl-K S`), proximo paso |
 
 ---
 

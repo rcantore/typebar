@@ -3,44 +3,88 @@
 //! Render "soft WYSIWYG": los marcadores (`**`, `*`, backticks, `#`) siempre
 //! quedan visibles y dimmeados, asi el cursor se mueve 1:1 sobre el texto y la
 //! posicion (linea, col) del buffer mapea directo a la columna en pantalla.
-//! Edicion estilo Vim minima: modos Normal/Insert. `Ctrl-s` guarda.
+//!
+//! El teclado se maneja por presets intercambiables (ver `keybinding`): por
+//! default `standard` (modeless, flechas), con `vim` (modal) opt-in via el flag
+//! `--keys`. `Ctrl-s` guarda en ambos.
 
 mod document;
+mod keybinding;
 mod render;
 mod text;
 
 use document::{Document, Mode};
+use keybinding::{Action, Keymap, keymap_from_name};
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 const DEFAULT_PATH: &str = "scratch.md";
+const DEFAULT_PRESET: &str = "standard";
+
+/// Args parseados de la linea de comandos.
+struct Args {
+    path: String,
+    preset: String,
+}
+
+/// Parsea los argumentos a mano (sin clap). Soporta `--keys <nombre>` y
+/// `--keys=<nombre>` en cualquier posicion; el primer posicional (no-flag) es
+/// el path del archivo. Defaults: path `scratch.md`, preset `standard`.
+fn parse_args(raw: impl Iterator<Item = String>) -> Args {
+    let mut path: Option<String> = None;
+    let mut preset: Option<String> = None;
+    let mut args = raw.peekable();
+
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix("--keys=") {
+            preset = Some(value.to_string());
+        } else if arg == "--keys" {
+            // Tomar el siguiente token como valor (si lo hay).
+            preset = args.next();
+        } else if !arg.starts_with('-') && path.is_none() {
+            path = Some(arg);
+        }
+        // Cualquier otro flag desconocido se ignora silenciosamente.
+    }
+
+    Args {
+        path: path.unwrap_or_else(|| DEFAULT_PATH.to_string()),
+        preset: preset.unwrap_or_else(|| DEFAULT_PRESET.to_string()),
+    }
+}
 
 fn main() -> std::io::Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| DEFAULT_PATH.to_string());
-    let document = Document::open(&path)?;
+    // Saltar argv[0] (nombre del binario).
+    let args = parse_args(std::env::args().skip(1));
+    let keymap = keymap_from_name(&args.preset);
+
+    let mut document = Document::open(&args.path)?;
+    document.mode = keymap.initial_mode();
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, document);
+    let result = run(&mut terminal, document, keymap.as_ref());
     ratatui::restore();
     result
 }
 
-fn run(terminal: &mut ratatui::DefaultTerminal, mut doc: Document) -> std::io::Result<()> {
+fn run(
+    terminal: &mut ratatui::DefaultTerminal,
+    mut doc: Document,
+    keymap: &dyn Keymap,
+) -> std::io::Result<()> {
     // Offset vertical de scroll: primera linea visible del documento.
     let mut scroll: usize = 0;
 
     loop {
-        terminal.draw(|frame| draw(frame, &doc, &mut scroll))?;
+        terminal.draw(|frame| draw(frame, &doc, keymap, &mut scroll))?;
 
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
-            && handle_key(&mut doc, key)?
+            && handle_key(&mut doc, keymap, key)?
         {
             return Ok(());
         }
@@ -49,7 +93,7 @@ fn run(terminal: &mut ratatui::DefaultTerminal, mut doc: Document) -> std::io::R
 
 /// Dibuja el editor. Devuelve via `scroll` (mut) el offset usado, ajustado para
 /// mantener el cursor visible.
-fn draw(frame: &mut ratatui::Frame, doc: &Document, scroll: &mut usize) {
+fn draw(frame: &mut ratatui::Frame, doc: &Document, keymap: &dyn Keymap, scroll: &mut usize) {
     // Partir la pantalla: area de editor (resto) + 1 linea de status.
     let [editor_area, status_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
@@ -73,7 +117,7 @@ fn draw(frame: &mut ratatui::Frame, doc: &Document, scroll: &mut usize) {
         .scroll((*scroll as u16, 0));
     frame.render_widget(paragraph, editor_area);
 
-    frame.render_widget(status_bar(doc), status_area);
+    frame.render_widget(status_bar(doc, keymap), status_area);
 
     // Cursor real de terminal: +1,+1 por el borde del Block, y restando scroll.
     // La X es la columna *visual* (celdas), no el indice de char: asi cae sobre
@@ -85,14 +129,22 @@ fn draw(frame: &mut ratatui::Frame, doc: &Document, scroll: &mut usize) {
     }
 }
 
-/// Construye la barra de estado: modo, path, dirty y linea:col.
-fn status_bar(doc: &Document) -> Line<'static> {
-    let mode = match doc.mode {
-        Mode::Normal => "NORMAL",
-        Mode::Insert => "INSERT",
+/// Construye la barra de estado: preset, modo (solo si es modal), path, dirty y
+/// linea:col.
+fn status_bar(doc: &Document, keymap: &dyn Keymap) -> Line<'static> {
+    // El modo solo tiene sentido en presets modales (Vim); en modeless no se
+    // muestra "NORMAL/INSERT" porque no existen.
+    let left = if keymap.is_modal() {
+        let mode = match doc.mode {
+            Mode::Normal => "NORMAL",
+            Mode::Insert => "INSERT",
+        };
+        format!(" {} · {} · {} ", keymap.name(), mode, doc.path.display())
+    } else {
+        format!(" {} · {} ", keymap.name(), doc.path.display())
     };
-    let dirty = if doc.dirty { " [+]" } else { "" };
-    let left = format!(" {} · {}{} ", mode, doc.path.display(), dirty);
+    let dirty = if doc.dirty { "[+] " } else { "" };
+    let left = format!("{}{}", left, dirty);
     let right = format!(" {}:{} ", doc.line + 1, doc.display_col() + 1);
     Line::from(vec![
         Span::styled(left, Style::default().add_modifier(Modifier::REVERSED)),
@@ -101,51 +153,86 @@ fn status_bar(doc: &Document) -> Line<'static> {
     ])
 }
 
-/// Procesa una tecla. Devuelve `Ok(true)` cuando hay que salir.
-fn handle_key(doc: &mut Document, key: KeyEvent) -> std::io::Result<bool> {
-    // Ctrl-s guarda en cualquier modo.
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
-        doc.save()?;
-        return Ok(false);
-    }
-
-    match doc.mode {
-        Mode::Normal => handle_normal(doc, key),
-        Mode::Insert => {
-            handle_insert(doc, key);
-            Ok(false)
-        }
+/// Procesa una tecla resolviendola contra el keymap activo y aplicando la
+/// accion. Devuelve `Ok(true)` cuando hay que salir.
+fn handle_key(doc: &mut Document, keymap: &dyn Keymap, key: KeyEvent) -> std::io::Result<bool> {
+    match keymap.resolve(doc.mode, key) {
+        Some(action) => apply_action(doc, action),
+        None => Ok(false),
     }
 }
 
-fn handle_normal(doc: &mut Document, key: KeyEvent) -> std::io::Result<bool> {
-    match key.code {
-        KeyCode::Char('q') => return Ok(true),
-        KeyCode::Char('h') | KeyCode::Left => doc.move_left(),
-        KeyCode::Char('l') | KeyCode::Right => doc.move_right(),
-        KeyCode::Char('k') | KeyCode::Up => doc.move_up(),
-        KeyCode::Char('j') | KeyCode::Down => doc.move_down(),
-        KeyCode::Char('i') => doc.mode = Mode::Insert,
-        KeyCode::Char('a') => {
+/// Aplica una accion semantica sobre el documento. Devuelve `Ok(true)` si hay
+/// que salir del editor (Quit).
+fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
+    match action {
+        Action::CursorLeft => doc.move_left(),
+        Action::CursorRight => doc.move_right(),
+        Action::CursorUp => doc.move_up(),
+        Action::CursorDown => doc.move_down(),
+        Action::InsertChar(c) => doc.insert_char(c),
+        Action::InsertNewline => doc.insert_newline(),
+        Action::Backspace => doc.backspace(),
+        Action::DeleteChar => doc.delete_char(),
+        Action::EnterInsert => doc.mode = Mode::Insert,
+        Action::EnterNormal => doc.mode = Mode::Normal,
+        Action::InsertAfter => {
             doc.move_right_for_append();
             doc.mode = Mode::Insert;
         }
-        KeyCode::Char('x') => doc.delete_char(),
-        KeyCode::Char('o') => {
+        Action::OpenLineBelow => {
             doc.open_line_below();
             doc.mode = Mode::Insert;
         }
-        _ => {}
+        Action::Save => doc.save()?,
+        Action::Quit => return Ok(true),
     }
     Ok(false)
 }
 
-fn handle_insert(doc: &mut Document, key: KeyEvent) {
-    match key.code {
-        KeyCode::Esc => doc.mode = Mode::Normal,
-        KeyCode::Enter => doc.insert_newline(),
-        KeyCode::Backspace => doc.backspace(),
-        KeyCode::Char(c) => doc.insert_char(c),
-        _ => {}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_args_defaults() {
+        let a = parse_args(Vec::<String>::new().into_iter());
+        assert_eq!(a.path, DEFAULT_PATH);
+        assert_eq!(a.preset, DEFAULT_PRESET);
+    }
+
+    #[test]
+    fn parse_args_posicional_es_path() {
+        let a = parse_args(vec!["notas.md".to_string()].into_iter());
+        assert_eq!(a.path, "notas.md");
+        assert_eq!(a.preset, DEFAULT_PRESET);
+    }
+
+    #[test]
+    fn parse_args_keys_separado() {
+        let a = parse_args(vec!["--keys".to_string(), "vim".to_string()].into_iter());
+        assert_eq!(a.preset, "vim");
+        assert_eq!(a.path, DEFAULT_PATH);
+    }
+
+    #[test]
+    fn parse_args_keys_con_igual() {
+        let a = parse_args(vec!["--keys=vim".to_string(), "notas.md".to_string()].into_iter());
+        assert_eq!(a.preset, "vim");
+        assert_eq!(a.path, "notas.md");
+    }
+
+    #[test]
+    fn parse_args_keys_despues_del_path() {
+        let a = parse_args(
+            vec![
+                "notas.md".to_string(),
+                "--keys".to_string(),
+                "vim".to_string(),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(a.preset, "vim");
+        assert_eq!(a.path, "notas.md");
     }
 }
