@@ -84,6 +84,8 @@ impl Document {
         let Some(range) = self.selection_range() else {
             return;
         };
+        self.snapshot();
+        self.last_was_insert = false;
         self.buffer.remove(range.clone());
         self.set_cursor_char_idx(range.start);
         self.clear_selection();

@@ -50,7 +50,7 @@ Document
 - Almacenar el texto en un Rope para edicion eficiente en documentos grandes
 - Mantener el AST sincronizado via tree-sitter incremental parsing: cada edit genera un `InputEdit` que actualiza el arbol sin re-parsear todo
 - Exponer una API de modificacion (`insert`, `delete`, `replace`) que actualiza buffer + arbol atomicamente
-- Undo/redo lineal con stack de operaciones
+- Undo/redo lineal con stack de snapshots (implementado, ver mas abajo)
 
 **Cursor Model:**
 ```rust
@@ -155,6 +155,8 @@ pub enum Action {
     LineStart, LineEnd, DocStart, DocEnd,
     Save, SaveAndQuit, Quit,
     ToggleBold, ToggleItalic, ToggleCode,
+    EnterVisual, SelectLeft, SelectRight, SelectUp, SelectDown, DeleteSelection,
+    Undo, Redo,
 }
 
 pub enum Resolve {
@@ -219,6 +221,34 @@ sin exponer el buffer.
 - **Resaltado**: `render(source, selection)` recibe el rango en BYTES y, tras
   armar el mapa de estilo por byte, pisa el `bg` de los bytes seleccionados
   (`SELECTION_BG`) preservando fg/modifiers del texto.
+
+#### Undo/Redo (`src/document/history.rs`, implementado)
+
+Undo/redo lineal por **snapshots**, no por diffs. Cada snapshot guarda una copia
+del estado restaurable: `{ buffer: Rope, line, col, selection_anchor }`. Clonar
+el `Rope` es barato porque ropey es una estructura persistente con sharing de
+nodos, asi que no hace falta modelar operaciones inversas.
+
+- **Pilas**: `Document` tiene `undo_stack` (estados previos) y `redo_stack`
+  (estados deshechos), privadas. Un helper `snapshot()` empuja el estado ACTUAL
+  al `undo_stack` ANTES de mutar y vacia el `redo_stack` (cualquier edicion nueva
+  descarta lo deshecho). El `undo_stack` se capa a 500 entradas descartando la
+  mas vieja, para acotar memoria.
+- **Coalescing del tipeo**: para que `undo` no sea letra por letra, los
+  `insert_char` consecutivos comparten un solo snapshot. El flag
+  `last_was_insert` arranca una corrida en el primer insert y solo ahi
+  snapshotea; los inserts siguientes no. Todas las demas mutaciones
+  (`insert_newline`, `backspace`, `delete_char`, `open_line_below`,
+  `toggle_inline`, `delete_selection`) snapshotean siempre y apagan el flag. Los
+  **movimientos** (move_*, move_to_*, extend_*) y el propio `undo`/`redo` apagan
+  el flag sin snapshotear: asi un movimiento corta la corrida y el proximo insert
+  arranca un grupo de undo nuevo.
+- **`undo`/`redo`**: `undo` empuja el estado actual a `redo_stack`, saca el tope
+  de `undo_stack` y lo restaura (buffer/cursor/seleccion + `sync_preferred` +
+  `dirty`). `redo` es simetrico. Sin historia, no hacen nada.
+- **Bindings por preset**: vim `u` deshace y `Ctrl-R` rehace (canonico, solo en
+  Normal); standard y wordstar usan `Ctrl-Z` deshacer y `Ctrl-Y` rehacer
+  (convencion moderna; el raw mode captura `Ctrl-Z` asi que no suspende).
 
 **Proximos pasos** (fuera del scope actual):
 
@@ -432,7 +462,7 @@ language = "es"
 | Plugin system | Diferido post-MVP | Evaluar trait-based / WASM / Lua |
 | Multi-buffer | Tabs (sin splits en v1) | Splits diferido post-MVP |
 | i18n | Custom ligero (TOML) | Helper t!() de ~30 lineas |
-| Undo/Redo | Lineal clasico (stack) | Sin undo tree UI |
+| Undo/Redo | Lineal clasico (stack de snapshots, implementado) | Coalescing del tipeo; aprovecha el clone barato de ropey. Sin undo tree UI |
 | Keybindings | Default `standard` (flechas, modeless); `vim` (modal) y `wordstar` (homenaje, con chords) opt-in | Chords implementados via `Resolve` + buffer de teclas pendientes |
 
 ---

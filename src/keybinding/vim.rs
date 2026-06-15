@@ -14,6 +14,8 @@ impl VimKeymap {
         if has_ctrl(key) {
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
+                // Ctrl-R: rehacer (lo canonico de Vim).
+                KeyCode::Char('r') => Resolve::Action(Action::Redo),
                 // Ctrl-P: prefijo de formato (agnostico al modo).
                 KeyCode::Char('p') => Resolve::Pending,
                 _ => Resolve::None,
@@ -29,6 +31,8 @@ impl VimKeymap {
             KeyCode::Char('v') => Resolve::Action(Action::EnterVisual),
             KeyCode::Char('x') => Resolve::Action(Action::DeleteChar),
             KeyCode::Char('o') => Resolve::Action(Action::OpenLineBelow),
+            // `u` deshace (canonico de Vim; en Insert no se bindea).
+            KeyCode::Char('u') => Resolve::Action(Action::Undo),
             KeyCode::Char('q') => Resolve::Action(Action::Quit),
             _ => Resolve::None,
         }
@@ -201,6 +205,19 @@ mod tests {
         assert_eq!(
             resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('p'))),
             Resolve::Pending
+        );
+    }
+
+    #[test]
+    fn vim_normal_undo_redo() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Normal, key(KeyCode::Char('u'))),
+            Resolve::Action(Action::Undo)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Normal, ctrl(KeyCode::Char('r'))),
+            Resolve::Action(Action::Redo)
         );
     }
 

@@ -11,11 +11,15 @@ use super::Document;
 
 impl Document {
     fn move_left_core(&mut self) {
+        // Un movimiento corta la corrida de tipeo: el proximo insert arranca un
+        // grupo de undo nuevo.
+        self.last_was_insert = false;
         self.col = self.graphemes(self.line).prev_boundary(self.col);
         self.sync_preferred();
     }
 
     fn move_right_core(&mut self) {
+        self.last_was_insert = false;
         let g = self.graphemes(self.line);
         if self.col < g.len_chars() {
             self.col = g.next_boundary(self.col);
@@ -24,6 +28,7 @@ impl Document {
     }
 
     fn move_up_core(&mut self) {
+        self.last_was_insert = false;
         if self.line > 0 {
             self.line -= 1;
             self.col = self
@@ -33,6 +38,7 @@ impl Document {
     }
 
     fn move_down_core(&mut self) {
+        self.last_was_insert = false;
         // Ultima linea valida: len_lines()-1, pero si el buffer termina en '\n'
         // ropey cuenta una linea extra vacia; la permitimos como destino valido.
         if self.line + 1 < self.buffer.len_lines() {
@@ -92,6 +98,7 @@ impl Document {
 
     /// Mueve el cursor al inicio de la linea actual (col 0).
     pub fn move_to_line_start(&mut self) {
+        self.last_was_insert = false;
         self.clear_selection();
         self.col = 0;
         self.sync_preferred();
@@ -99,6 +106,7 @@ impl Document {
 
     /// Mueve el cursor al fin de la linea actual (despues del ultimo char).
     pub fn move_to_line_end(&mut self) {
+        self.last_was_insert = false;
         self.clear_selection();
         self.col = self.line_len_chars(self.line);
         self.sync_preferred();
@@ -106,6 +114,7 @@ impl Document {
 
     /// Mueve el cursor al inicio del documento (linea 0, col 0).
     pub fn move_to_doc_start(&mut self) {
+        self.last_was_insert = false;
         self.clear_selection();
         self.line = 0;
         self.col = 0;
@@ -116,6 +125,7 @@ impl Document {
     /// criterio que `move_down`, que ignora la linea extra vacia que ropey
     /// cuenta cuando el buffer termina en '\n'), col al final de esa linea.
     pub fn move_to_doc_end(&mut self) {
+        self.last_was_insert = false;
         self.clear_selection();
         // len_lines()-1 es la ultima linea; si el buffer termina en '\n' esa es
         // la linea extra vacia, asi que retrocedemos a la anterior.

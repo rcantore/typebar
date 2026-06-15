@@ -258,6 +258,8 @@ fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
                 doc.mode = Mode::Normal;
             }
         }
+        Action::Undo => doc.undo(),
+        Action::Redo => doc.redo(),
     }
     Ok(false)
 }

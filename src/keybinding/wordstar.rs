@@ -28,6 +28,10 @@ impl WordstarKeymap {
                 KeyCode::Char('x') => Resolve::Action(Action::CursorDown),
                 KeyCode::Char('s') => Resolve::Action(Action::CursorLeft),
                 KeyCode::Char('d') => Resolve::Action(Action::CursorRight),
+                // Ctrl-Z deshace, Ctrl-Y rehace (convencion moderna; el raw mode
+                // captura Ctrl-Z asi que no suspende el proceso).
+                KeyCode::Char('z') => Resolve::Action(Action::Undo),
+                KeyCode::Char('y') => Resolve::Action(Action::Redo),
                 // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
                 // prefijo de formato (negrita/italica/codigo), uniforme con los
                 // otros presets.
@@ -162,6 +166,19 @@ mod tests {
         assert_eq!(
             resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('d'))),
             Resolve::Action(Action::CursorRight)
+        );
+    }
+
+    #[test]
+    fn wordstar_undo_redo() {
+        let km = WordstarKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('z'))),
+            Resolve::Action(Action::Undo)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('y'))),
+            Resolve::Action(Action::Redo)
         );
     }
 
