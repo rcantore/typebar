@@ -41,6 +41,10 @@ impl StandardKeymap {
                 // Ctrl-Z deshace, Ctrl-Y rehace (convencion moderna).
                 KeyCode::Char('z') => Resolve::Action(Action::Undo),
                 KeyCode::Char('y') => Resolve::Action(Action::Redo),
+                // Ctrl-C copia (yank), Ctrl-V pega (paste): atajos modernos. El
+                // raw mode captura Ctrl-C asi que no interrumpe el proceso.
+                KeyCode::Char('c') => Resolve::Action(Action::Yank),
+                KeyCode::Char('v') => Resolve::Action(Action::Paste),
                 // Ctrl-B: negrita directa (memoria muscular). Ctrl-I no se
                 // bindea: en la terminal es indistinguible de Tab; por eso la
                 // italica va por el chord Ctrl-P I.
@@ -176,6 +180,19 @@ mod tests {
         assert_eq!(
             resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('y'))),
             Resolve::Action(Action::Redo)
+        );
+    }
+
+    #[test]
+    fn standard_ctrl_c_y_ctrl_v_clipboard() {
+        let km = StandardKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('c'))),
+            Resolve::Action(Action::Yank)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('v'))),
+            Resolve::Action(Action::Paste)
         );
     }
 

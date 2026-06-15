@@ -139,7 +139,8 @@ para mantener el mapeo unico.
   IZQUIERDA, `Ctrl-D` derecha. (Si: en WordStar `Ctrl-S` es izquierda, no
   guardar; guardar es un chord. Se respeta esa autenticidad.)
 - **Chord `Ctrl-K`** (bloque/archivo): `Ctrl-K S` guarda, `Ctrl-K D` y
-  `Ctrl-K X` guardan y salen, `Ctrl-K Q` sale.
+  `Ctrl-K X` guardan y salen, `Ctrl-K Q` sale, `Ctrl-K C` copia bloque (yank),
+  `Ctrl-K V` pega/mueve bloque (paste).
 - **Chord `Ctrl-Q`** (movimiento rapido): `Ctrl-Q S` inicio de linea, `Ctrl-Q D`
   fin de linea, `Ctrl-Q R` inicio del documento, `Ctrl-Q C` fin del documento.
 - La segunda tecla del chord se acepta case-insensitive. Las flechas y los
@@ -157,6 +158,7 @@ pub enum Action {
     ToggleBold, ToggleItalic, ToggleCode,
     EnterVisual, SelectLeft, SelectRight, SelectUp, SelectDown, DeleteSelection,
     Undo, Redo,
+    Yank, Paste,
 }
 
 pub enum Resolve {
@@ -250,10 +252,31 @@ nodos, asi que no hace falta modelar operaciones inversas.
   Normal); standard y wordstar usan `Ctrl-Z` deshacer y `Ctrl-Y` rehacer
   (convencion moderna; el raw mode captura `Ctrl-Z` asi que no suspende).
 
+#### Clipboard interno (`src/document/clipboard.rs`, implementado)
+
+Portapapeles INTERNO del editor (no el del SO), guardado en `Document` como
+`clipboard: Option<String>` (privado, no persiste entre sesiones).
+
+- **`yank`**: si hay seleccion, copia ese rango del buffer al `clipboard` y
+  limpia la seleccion. Sin seleccion no hace nada. NO es una mutacion del buffer:
+  no toma snapshot ni toca `dirty`.
+- **`paste`**: si el `clipboard` tiene texto, lo inserta en la posicion del
+  cursor y deja el cursor al final del texto pegado (avanza por CHARS, no bytes).
+  Es una MUTACION: toma snapshot al tope (asi se integra con undo/redo y es
+  undoable) y marca `dirty`. Con el clipboard vacio no hace nada.
+- **Seleccion activa al pegar**: por simplicidad NO se reemplaza; `paste` solo
+  inserta en el cursor (queda fuera del scope reemplazar la seleccion).
+- **Bindings por preset**: vim `y` (en Visual) copia y `p` (en Normal) pega;
+  standard `Ctrl-C` copia y `Ctrl-V` pega (el raw mode captura `Ctrl-C` asi que
+  no interrumpe); wordstar `Ctrl-K C` copia bloque y `Ctrl-K V` pega/mueve
+  bloque (autentico de WordStar). En Vim, `yank` consume el modo Visual (vuelve a
+  Normal).
+
 **Proximos pasos** (fuera del scope actual):
 
-- **Clipboard** (yank/paste): hoy no hay portapapeles; la seleccion solo se
-  togglea o se borra. El siguiente paso es copiar/cortar el rango y pegarlo.
+- **Clipboard del SISTEMA**: hoy el portapapeles es solo interno; el siguiente
+  paso es integrarlo con el del SO via un crate tipo `arboard`/`copypasta`, y
+  exponer la eleccion (interno vs sistema) por config TOML.
 - Seleccion por palabra/linea (`vw`, `V` de Vim): hoy es solo character-wise.
 - Movimiento por palabra (`Ctrl-A`/`Ctrl-F` de WordStar, requiere acciones de
   word-motion).

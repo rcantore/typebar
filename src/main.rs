@@ -260,6 +260,15 @@ fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
         }
         Action::Undo => doc.undo(),
         Action::Redo => doc.redo(),
+        Action::Yank => {
+            doc.yank();
+            // Si veniamos de Visual (Vim), la seleccion se consumio al copiar:
+            // volver a Normal. En modeless no hay Visual, asi que no aplica.
+            if doc.mode == Mode::Visual {
+                doc.mode = Mode::Normal;
+            }
+        }
+        Action::Paste => doc.paste(),
     }
     Ok(false)
 }

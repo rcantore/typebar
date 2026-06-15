@@ -69,6 +69,10 @@ impl WordstarKeymap {
                 's' => Resolve::Action(Action::Save),
                 'd' | 'x' => Resolve::Action(Action::SaveAndQuit),
                 'q' => Resolve::Action(Action::Quit),
+                // `Ctrl-K C` copia bloque, `Ctrl-K V` pega/mueve bloque
+                // (autentico de WordStar).
+                'c' => Resolve::Action(Action::Yank),
+                'v' => Resolve::Action(Action::Paste),
                 _ => Resolve::None,
             },
             KeyCode::Char('q') => match letter {
@@ -219,6 +223,26 @@ mod tests {
         assert_eq!(
             km.resolve(Mode::Insert, &[prefix, key(KeyCode::Char('q'))]),
             Resolve::Action(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn wordstar_chord_ctrl_k_clipboard() {
+        // `Ctrl-K C` copia (yank), `Ctrl-K V` pega (paste).
+        let km = WordstarKeymap;
+        let prefix = ctrl(KeyCode::Char('k'));
+        assert_eq!(
+            km.resolve(Mode::Insert, &[prefix, key(KeyCode::Char('c'))]),
+            Resolve::Action(Action::Yank)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[prefix, key(KeyCode::Char('v'))]),
+            Resolve::Action(Action::Paste)
+        );
+        // Case-insensitive.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[prefix, key(KeyCode::Char('C'))]),
+            Resolve::Action(Action::Yank)
         );
     }
 

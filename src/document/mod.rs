@@ -12,6 +12,7 @@
 //! descendientes de `document`, asi que pueden tocar los campos privados del
 //! struct.
 
+mod clipboard;
 mod edit;
 mod history;
 mod motion;
@@ -66,6 +67,9 @@ pub struct Document {
     /// toda la corrida de tipeo de una). Un movimiento o cualquier otra mutacion
     /// lo apaga, cortando el grupo.
     last_was_insert: bool,
+    /// Portapapeles INTERNO del editor (no el del SO): texto copiado con `yank`
+    /// que `paste` reinserta. `None` = vacio. No persiste entre sesiones.
+    clipboard: Option<String>,
 }
 
 impl Document {
@@ -90,6 +94,7 @@ impl Document {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_was_insert: false,
+            clipboard: None,
         })
     }
 
@@ -213,6 +218,7 @@ pub(crate) mod test_support {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_was_insert: false,
+            clipboard: None,
         }
     }
 }
