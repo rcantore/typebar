@@ -78,6 +78,10 @@ pub enum Action {
     Undo,
     /// Rehacer la ultima edicion deshecha.
     Redo,
+    /// Copiar la seleccion al portapapeles interno (yank).
+    Yank,
+    /// Pegar el portapapeles interno en el cursor (paste).
+    Paste,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.

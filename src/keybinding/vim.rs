@@ -31,6 +31,8 @@ impl VimKeymap {
             KeyCode::Char('v') => Resolve::Action(Action::EnterVisual),
             KeyCode::Char('x') => Resolve::Action(Action::DeleteChar),
             KeyCode::Char('o') => Resolve::Action(Action::OpenLineBelow),
+            // `p` pega el portapapeles interno (canonico de Vim).
+            KeyCode::Char('p') => Resolve::Action(Action::Paste),
             // `u` deshace (canonico de Vim; en Insert no se bindea).
             KeyCode::Char('u') => Resolve::Action(Action::Undo),
             KeyCode::Char('q') => Resolve::Action(Action::Quit),
@@ -56,6 +58,8 @@ impl VimKeymap {
             KeyCode::Char('k') | KeyCode::Up => Resolve::Action(Action::SelectUp),
             KeyCode::Char('j') | KeyCode::Down => Resolve::Action(Action::SelectDown),
             KeyCode::Char('x') | KeyCode::Char('d') => Resolve::Action(Action::DeleteSelection),
+            // `y` copia la seleccion al portapapeles interno (yank de Vim).
+            KeyCode::Char('y') => Resolve::Action(Action::Yank),
             KeyCode::Esc => Resolve::Action(Action::EnterNormal),
             _ => Resolve::None,
         }
@@ -270,6 +274,24 @@ mod tests {
         assert_eq!(
             resolve1(&km, Mode::Visual, key(KeyCode::Char('x'))),
             Resolve::Action(Action::DeleteSelection)
+        );
+    }
+
+    #[test]
+    fn vim_normal_p_pega() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Normal, key(KeyCode::Char('p'))),
+            Resolve::Action(Action::Paste)
+        );
+    }
+
+    #[test]
+    fn vim_visual_y_copia_seleccion() {
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Visual, key(KeyCode::Char('y'))),
+            Resolve::Action(Action::Yank)
         );
     }
 
