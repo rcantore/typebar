@@ -13,6 +13,7 @@
 //! struct.
 
 mod edit;
+mod history;
 mod motion;
 mod select;
 
@@ -53,6 +54,18 @@ pub struct Document {
     /// `None` = sin seleccion. El rango va del min al max entre ancla y cursor
     /// (ver `select`).
     selection_anchor: Option<usize>,
+    /// Pila de estados para deshacer (el tope es el estado mas reciente). Cada
+    /// mutacion empuja un snapshot del estado PREVIO aca antes de mutar (ver
+    /// `history`).
+    undo_stack: Vec<history::Snapshot>,
+    /// Pila de estados para rehacer. Se llena al deshacer y se vacia ante
+    /// cualquier edicion nueva.
+    redo_stack: Vec<history::Snapshot>,
+    /// Flag de coalescing del tipeo: si la ultima mutacion fue un `insert_char`,
+    /// los `insert_char` siguientes no toman un snapshot nuevo (asi `undo` borra
+    /// toda la corrida de tipeo de una). Un movimiento o cualquier otra mutacion
+    /// lo apaga, cortando el grupo.
+    last_was_insert: bool,
 }
 
 impl Document {
@@ -74,6 +87,9 @@ impl Document {
             path,
             dirty: false,
             selection_anchor: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            last_was_insert: false,
         })
     }
 
@@ -194,6 +210,9 @@ pub(crate) mod test_support {
             path: PathBuf::from("scratch.md"),
             dirty: false,
             selection_anchor: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            last_was_insert: false,
         }
     }
 }

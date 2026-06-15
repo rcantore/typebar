@@ -74,6 +74,10 @@ pub enum Action {
     SelectDown,
     /// Borrar el rango seleccionado.
     DeleteSelection,
+    /// Deshacer la ultima edicion.
+    Undo,
+    /// Rehacer la ultima edicion deshecha.
+    Redo,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.

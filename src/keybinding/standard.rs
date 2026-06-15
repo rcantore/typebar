@@ -38,6 +38,9 @@ impl StandardKeymap {
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 KeyCode::Char('q') => Resolve::Action(Action::Quit),
+                // Ctrl-Z deshace, Ctrl-Y rehace (convencion moderna).
+                KeyCode::Char('z') => Resolve::Action(Action::Undo),
+                KeyCode::Char('y') => Resolve::Action(Action::Redo),
                 // Ctrl-B: negrita directa (memoria muscular). Ctrl-I no se
                 // bindea: en la terminal es indistinguible de Tab; por eso la
                 // italica va por el chord Ctrl-P I.
@@ -160,6 +163,19 @@ mod tests {
         assert_eq!(
             resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('q'))),
             Resolve::Action(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn standard_undo_redo() {
+        let km = StandardKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('z'))),
+            Resolve::Action(Action::Undo)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('y'))),
+            Resolve::Action(Action::Redo)
         );
     }
 

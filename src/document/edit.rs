@@ -9,15 +9,23 @@ use super::Document;
 impl Document {
     /// Inserta un char imprimible en el cursor y avanza una columna (char).
     pub fn insert_char(&mut self, c: char) {
+        // Coalescing: solo tomar snapshot al ARRANCAR una corrida de tipeo. Los
+        // inserts siguientes comparten el mismo grupo de undo.
+        if !self.last_was_insert {
+            self.snapshot();
+        }
         let idx = self.cursor_char_idx();
         self.buffer.insert_char(idx, c);
         self.col += 1;
         self.sync_preferred();
         self.dirty = true;
+        self.last_was_insert = true;
     }
 
     /// Inserta un salto de linea en el cursor; baja a la linea nueva, col 0.
     pub fn insert_newline(&mut self) {
+        self.snapshot();
+        self.last_was_insert = false;
         let idx = self.cursor_char_idx();
         self.buffer.insert_char(idx, '\n');
         self.line += 1;
@@ -29,7 +37,8 @@ impl Document {
     /// Borra el *grafema* previo al cursor (un emoji/bandera/cluster ZWJ entero,
     /// no un char suelto). Si col == 0, junta con la linea de arriba.
     pub fn backspace(&mut self) {
-        // Si hay seleccion activa, borrarla en vez del grafema previo.
+        // Si hay seleccion activa, borrarla en vez del grafema previo
+        // (`delete_selection` ya toma su propio snapshot).
         if self.selection_range().is_some() {
             self.delete_selection();
             return;
@@ -37,6 +46,8 @@ impl Document {
         if self.col == 0 && self.line == 0 {
             return; // inicio del documento: nada que borrar
         }
+        self.snapshot();
+        self.last_was_insert = false;
         if self.col > 0 {
             let prev = self.graphemes(self.line).prev_boundary(self.col);
             let base = self.buffer.line_to_char(self.line);
@@ -59,7 +70,8 @@ impl Document {
     /// Borra el *grafema* bajo el cursor (la 'x' de Vim). No hace nada si el
     /// cursor esta al final de la linea.
     pub fn delete_char(&mut self) {
-        // Si hay seleccion activa, borrarla en vez del grafema bajo el cursor.
+        // Si hay seleccion activa, borrarla en vez del grafema bajo el cursor
+        // (`delete_selection` ya toma su propio snapshot).
         if self.selection_range().is_some() {
             self.delete_selection();
             return;
@@ -68,6 +80,8 @@ impl Document {
         if self.col >= g.len_chars() {
             return; // no hay grafema bajo el cursor (estamos al final)
         }
+        self.snapshot();
+        self.last_was_insert = false;
         let next = g.next_boundary(self.col);
         let base = self.buffer.line_to_char(self.line);
         self.buffer.remove(base + self.col..base + next);
@@ -78,6 +92,8 @@ impl Document {
 
     /// Abre una linea nueva debajo de la actual y deja el cursor ahi (la 'o').
     pub fn open_line_below(&mut self) {
+        self.snapshot();
+        self.last_was_insert = false;
         let line_end = self.buffer.line_to_char(self.line) + self.line_len_chars(self.line);
         self.buffer.insert_char(line_end, '\n');
         self.line += 1;
@@ -101,6 +117,10 @@ impl Document {
     /// En todos los casos el cursor queda sobre el MISMO char de contenido que
     /// antes (o entre los marcadores en el caso vacio).
     pub fn toggle_inline(&mut self, kind: InlineKind) {
+        // Snapshot al tope: cubre las dos ramas (con y sin seleccion). El helper
+        // `toggle_inline_selection` no vuelve a snapshotear (solo lo llama esta).
+        self.snapshot();
+        self.last_was_insert = false;
         // Con seleccion activa: envolver EL RANGO seleccionado (sin detectar
         // enfasis existente; ver limitacion en `toggle_inline_selection`).
         if let Some(range) = self.selection_range() {
