@@ -1,0 +1,16 @@
+# Configuracion de usuario de typebar (esquema v1).
+#
+# Ubicacion esperada: ~/.config/typebar/config.toml
+# (respeta XDG_CONFIG_HOME si esta seteado).
+#
+# Todo es opcional: si el archivo no existe, typebar usa los defaults.
+
+[keybindings]
+# Preset de teclado por defecto. Valores validos:
+#   "standard"  -> modeless, flechas para moverse (default built-in).
+#   "vim"       -> modal (Normal/Insert/Visual).
+#   "wordstar"  -> modeless con chords tipo Ctrl-K S.
+#
+# El flag de linea de comandos `--keys <preset>` tiene prioridad sobre este
+# valor. Si el preset es invalido, typebar avisa por stderr y usa "standard".
+preset = "standard"

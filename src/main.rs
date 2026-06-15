@@ -9,6 +9,7 @@
 //! (modeless con chords tipo `Ctrl-K S`) opt-in via el flag `--keys`. El loop
 //! acumula teclas en un buffer `pending` para resolver secuencias multi-tecla.
 
+mod config;
 mod document;
 mod keybinding;
 mod markdown;
@@ -28,15 +29,18 @@ use ratatui::widgets::{Block, Paragraph};
 const DEFAULT_PATH: &str = "scratch.md";
 const DEFAULT_PRESET: &str = "standard";
 
-/// Args parseados de la linea de comandos.
+/// Args parseados de la linea de comandos. `preset` es `None` cuando el usuario
+/// no paso `--keys`: distinguir "no especificado" de un valor concreto es lo que
+/// permite que el config file tenga la chance de aplicar su preset.
 struct Args {
     path: String,
-    preset: String,
+    preset: Option<String>,
 }
 
 /// Parsea los argumentos a mano (sin clap). Soporta `--keys <nombre>` y
 /// `--keys=<nombre>` en cualquier posicion; el primer posicional (no-flag) es
-/// el path del archivo. Defaults: path `scratch.md`, preset `standard`.
+/// el path del archivo. Default de path: `scratch.md`. El preset queda en
+/// `None` si no se paso `--keys` (lo resuelve luego `resolve_preset`).
 fn parse_args(raw: impl Iterator<Item = String>) -> Args {
     let mut path: Option<String> = None;
     let mut preset: Option<String> = None;
@@ -56,14 +60,43 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
 
     Args {
         path: path.unwrap_or_else(|| DEFAULT_PATH.to_string()),
-        preset: preset.unwrap_or_else(|| DEFAULT_PRESET.to_string()),
+        preset,
+    }
+}
+
+/// Resuelve el preset final aplicando la precedencia: flag CLI `--keys` > preset
+/// del config file > default built-in (`standard`). El preset del config se
+/// valida en el borde: si trae un nombre desconocido se avisa por stderr y se
+/// ignora (cae al default). El flag CLI NO se valida aca: `keymap_from_name` ya
+/// cae a `standard` ante un nombre raro, manteniendo el comportamiento previo.
+fn resolve_preset(cli_preset: Option<String>, config: &config::Config) -> String {
+    if let Some(name) = cli_preset {
+        return name;
+    }
+    match config.keybindings.preset.as_deref() {
+        Some(name) if config::is_known_preset(name) => name.to_string(),
+        Some(name) => {
+            eprintln!(
+                "typebar: preset desconocido en la config: {name:?}; usando {DEFAULT_PRESET}"
+            );
+            DEFAULT_PRESET.to_string()
+        }
+        None => DEFAULT_PRESET.to_string(),
     }
 }
 
 fn main() -> std::io::Result<()> {
     // Saltar argv[0] (nombre del binario).
     let args = parse_args(std::env::args().skip(1));
-    let keymap = keymap_from_name(&args.preset);
+
+    // Cargar config primero; el override del CLI se aplica encima en
+    // `resolve_preset`. Sin config file valido, esto cae a defaults en silencio.
+    let config = match config::config_path() {
+        Some(path) => config::load_from_path(&path),
+        None => config::Config::default(),
+    };
+    let preset = resolve_preset(args.preset, &config);
+    let keymap = keymap_from_name(&preset);
 
     let mut document = Document::open(&args.path)?;
     document.mode = keymap.initial_mode();
@@ -290,27 +323,28 @@ mod tests {
     fn parse_args_defaults() {
         let a = parse_args(Vec::<String>::new().into_iter());
         assert_eq!(a.path, DEFAULT_PATH);
-        assert_eq!(a.preset, DEFAULT_PRESET);
+        // Sin `--keys` el preset queda sin resolver (lo decide el config).
+        assert_eq!(a.preset, None);
     }
 
     #[test]
     fn parse_args_posicional_es_path() {
         let a = parse_args(vec!["notas.md".to_string()].into_iter());
         assert_eq!(a.path, "notas.md");
-        assert_eq!(a.preset, DEFAULT_PRESET);
+        assert_eq!(a.preset, None);
     }
 
     #[test]
     fn parse_args_keys_separado() {
         let a = parse_args(vec!["--keys".to_string(), "vim".to_string()].into_iter());
-        assert_eq!(a.preset, "vim");
+        assert_eq!(a.preset.as_deref(), Some("vim"));
         assert_eq!(a.path, DEFAULT_PATH);
     }
 
     #[test]
     fn parse_args_keys_con_igual() {
         let a = parse_args(vec!["--keys=vim".to_string(), "notas.md".to_string()].into_iter());
-        assert_eq!(a.preset, "vim");
+        assert_eq!(a.preset.as_deref(), Some("vim"));
         assert_eq!(a.path, "notas.md");
     }
 
@@ -324,7 +358,47 @@ mod tests {
             ]
             .into_iter(),
         );
-        assert_eq!(a.preset, "vim");
+        assert_eq!(a.preset.as_deref(), Some("vim"));
         assert_eq!(a.path, "notas.md");
+    }
+
+    /// Construye una `Config` con un preset dado para los tests de precedencia.
+    fn config_con_preset(preset: Option<&str>) -> config::Config {
+        config::Config {
+            keybindings: config::KeybindingsConfig {
+                preset: preset.map(str::to_string),
+            },
+        }
+    }
+
+    #[test]
+    fn precedencia_cli_gana_sobre_config() {
+        // El flag `--keys` siempre manda, aunque el config diga otra cosa.
+        let config = config_con_preset(Some("wordstar"));
+        let preset = resolve_preset(Some("vim".to_string()), &config);
+        assert_eq!(preset, "vim");
+    }
+
+    #[test]
+    fn precedencia_config_cuando_no_hay_cli() {
+        // Sin `--keys`, gana el preset del config file.
+        let config = config_con_preset(Some("vim"));
+        let preset = resolve_preset(None, &config);
+        assert_eq!(preset, "vim");
+    }
+
+    #[test]
+    fn precedencia_default_sin_cli_ni_config() {
+        let config = config_con_preset(None);
+        let preset = resolve_preset(None, &config);
+        assert_eq!(preset, DEFAULT_PRESET);
+    }
+
+    #[test]
+    fn config_con_preset_invalido_cae_a_default() {
+        // Un preset desconocido en el config se ignora y cae al default.
+        let config = config_con_preset(Some("loquesea"));
+        let preset = resolve_preset(None, &config);
+        assert_eq!(preset, DEFAULT_PRESET);
     }
 }

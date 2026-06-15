@@ -1,0 +1,148 @@
+//! Carga de configuracion de usuario desde un archivo TOML (esquema v1).
+//!
+//! El objetivo es que el usuario fije su preset de keybindings por defecto sin
+//! tener que pasar `--keys` en cada invocacion. La precedencia final (resuelta
+//! en `main`) es: flag CLI `--keys` > config file > default built-in.
+//!
+//! Decisiones de borde:
+//! - Si el archivo no existe, NO es un error: se usan defaults en silencio. Es
+//!   el caso comun (la mayoria de los usuarios nunca crea el config).
+//! - Si el archivo existe pero esta mal formado o trae un preset invalido,
+//!   avisamos por stderr y caemos al default en vez de crashear: el editor
+//!   tiene que arrancar igual.
+//!
+//! La validacion del nombre de preset NO se duplica aca: se delega en
+//! `keybinding::keymap_from_name`, que es la unica fuente de verdad de que
+//! nombres existen.
+
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+
+use crate::keybinding::keymap_from_name;
+
+/// Esquema v1 del archivo de configuracion.
+#[derive(Debug, Deserialize, Default)]
+pub struct Config {
+    /// Seccion `[keybindings]`. Opcional: si falta, se usan los defaults de
+    /// `KeybindingsConfig`.
+    #[serde(default)]
+    pub keybindings: KeybindingsConfig,
+}
+
+/// Seccion `[keybindings]` del config.
+#[derive(Debug, Deserialize, Default)]
+pub struct KeybindingsConfig {
+    /// Preset por defecto (`standard` | `vim` | `wordstar`). `None` cuando el
+    /// usuario no fijo ninguno: en ese caso `main` deja el default built-in.
+    pub preset: Option<String>,
+}
+
+/// Resuelve el path del config file respetando `XDG_CONFIG_HOME` (via el crate
+/// `dirs`, que ya aplica el fallback portable a `~/.config` en Unix y al dir
+/// equivalente en otras plataformas). Devuelve `None` si no hay home conocido,
+/// en cuyo caso `main` simplemente usa defaults.
+pub fn config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|dir| dir.join("typebar").join("config.toml"))
+}
+
+/// Carga la config desde `path`. Si el archivo no existe devuelve la config por
+/// defecto en silencio. Si existe pero no se puede leer o parsear, avisa por
+/// stderr y cae al default (nunca panickea).
+pub fn load_from_path(path: &Path) -> Config {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        // Ausente es el caso esperado: defaults sin ruido. Otros errores de IO
+        // (permisos, etc.) si los reportamos antes de caer al default.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Config::default(),
+        Err(err) => {
+            eprintln!(
+                "typebar: no se pudo leer la config en {}: {err}; usando defaults",
+                path.display()
+            );
+            return Config::default();
+        }
+    };
+    parse_config(&raw, &path.display().to_string())
+}
+
+/// Parsea la config desde un string TOML. `origen` es solo para el mensaje de
+/// error (un path o un nombre descriptivo). Aislamos el parseo del filesystem
+/// para poder testearlo sin tocar el HOME real.
+pub fn parse_config(raw: &str, origen: &str) -> Config {
+    match toml::from_str::<Config>(raw) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("typebar: config invalida en {origen}: {err}; usando defaults");
+            Config::default()
+        }
+    }
+}
+
+/// Devuelve true si `name` es un preset de keybindings conocido. Reusa
+/// `keymap_from_name` como unica fuente de verdad: ese resolver cae a
+/// `standard` ante nombres desconocidos, asi que un nombre es valido sii el
+/// preset resultante conserva el mismo nombre que pedimos.
+pub fn is_known_preset(name: &str) -> bool {
+    keymap_from_name(name).name() == name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parsea_toml_valido() {
+        let raw = r#"
+            [keybindings]
+            preset = "vim"
+        "#;
+        let config = parse_config(raw, "<test>");
+        assert_eq!(config.keybindings.preset.as_deref(), Some("vim"));
+    }
+
+    #[test]
+    fn toml_sin_seccion_keybindings_usa_default() {
+        // Un archivo vacio es valido: la seccion es opcional.
+        let config = parse_config("", "<test>");
+        assert_eq!(config.keybindings.preset, None);
+    }
+
+    #[test]
+    fn toml_invalido_cae_a_default_sin_panic() {
+        // Sintaxis rota: no debe panickear, devuelve la config por defecto.
+        let config = parse_config("esto no es = = toml [", "<test>");
+        assert_eq!(config.keybindings.preset, None);
+    }
+
+    #[test]
+    fn archivo_ausente_devuelve_default() {
+        // Un path que no existe no es error: defaults en silencio.
+        let path = Path::new("/typebar/ruta/que/no/existe/config.toml");
+        let config = load_from_path(path);
+        assert_eq!(config.keybindings.preset, None);
+    }
+
+    #[test]
+    fn carga_desde_archivo_real() {
+        // Escribimos un config temporal y lo leemos via load_from_path, sin
+        // depender del HOME del sistema.
+        let dir = std::env::temp_dir().join(format!("typebar-cfg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[keybindings]\npreset = \"wordstar\"\n").unwrap();
+
+        let config = load_from_path(&path);
+        assert_eq!(config.keybindings.preset.as_deref(), Some("wordstar"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn presets_conocidos_y_desconocidos() {
+        assert!(is_known_preset("standard"));
+        assert!(is_known_preset("vim"));
+        assert!(is_known_preset("wordstar"));
+        assert!(!is_known_preset("loquesea"));
+    }
+}
