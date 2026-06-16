@@ -39,6 +39,9 @@ pub struct Theme {
     /// Background de la coincidencia de busqueda ACTUAL (a la que salto el
     /// cursor), mas marcada que el resto para distinguirla.
     pub search_current_bg: Color,
+    /// Background de cada boton de la barra de atajos (toolbar). Un surface algo
+    /// mas claro que el fondo del editor, para que los atajos lean como chrome.
+    pub toolbar_button_bg: Color,
 }
 
 impl Theme {
@@ -56,6 +59,7 @@ impl Theme {
             selection_bg: Color::Rgb(0x57, 0x6a, 0xa6), // azul-gris (resalte visible)
             search_match_bg: Color::Rgb(0x8c, 0x73, 0x4a), // yellow apagado (match)
             search_current_bg: Color::Rgb(0xe5, 0xc8, 0x90), // yellow vivo (actual)
+            toolbar_button_bg: Color::Rgb(0x51, 0x57, 0x6d), // surface1 (boton)
         }
     }
 
@@ -72,6 +76,7 @@ impl Theme {
             selection_bg: Color::Rgb(0x4e, 0x5c, 0x9c), // azul-gris (resalte visible)
             search_match_bg: Color::Rgb(0x9a, 0x7e, 0x4e), // yellow apagado (match)
             search_current_bg: Color::Rgb(0xf9, 0xe2, 0xaf), // yellow vivo (actual)
+            toolbar_button_bg: Color::Rgb(0x45, 0x47, 0x5a), // surface1 (boton)
         }
     }
 

@@ -8,7 +8,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Hint, Keymap, Resolve, has_ctrl, resolve_format_second};
+use super::{Action, Hint, Keymap, Resolve, format_hints, has_ctrl, resolve_format_second};
 use crate::document::Mode;
 
 pub struct WordstarKeymap;
@@ -113,15 +113,49 @@ impl Keymap for WordstarKeymap {
     }
 
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
+        use crate::i18n::{Key, t};
         vec![
-            Hint::new(Action::Save, "^K S", "Guardar"),
-            Hint::new(Action::Search, "^Q F", "Buscar"),
-            Hint::new(Action::Replace, "^Q A", "Reemplazar"),
-            Hint::new(Action::Undo, "^Z", "Deshacer"),
-            Hint::new(Action::Yank, "^K C", "Copiar"),
-            Hint::new(Action::Paste, "^K V", "Pegar"),
-            Hint::new(Action::SaveAndQuit, "^K X", "Salir"),
+            Hint::new(Action::Save, "^K S", t(Key::HintSave)),
+            Hint::new(Action::Search, "^Q F", t(Key::HintSearch)),
+            Hint::new(Action::Replace, "^Q A", t(Key::HintReplace)),
+            Hint::new(Action::Undo, "^Z", t(Key::HintUndo)),
+            Hint::new(Action::Yank, "^K C", t(Key::HintYank)),
+            Hint::new(Action::Paste, "^K V", t(Key::HintPaste)),
+            Hint::prefix("^P", t(Key::HintFormatPrefix)),
+            Hint::new(Action::SaveAndQuit, "^K X", t(Key::HintQuit)),
         ]
+    }
+
+    fn chord_hints(&self, _mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
+        use crate::i18n::{Key, t};
+        let [k] = pending else {
+            return Vec::new();
+        };
+        if !has_ctrl(*k) {
+            return Vec::new();
+        }
+        match k.code {
+            // `Ctrl-P` + letra: formato (compartido con los otros presets).
+            KeyCode::Char('p') => format_hints(),
+            // `Ctrl-K` + letra: comandos de bloque/archivo.
+            KeyCode::Char('k') => vec![
+                Hint::new(Action::Save, "S", t(Key::HintSave)),
+                Hint::new(Action::SaveAndQuit, "X", t(Key::HintSaveQuit)),
+                Hint::new(Action::Quit, "Q", t(Key::HintQuit)),
+                Hint::new(Action::Yank, "C", t(Key::HintYank)),
+                Hint::new(Action::Paste, "V", t(Key::HintPaste)),
+            ],
+            // `Ctrl-Q` + letra: movimiento rapido y find/replace.
+            KeyCode::Char('q') => vec![
+                Hint::new(Action::LineStart, "S", t(Key::HintLineStart)),
+                Hint::new(Action::LineEnd, "D", t(Key::HintLineEnd)),
+                Hint::new(Action::DocStart, "R", t(Key::HintDocStart)),
+                Hint::new(Action::DocEnd, "C", t(Key::HintDocEnd)),
+                Hint::new(Action::Search, "F", t(Key::HintSearch)),
+                Hint::new(Action::Replace, "A", t(Key::HintReplace)),
+            ],
+            _ => Vec::new(),
+        }
     }
 }
 

@@ -1,0 +1,307 @@
+//! Internacionalizacion in-house: ingles y espanol, sin dependencias externas.
+//!
+//! Diseno: una tabla `match` que dado un `Locale` y una `Key` devuelve el texto
+//! correspondiente. Los textos son literales y por eso `&'static str`, asi se
+//! pueden insertar directo en cualquier API que pida un str con vida estatica
+//! (ej `Hint`, que guarda labels de la toolbar).
+//!
+//! Idioma activo: un `OnceLock<Locale>` global seteado UNA vez en `main` (via
+//! `init`). El resto del programa lee con `t(key)`, que delega en la tabla pura
+//! `t_for(locale, key)`. Antes de `init` o en tests, queda el default (`Es`).
+//!
+//! Cada string que ve el usuario es una `Key` aca. Para mensajes con formato
+//! (ej errores de config que muestran un path), exponemos helpers especificos
+//! que devuelven `String` aplicando `format!` sobre la traduccion.
+//!
+//! Agregar un idioma o una key: 1) sumar la variante al enum correspondiente,
+//! 2) agregar el arm en `t_for` para CADA locale (el compilador te avisa con
+//! `match` no exhaustivo si te olvidas alguno).
+
+use std::path::Path;
+use std::sync::OnceLock;
+
+/// Idiomas soportados por la UI. `Es` es el default historico del editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Locale {
+    #[default]
+    Es,
+    En,
+}
+
+impl Locale {
+    /// Parsea un nombre canonico (`"es"`, `"en"`, etc.). Acepta tambien locales
+    /// estilo `LANG` (`"es_AR.UTF-8"` -> `Es`) mirando solo el prefijo de 2
+    /// chars. `None` si no matchea ninguno conocido.
+    #[allow(dead_code)] // se cablea en el commit que agrega la deteccion de locale.
+    pub fn from_str(s: &str) -> Option<Locale> {
+        let head: String = s.trim().chars().take(2).collect::<String>().to_lowercase();
+        match head.as_str() {
+            "es" => Some(Locale::Es),
+            "en" => Some(Locale::En),
+            _ => None,
+        }
+    }
+
+    /// Adivina el locale desde la variable de entorno `LANG`/`LC_ALL` con
+    /// fallback al default (`Es`). `"C"` o `"POSIX"` cuentan como desconocidos.
+    #[allow(dead_code)] // se cablea en el commit que agrega la deteccion de locale.
+    pub fn from_env() -> Locale {
+        std::env::var("LC_ALL")
+            .or_else(|_| std::env::var("LANG"))
+            .ok()
+            .and_then(|s| Locale::from_str(&s))
+            .unwrap_or_default()
+    }
+}
+
+/// Cada string user-facing del editor: labels de la toolbar, nombres de modo,
+/// minibuffer de los overlays y mensajes de error. Una variante por string;
+/// agregar uno nuevo es agregar una variante aca y un arm en `t_for`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    // --- Toolbar: acciones de edicion --------------------------------------
+    HintSave,
+    HintSearch,
+    HintReplace,
+    HintUndo,
+    HintYank,
+    HintPaste,
+    HintBold,
+    HintItalic,
+    HintCode,
+    HintQuit,
+    HintSaveQuit,
+    HintDelete,
+    HintInsert,
+    HintVisual,
+    HintNormal,
+    HintLineStart,
+    HintLineEnd,
+    HintDocStart,
+    HintDocEnd,
+    /// Prefijo de chord de formato ("Formato…" / "Format…").
+    HintFormatPrefix,
+
+    // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
+    ModeNormal,
+    ModeInsert,
+    ModeVisual,
+
+    // --- Minibuffer de los overlays ---------------------------------------
+    MinibufferSearchPrompt,
+    MinibufferReplacePrompt,
+    /// Linea de ayuda al pie del overlay de reemplazo.
+    MinibufferReplaceHelp,
+
+    // --- Mensajes de error (defaults) -------------------------------------
+    UsingDefaults,
+    Ignored,
+}
+
+/// Locale activo, seteado UNA vez al arrancar `main`. Antes (o en tests) cae a
+/// `Locale::default()`. Usar `OnceLock` (no `RwLock`) deja explicito que es
+/// inmutable post-init.
+static LOCALE: OnceLock<Locale> = OnceLock::new();
+
+/// Fija el locale activo para el resto del proceso. Llamarse a si misma o
+/// llamarla dos veces es NO-OP (el segundo set se ignora silenciosamente, como
+/// quiere `OnceLock::set`).
+#[allow(dead_code)] // se cablea en el commit que agrega la deteccion de locale.
+pub fn init(locale: Locale) {
+    let _ = LOCALE.set(locale);
+}
+
+/// Locale efectivo en este momento.
+pub fn locale() -> Locale {
+    LOCALE.get().copied().unwrap_or_default()
+}
+
+/// Traduce una key al idioma activo. Conveniencia para el codigo de runtime.
+pub fn t(key: Key) -> &'static str {
+    t_for(locale(), key)
+}
+
+/// Tabla pura locale -> key -> texto. La unica fuente de verdad; los tests
+/// trabajan contra esta funcion para no depender del estado global.
+pub fn t_for(locale: Locale, key: Key) -> &'static str {
+    match (locale, key) {
+        // --- Toolbar ------------------------------------------------------
+        (Locale::Es, Key::HintSave) => "Guardar",
+        (Locale::En, Key::HintSave) => "Save",
+        (Locale::Es, Key::HintSearch) => "Buscar",
+        (Locale::En, Key::HintSearch) => "Search",
+        (Locale::Es, Key::HintReplace) => "Reemplazar",
+        (Locale::En, Key::HintReplace) => "Replace",
+        (Locale::Es, Key::HintUndo) => "Deshacer",
+        (Locale::En, Key::HintUndo) => "Undo",
+        (Locale::Es, Key::HintYank) => "Copiar",
+        (Locale::En, Key::HintYank) => "Copy",
+        (Locale::Es, Key::HintPaste) => "Pegar",
+        (Locale::En, Key::HintPaste) => "Paste",
+        (Locale::Es, Key::HintBold) => "Negrita",
+        (Locale::En, Key::HintBold) => "Bold",
+        (Locale::Es, Key::HintItalic) => "Italica",
+        (Locale::En, Key::HintItalic) => "Italic",
+        (Locale::Es, Key::HintCode) => "Codigo",
+        (Locale::En, Key::HintCode) => "Code",
+        (Locale::Es, Key::HintQuit) => "Salir",
+        (Locale::En, Key::HintQuit) => "Quit",
+        (Locale::Es, Key::HintSaveQuit) => "Guardar+Salir",
+        (Locale::En, Key::HintSaveQuit) => "Save+Quit",
+        (Locale::Es, Key::HintDelete) => "Borrar",
+        (Locale::En, Key::HintDelete) => "Delete",
+        (Locale::Es, Key::HintInsert) => "Insertar",
+        (Locale::En, Key::HintInsert) => "Insert",
+        (Locale::Es, Key::HintVisual) => "Visual",
+        (Locale::En, Key::HintVisual) => "Visual",
+        (Locale::Es, Key::HintNormal) => "Normal",
+        (Locale::En, Key::HintNormal) => "Normal",
+        (Locale::Es, Key::HintLineStart) => "Inicio linea",
+        (Locale::En, Key::HintLineStart) => "Line start",
+        (Locale::Es, Key::HintLineEnd) => "Fin linea",
+        (Locale::En, Key::HintLineEnd) => "Line end",
+        (Locale::Es, Key::HintDocStart) => "Inicio doc",
+        (Locale::En, Key::HintDocStart) => "Doc start",
+        (Locale::Es, Key::HintDocEnd) => "Fin doc",
+        (Locale::En, Key::HintDocEnd) => "Doc end",
+        (Locale::Es, Key::HintFormatPrefix) => "Formato…",
+        (Locale::En, Key::HintFormatPrefix) => "Format…",
+
+        // --- Status bar (nombres de modo) ---------------------------------
+        (Locale::Es, Key::ModeNormal) => "NORMAL",
+        (Locale::En, Key::ModeNormal) => "NORMAL",
+        (Locale::Es, Key::ModeInsert) => "INSERTAR",
+        (Locale::En, Key::ModeInsert) => "INSERT",
+        (Locale::Es, Key::ModeVisual) => "VISUAL",
+        (Locale::En, Key::ModeVisual) => "VISUAL",
+
+        // --- Minibuffer ---------------------------------------------------
+        (Locale::Es, Key::MinibufferSearchPrompt) => "buscar:",
+        (Locale::En, Key::MinibufferSearchPrompt) => "find:",
+        (Locale::Es, Key::MinibufferReplacePrompt) => "reemplazar:",
+        (Locale::En, Key::MinibufferReplacePrompt) => "replace:",
+        (Locale::Es, Key::MinibufferReplaceHelp) => "Tab cambia campo · Enter reemplaza todo",
+        (Locale::En, Key::MinibufferReplaceHelp) => "Tab switches field · Enter replaces all",
+
+        // --- Errores ------------------------------------------------------
+        (Locale::Es, Key::UsingDefaults) => "usando defaults",
+        (Locale::En, Key::UsingDefaults) => "using defaults",
+        (Locale::Es, Key::Ignored) => "ignorado",
+        (Locale::En, Key::Ignored) => "ignored",
+    }
+}
+
+// --- Helpers para mensajes con formato --------------------------------------
+//
+// Cada error que muestra parametros (path, nombre de preset, etc.) tiene su
+// propia funcion. Devuelven `String` ya formateado: las traducciones viven aca,
+// los call sites del editor quedan limpios.
+
+/// "typebar: no se pudo leer la config en {path}: {err}; usando defaults"
+pub fn error_config_read_failed(path: &Path, err: impl std::fmt::Display) -> String {
+    match locale() {
+        Locale::Es => format!(
+            "typebar: no se pudo leer la config en {}: {err}; {}",
+            path.display(),
+            t(Key::UsingDefaults),
+        ),
+        Locale::En => format!(
+            "typebar: could not read config at {}: {err}; {}",
+            path.display(),
+            t(Key::UsingDefaults),
+        ),
+    }
+}
+
+/// "typebar: config invalida en {origen}: {err}; usando defaults"
+pub fn error_config_invalid(origen: &str, err: impl std::fmt::Display) -> String {
+    match locale() {
+        Locale::Es => format!(
+            "typebar: config invalida en {origen}: {err}; {}",
+            t(Key::UsingDefaults),
+        ),
+        Locale::En => format!(
+            "typebar: invalid config at {origen}: {err}; {}",
+            t(Key::UsingDefaults),
+        ),
+    }
+}
+
+/// "typebar: preset desconocido en la config: {name}; usando {default}"
+pub fn error_unknown_preset(name: &str, default: &str) -> String {
+    match locale() {
+        Locale::Es => format!(
+            "typebar: preset desconocido en la config: {name:?}; usando {default}"
+        ),
+        Locale::En => format!(
+            "typebar: unknown preset in config: {name:?}; using {default}"
+        ),
+    }
+}
+
+/// "typebar: keybinding invalido {keys} -> {action}: {err}; ignorado"
+pub fn error_invalid_keybinding(keys: &str, action: &str, err: impl std::fmt::Display) -> String {
+    match locale() {
+        Locale::Es => format!(
+            "typebar: keybinding invalido {keys:?} -> {action:?}: {err}; {}",
+            t(Key::Ignored),
+        ),
+        Locale::En => format!(
+            "typebar: invalid keybinding {keys:?} -> {action:?}: {err}; {}",
+            t(Key::Ignored),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_es_espanol() {
+        assert_eq!(Locale::default(), Locale::Es);
+    }
+
+    #[test]
+    fn from_str_parsea_canonicos_y_locales_completos() {
+        assert_eq!(Locale::from_str("es"), Some(Locale::Es));
+        assert_eq!(Locale::from_str("en"), Some(Locale::En));
+        // Locales estilo LANG: solo importan los 2 primeros chars.
+        assert_eq!(Locale::from_str("es_AR.UTF-8"), Some(Locale::Es));
+        assert_eq!(Locale::from_str("en_US.UTF-8"), Some(Locale::En));
+        // Mayusculas / espacios.
+        assert_eq!(Locale::from_str("ES"), Some(Locale::Es));
+        assert_eq!(Locale::from_str("  en  "), Some(Locale::En));
+        // Desconocidos.
+        assert_eq!(Locale::from_str("fr"), None);
+        assert_eq!(Locale::from_str(""), None);
+        assert_eq!(Locale::from_str("C"), None);
+    }
+
+    #[test]
+    fn t_for_devuelve_textos_correctos() {
+        assert_eq!(t_for(Locale::Es, Key::HintSave), "Guardar");
+        assert_eq!(t_for(Locale::En, Key::HintSave), "Save");
+        assert_eq!(t_for(Locale::Es, Key::HintFormatPrefix), "Formato…");
+        assert_eq!(t_for(Locale::En, Key::HintFormatPrefix), "Format…");
+        assert_eq!(
+            t_for(Locale::Es, Key::MinibufferReplaceHelp),
+            "Tab cambia campo · Enter reemplaza todo"
+        );
+        assert_eq!(
+            t_for(Locale::En, Key::MinibufferReplaceHelp),
+            "Tab switches field · Enter replaces all"
+        );
+    }
+
+    #[test]
+    fn modos_son_iguales_en_ambos_locales() {
+        // Los nombres de modo de Vim son convencion universal (no se traducen
+        // NORMAL/VISUAL). El INSERT/INSERTAR si difiere por consistencia con
+        // los labels de los hints.
+        assert_eq!(t_for(Locale::Es, Key::ModeNormal), "NORMAL");
+        assert_eq!(t_for(Locale::En, Key::ModeNormal), "NORMAL");
+        assert_eq!(t_for(Locale::Es, Key::ModeVisual), "VISUAL");
+        assert_eq!(t_for(Locale::En, Key::ModeVisual), "VISUAL");
+    }
+}

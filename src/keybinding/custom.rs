@@ -116,17 +116,25 @@ impl Keymap for CustomKeymap {
         let mut hints = self.base.hints(mode);
         // Reflejar los remapeos: si el usuario rebindeo la accion de un hint (en
         // este modo o de forma agnostica), mostrar SU tecla en vez de la del
-        // preset. Se queda con el primer binding que matchea la accion.
+        // preset. Los hints estructurales (prefijos sin accion) no se remapean.
         for hint in &mut hints {
+            let Some(action) = hint.action else { continue };
             if let Some(b) = self
                 .bindings
                 .iter()
-                .find(|b| b.action == hint.action && b.mode.is_none_or(|m| m == mode))
+                .find(|b| b.action == action && b.mode.is_none_or(|m| m == mode))
             {
                 hint.keys = render_key_label(&b.keys);
             }
         }
         hints
+    }
+
+    fn chord_hints(&self, mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
+        // Las continuaciones de chords se delegan al preset base. (Reflejar
+        // chords definidos por el usuario en la barra queda pendiente: requiere
+        // mapear cada accion a su etiqueta, que hoy solo conocen los presets.)
+        self.base.chord_hints(mode, pending)
     }
 }
 
@@ -469,7 +477,7 @@ mod tests {
         let save = km
             .hints(Mode::Insert)
             .into_iter()
-            .find(|h| h.action == Action::Save)
+            .find(|h| h.action == Some(Action::Save))
             .expect("deberia haber hint de Guardar");
         assert_eq!(save.keys, "^W");
     }

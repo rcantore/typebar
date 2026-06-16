@@ -3,7 +3,9 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Hint, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
+use super::{
+    Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, resolve_format_second,
+};
 use crate::document::Mode;
 
 pub struct VimKeymap;
@@ -116,25 +118,37 @@ impl Keymap for VimKeymap {
     }
 
     fn hints(&self, mode: Mode) -> Vec<Hint> {
+        use crate::i18n::{Key, t};
         match mode {
             Mode::Normal => vec![
-                Hint::new(Action::EnterInsert, "i", "Insertar"),
-                Hint::new(Action::EnterVisual, "v", "Visual"),
-                Hint::new(Action::Search, "/", "Buscar"),
-                Hint::new(Action::Undo, "u", "Deshacer"),
-                Hint::new(Action::Paste, "p", "Pegar"),
-                Hint::new(Action::Save, "^S", "Guardar"),
-                Hint::new(Action::Quit, "q", "Salir"),
+                Hint::new(Action::EnterInsert, "i", t(Key::HintInsert)),
+                Hint::new(Action::EnterVisual, "v", t(Key::HintVisual)),
+                Hint::new(Action::Search, "/", t(Key::HintSearch)),
+                Hint::new(Action::Undo, "u", t(Key::HintUndo)),
+                Hint::new(Action::Paste, "p", t(Key::HintPaste)),
+                Hint::new(Action::Save, "^S", t(Key::HintSave)),
+                Hint::prefix("^P", t(Key::HintFormatPrefix)),
+                Hint::new(Action::Quit, "q", t(Key::HintQuit)),
             ],
             Mode::Insert => vec![
-                Hint::new(Action::EnterNormal, "Esc", "Normal"),
-                Hint::new(Action::Save, "^S", "Guardar"),
+                Hint::new(Action::EnterNormal, "Esc", t(Key::HintNormal)),
+                Hint::new(Action::Save, "^S", t(Key::HintSave)),
+                Hint::prefix("^P", t(Key::HintFormatPrefix)),
             ],
             Mode::Visual => vec![
-                Hint::new(Action::Yank, "y", "Copiar"),
-                Hint::new(Action::DeleteSelection, "x", "Borrar"),
-                Hint::new(Action::EnterNormal, "Esc", "Normal"),
+                Hint::new(Action::Yank, "y", t(Key::HintYank)),
+                Hint::new(Action::DeleteSelection, "x", t(Key::HintDelete)),
+                Hint::prefix("^P", t(Key::HintFormatPrefix)),
+                Hint::new(Action::EnterNormal, "Esc", t(Key::HintNormal)),
             ],
+        }
+    }
+
+    fn chord_hints(&self, _mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
+        // `Ctrl-P` (formato) funciona en cualquier modo, igual que en resolve.
+        match pending {
+            [k] if is_format_prefix(*k) => format_hints(),
+            _ => Vec::new(),
         }
     }
 }

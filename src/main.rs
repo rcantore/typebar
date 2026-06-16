@@ -11,6 +11,7 @@
 
 mod config;
 mod document;
+mod i18n;
 mod keybinding;
 mod markdown;
 mod render;
@@ -81,9 +82,7 @@ fn resolve_preset(cli_preset: Option<String>, config: &config::Config) -> String
     match config.keybindings.preset.as_deref() {
         Some(name) if config::is_known_preset(name) => name.to_string(),
         Some(name) => {
-            eprintln!(
-                "typebar: preset desconocido en la config: {name:?}; usando {DEFAULT_PRESET}"
-            );
+            eprintln!("{}", i18n::error_unknown_preset(name, DEFAULT_PRESET));
             DEFAULT_PRESET.to_string()
         }
         None => DEFAULT_PRESET.to_string(),
@@ -100,8 +99,8 @@ fn apply_overrides(base: Box<dyn Keymap>, entries: &[config::BindEntry]) -> Box<
         match parse_binding(&entry.keys, &entry.action, entry.mode.as_deref()) {
             Ok(binding) => bindings.push(binding),
             Err(err) => eprintln!(
-                "typebar: keybinding invalido {:?} -> {:?}: {err}; ignorado",
-                entry.keys, entry.action
+                "{}",
+                i18n::error_invalid_keybinding(&entry.keys, &entry.action, err)
             ),
         }
     }
@@ -207,9 +206,11 @@ fn draw(
     theme: &Theme,
     overlay: Option<&Overlay>,
 ) {
-    // Partir la pantalla: editor (resto) + barra de atajos + 1 linea de status.
-    let [editor_area, hints_area, status_area] = Layout::vertical([
+    // Partir la pantalla: editor (resto) + toolbar + gap + status bar. El gap
+    // de 1 linea separa visualmente el chrome de comandos del de estado.
+    let [editor_area, hints_area, _gap, status_area] = Layout::vertical([
         Constraint::Min(1),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -251,7 +252,7 @@ fn draw(
 
     // Barra de atajos (toolbar estilo WordStar/Norton Commander): los atajos del
     // preset para el modo actual, reflejando los remapeos del usuario.
-    frame.render_widget(hints_bar(keymap, doc.mode, theme), hints_area);
+    frame.render_widget(hints_bar(keymap, doc.mode, pending, theme), hints_area);
 
     // Con overlay abierto, el minibuffer reemplaza la status bar.
     match overlay {
@@ -269,22 +270,49 @@ fn draw(
     }
 }
 
-/// Construye la barra de atajos: para cada hint del preset (segun el modo), la
-/// tecla resaltada seguida de su descripcion, separados por dos espacios. Los
-/// keybindings remapeados ya vienen reflejados en `keymap.hints` (el overlay
-/// reescribe la tecla). Si no entran todos, ratatui los trunca al ancho.
-fn hints_bar(keymap: &dyn Keymap, mode: Mode, theme: &Theme) -> Line<'static> {
-    let key_style = Style::default()
-        .fg(theme.heading_2)
-        .add_modifier(Modifier::BOLD);
-    let label_style = Style::default().fg(theme.marker);
+/// Construye la barra de atajos: cada hint se dibuja como un "boton" con fondo
+/// propio (` tecla label `), con la tecla en acento+negrita y el label en el
+/// texto normal sobre el mismo fondo; entre botones va un espacio SIN fondo para
+/// separarlos.
+///
+/// Es dinamica: si hay un chord en curso (`pending` no vacio) y el preset tiene
+/// continuaciones para ese prefijo, la barra muestra ese subconjunto, precedido
+/// por el prefijo (ej `^P ▸`). Si no, muestra los atajos top-level del modo. Los
+/// keybindings remapeados ya vienen reflejados en `keymap.hints`. Si no entran
+/// todos, ratatui los trunca al ancho.
+fn hints_bar(keymap: &dyn Keymap, mode: Mode, pending: &[KeyEvent], theme: &Theme) -> Line<'static> {
+    // El boton entero comparte el fondo; la tecla ademas lleva acento y negrita.
+    let button = Style::default().bg(theme.toolbar_button_bg);
+    let key_style = button.fg(theme.heading_2).add_modifier(Modifier::BOLD);
 
-    let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
-    for hint in keymap.hints(mode) {
+    // Chord en curso con continuaciones conocidas -> mostrar ese subconjunto.
+    let chord = if pending.is_empty() {
+        Vec::new()
+    } else {
+        keymap.chord_hints(mode, pending)
+    };
+    let in_chord = !chord.is_empty();
+    let hints = if in_chord { chord } else { keymap.hints(mode) };
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    // En un chord, anteponer el prefijo (ej `^P ▸`) como contexto.
+    if in_chord && let Some(prefix) = chord_indicator(pending) {
+        spans.push(Span::styled(
+            format!(" {prefix} ▸"),
+            Style::default()
+                .fg(theme.heading_1)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    for (i, hint) in hints.into_iter().enumerate() {
+        // Separacion entre botones (sin fondo, deja ver el fondo del editor). El
+        // primer boton sin chord lleva solo un margen de 1; con chord va tras el
+        // prefijo, asi que tambien separa con 2.
+        spans.push(Span::raw(if i == 0 && !in_chord { " " } else { "  " }));
+        // Boton: padding + tecla (acento) + gap + label, todo sobre el fondo.
+        spans.push(Span::styled(" ", button));
         spans.push(Span::styled(hint.keys, key_style));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(hint.label, label_style));
-        spans.push(Span::raw("  "));
+        spans.push(Span::styled(format!(" {} ", hint.label), button));
     }
     Line::from(spans)
 }
@@ -296,9 +324,9 @@ fn status_bar(doc: &Document, keymap: &dyn Keymap, pending: &[KeyEvent]) -> Line
     // muestra "NORMAL/INSERT" porque no existen.
     let left = if keymap.is_modal() {
         let mode = match doc.mode {
-            Mode::Normal => "NORMAL",
-            Mode::Insert => "INSERT",
-            Mode::Visual => "VISUAL",
+            Mode::Normal => i18n::t(i18n::Key::ModeNormal),
+            Mode::Insert => i18n::t(i18n::Key::ModeInsert),
+            Mode::Visual => i18n::t(i18n::Key::ModeVisual),
         };
         format!(" {} · {} · {} ", keymap.name(), mode, doc.path.display())
     } else {
@@ -482,9 +510,10 @@ impl Overlay {
     fn minibuffer(&self) -> Line<'static> {
         let style = Style::default().add_modifier(Modifier::REVERSED);
         match self {
-            Overlay::Search { query } => {
-                Line::from(Span::styled(format!(" buscar: {query}_ "), style))
-            }
+            Overlay::Search { query } => Line::from(Span::styled(
+                format!(" {} {query}_ ", i18n::t(i18n::Key::MinibufferSearchPrompt)),
+                style,
+            )),
             Overlay::Replace {
                 find,
                 replacement,
@@ -497,7 +526,11 @@ impl Overlay {
                     (format!("{find}_"), replacement.clone())
                 };
                 Line::from(Span::styled(
-                    format!(" reemplazar: {f} → {r}  (Tab cambia campo · Enter reemplaza todo) "),
+                    format!(
+                        " {} {f} → {r}  ({}) ",
+                        i18n::t(i18n::Key::MinibufferReplacePrompt),
+                        i18n::t(i18n::Key::MinibufferReplaceHelp),
+                    ),
                     style,
                 ))
             }

@@ -109,11 +109,14 @@ pub enum Resolve {
 /// Un atajo a mostrar en la barra de atajos (toolbar estilo WordStar/Norton
 /// Commander): la combinacion de teclas y que hace. `action` permite que el
 /// overlay de keybindings remapeados reescriba `keys` con la tecla configurada
-/// por el usuario en vez de la del preset.
+/// por el usuario en vez de la del preset; un hint *estructural* (prefijo de
+/// chord como `^P`, sin una accion concreta) usa `None` y no se remapea.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hint {
-    /// La accion que dispara (para reflejar remapeos del usuario).
-    pub action: Action,
+    /// La accion que dispara (para reflejar remapeos del usuario). `None` en
+    /// hints estructurales que no mapean a una accion unica (ej un prefijo de
+    /// chord como `^P` para formato).
+    pub action: Option<Action>,
     /// Etiqueta de la(s) tecla(s), ej `^S` o `^K X`.
     pub keys: String,
     /// Descripcion corta de la accion, ej `Guardar`.
@@ -121,10 +124,20 @@ pub struct Hint {
 }
 
 impl Hint {
-    /// Helper para construir un hint con `keys` literal (lo usan los presets).
+    /// Hint comun: una accion concreta con su atajo.
     fn new(action: Action, keys: &str, label: &'static str) -> Self {
         Hint {
-            action,
+            action: Some(action),
+            keys: keys.to_string(),
+            label,
+        }
+    }
+
+    /// Hint estructural: un prefijo de chord (ej `^P` -> Formato) que no
+    /// dispara una accion concreta por si solo. No participa del remapeo.
+    fn prefix(keys: &str, label: &'static str) -> Self {
+        Hint {
+            action: None,
             keys: keys.to_string(),
             label,
         }
@@ -145,6 +158,13 @@ pub trait Keymap {
     /// Atajos a mostrar en la barra de atajos para el modo dado, en orden de
     /// aparicion. Cada preset expone los suyos mas utiles.
     fn hints(&self, mode: Mode) -> Vec<Hint>;
+    /// Atajos de CONTINUACION de un chord en curso: dado el prefijo ya tipeado
+    /// (`pending`), que acciones se alcanzan con la proxima tecla. La `keys` de
+    /// cada hint es solo esa proxima tecla (el prefijo ya se muestra aparte).
+    /// Default vacio: los presets sin chords no aportan continuaciones.
+    fn chord_hints(&self, _mode: Mode, _pending: &[KeyEvent]) -> Vec<Hint> {
+        Vec::new()
+    }
 }
 
 use ratatui::crossterm::event::KeyCode;
@@ -176,6 +196,17 @@ fn resolve_format_second(second: KeyEvent) -> Resolve {
         'c' => Resolve::Action(Action::ToggleCode),
         _ => Resolve::None,
     }
+}
+
+/// Hints de continuacion del chord de formato `Ctrl-P` + letra, compartido por
+/// los tres presets (igual que `resolve_format_second` comparte su resolucion).
+fn format_hints() -> Vec<Hint> {
+    use crate::i18n::{Key, t};
+    vec![
+        Hint::new(Action::ToggleBold, "B", t(Key::HintBold)),
+        Hint::new(Action::ToggleItalic, "I", t(Key::HintItalic)),
+        Hint::new(Action::ToggleCode, "C", t(Key::HintCode)),
+    ]
 }
 
 /// Construye el preset segun su nombre. Si no matchea ninguno conocido, cae al

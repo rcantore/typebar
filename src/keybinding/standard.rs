@@ -4,7 +4,9 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{Action, Hint, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
+use super::{
+    Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, resolve_format_second,
+};
 use crate::document::Mode;
 
 /// Devuelve la accion de extender seleccion si `key` es una flecha con SHIFT, o
@@ -93,16 +95,28 @@ impl Keymap for StandardKeymap {
     }
 
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
+        use crate::i18n::{Key, t};
         vec![
-            Hint::new(Action::Save, "^S", "Guardar"),
-            Hint::new(Action::Search, "^F", "Buscar"),
-            Hint::new(Action::Replace, "^R", "Reemplazar"),
-            Hint::new(Action::ToggleBold, "^B", "Negrita"),
-            Hint::new(Action::Undo, "^Z", "Deshacer"),
-            Hint::new(Action::Yank, "^C", "Copiar"),
-            Hint::new(Action::Paste, "^V", "Pegar"),
-            Hint::new(Action::Quit, "^Q", "Salir"),
+            Hint::new(Action::Save, "^S", t(Key::HintSave)),
+            Hint::new(Action::Search, "^F", t(Key::HintSearch)),
+            Hint::new(Action::Replace, "^R", t(Key::HintReplace)),
+            Hint::new(Action::ToggleBold, "^B", t(Key::HintBold)),
+            Hint::new(Action::Undo, "^Z", t(Key::HintUndo)),
+            Hint::new(Action::Yank, "^C", t(Key::HintYank)),
+            Hint::new(Action::Paste, "^V", t(Key::HintPaste)),
+            // Prefijo de chord de formato: avisa al usuario que `^P` abre un
+            // submenu (negrita/italica/codigo). No es una accion: no se remapea.
+            Hint::prefix("^P", t(Key::HintFormatPrefix)),
+            Hint::new(Action::Quit, "^Q", t(Key::HintQuit)),
         ]
+    }
+
+    fn chord_hints(&self, _mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
+        // El unico chord de standard es el prefijo de formato `Ctrl-P`.
+        match pending {
+            [k] if is_format_prefix(*k) => format_hints(),
+            _ => Vec::new(),
+        }
     }
 }
 
