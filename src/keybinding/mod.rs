@@ -89,6 +89,10 @@ pub enum Action {
     Yank,
     /// Pegar el portapapeles interno en el cursor (paste).
     Paste,
+    /// Abrir el overlay de busqueda incremental.
+    Search,
+    /// Abrir el overlay de buscar y reemplazar.
+    Replace,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
@@ -102,6 +106,31 @@ pub enum Resolve {
     None,
 }
 
+/// Un atajo a mostrar en la barra de atajos (toolbar estilo WordStar/Norton
+/// Commander): la combinacion de teclas y que hace. `action` permite que el
+/// overlay de keybindings remapeados reescriba `keys` con la tecla configurada
+/// por el usuario en vez de la del preset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hint {
+    /// La accion que dispara (para reflejar remapeos del usuario).
+    pub action: Action,
+    /// Etiqueta de la(s) tecla(s), ej `^S` o `^K X`.
+    pub keys: String,
+    /// Descripcion corta de la accion, ej `Guardar`.
+    pub label: &'static str,
+}
+
+impl Hint {
+    /// Helper para construir un hint con `keys` literal (lo usan los presets).
+    fn new(action: Action, keys: &str, label: &'static str) -> Self {
+        Hint {
+            action,
+            keys: keys.to_string(),
+            label,
+        }
+    }
+}
+
 /// Contrato de un preset de teclado.
 pub trait Keymap {
     /// Resuelve una secuencia de teclas en el modo actual: accion completa,
@@ -113,6 +142,9 @@ pub trait Keymap {
     fn initial_mode(&self) -> Mode;
     /// Nombre del preset para la status bar.
     fn name(&self) -> &'static str;
+    /// Atajos a mostrar en la barra de atajos para el modo dado, en orden de
+    /// aparicion. Cada preset expone los suyos mas utiles.
+    fn hints(&self, mode: Mode) -> Vec<Hint>;
 }
 
 use ratatui::crossterm::event::KeyCode;

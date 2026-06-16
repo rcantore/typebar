@@ -122,10 +122,15 @@ fn collect_styles(source: &str, theme: &Theme) -> Vec<StyleSpan> {
 /// los bytes adentro reciben el `bg` de seleccion, preservando el fg/modifiers
 /// del estilo de texto que ya tenian (solo se pisa el fondo).
 ///
+/// `matches` son rangos en bytes de coincidencias de busqueda a resaltar; el
+/// indice `current` (si hay) marca la coincidencia activa con un color mas vivo.
+///
 /// `theme` provee la paleta de colores (ver `crate::theme::Theme`).
 pub fn render(
     source: &str,
     selection: Option<std::ops::Range<usize>>,
+    matches: &[std::ops::Range<usize>],
+    current: Option<usize>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let spans = collect_styles(source, theme);
@@ -138,6 +143,23 @@ pub fn render(
     for span in ordered {
         for slot in &mut by_byte[span.start..span.end] {
             *slot = span.style;
+        }
+    }
+
+    // Resalte de coincidencias de busqueda (solo pisa el `bg`). La coincidencia
+    // actual va con un color mas vivo que el resto.
+    for (i, m) in matches.iter().enumerate() {
+        let end = m.end.min(source.len());
+        if m.start >= end {
+            continue;
+        }
+        let bg = if current == Some(i) {
+            theme.search_current_bg
+        } else {
+            theme.search_match_bg
+        };
+        for slot in &mut by_byte[m.start..end] {
+            *slot = slot.bg(bg);
         }
     }
 
@@ -215,7 +237,7 @@ mod tests {
         let theme = test_theme();
         let source =
             std::fs::read_to_string("examples/sample.md").expect("falta examples/sample.md");
-        let lines = render(&source, None, &theme);
+        let lines = render(&source, None, &[], None, &theme);
         println!(
             "\n--- volcado de estilos (.=plano B=bold I=italic C=code H=heading m=marker) ---"
         );
@@ -243,7 +265,7 @@ mod tests {
     fn inline_offsets_son_absolutos() {
         let theme = test_theme();
         let source = "# T\n\nplano **negrita** fin\n";
-        let lines = render(source, None, &theme);
+        let lines = render(source, None, &[], None, &theme);
         // Linea 2 (indice 2): "plano **negrita** fin"
         let line = &lines[2];
         // Reconstruir el estilo por char y chequear que los '*' esten dimmeados
@@ -278,7 +300,7 @@ mod tests {
         // el bg de seleccion; el resto no.
         let theme = test_theme();
         let source = "hola mundo";
-        let lines = render(source, Some(0..4), &theme);
+        let lines = render(source, Some(0..4), &[], None, &theme);
         // Reconstruir el bg por char.
         let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
         for span in &lines[0].spans {
@@ -299,5 +321,27 @@ mod tests {
         for slot in per_char.iter().skip(4) {
             assert_ne!(slot.1, Some(theme.selection_bg));
         }
+    }
+
+    #[test]
+    fn busqueda_resalta_matches_y_el_actual_distinto() {
+        // "ab ab ab": dos matches de "ab" (0..2 y 3..5), el segundo es el actual.
+        let theme = test_theme();
+        let source = "ab ab ab";
+        let matches = vec![0..2, 3..5, 6..8];
+        let lines = render(source, None, &matches, Some(1), &theme);
+        let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
+        for span in &lines[0].spans {
+            for ch in span.content.chars() {
+                per_char.push((ch, span.style.bg));
+            }
+        }
+        // Match 0 (0..2): color de match comun.
+        assert_eq!(per_char[0].1, Some(theme.search_match_bg));
+        // Match actual (3..5): color vivo.
+        assert_eq!(per_char[3].1, Some(theme.search_current_bg));
+        assert_eq!(per_char[4].1, Some(theme.search_current_bg));
+        // Espacio entre matches: sin resalte.
+        assert_eq!(per_char[2].1, None);
     }
 }

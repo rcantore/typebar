@@ -4,7 +4,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{Action, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
+use super::{Action, Hint, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
 use crate::document::Mode;
 
 /// Devuelve la accion de extender seleccion si `key` es una flecha con SHIFT, o
@@ -45,6 +45,9 @@ impl StandardKeymap {
                 // raw mode captura Ctrl-C asi que no interrumpe el proceso.
                 KeyCode::Char('c') => Resolve::Action(Action::Yank),
                 KeyCode::Char('v') => Resolve::Action(Action::Paste),
+                // Ctrl-F busca, Ctrl-R reemplaza (convencion moderna).
+                KeyCode::Char('f') => Resolve::Action(Action::Search),
+                KeyCode::Char('r') => Resolve::Action(Action::Replace),
                 // Ctrl-B: negrita directa (memoria muscular). Ctrl-I no se
                 // bindea: en la terminal es indistinguible de Tab; por eso la
                 // italica va por el chord Ctrl-P I.
@@ -87,6 +90,19 @@ impl Keymap for StandardKeymap {
 
     fn name(&self) -> &'static str {
         "standard"
+    }
+
+    fn hints(&self, _mode: Mode) -> Vec<Hint> {
+        vec![
+            Hint::new(Action::Save, "^S", "Guardar"),
+            Hint::new(Action::Search, "^F", "Buscar"),
+            Hint::new(Action::Replace, "^R", "Reemplazar"),
+            Hint::new(Action::ToggleBold, "^B", "Negrita"),
+            Hint::new(Action::Undo, "^Z", "Deshacer"),
+            Hint::new(Action::Yank, "^C", "Copiar"),
+            Hint::new(Action::Paste, "^V", "Pegar"),
+            Hint::new(Action::Quit, "^Q", "Salir"),
+        ]
     }
 }
 

@@ -8,7 +8,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Keymap, Resolve, has_ctrl, resolve_format_second};
+use super::{Action, Hint, Keymap, Resolve, has_ctrl, resolve_format_second};
 use crate::document::Mode;
 
 pub struct WordstarKeymap;
@@ -80,6 +80,10 @@ impl WordstarKeymap {
                 'd' => Resolve::Action(Action::LineEnd),
                 'r' => Resolve::Action(Action::DocStart),
                 'c' => Resolve::Action(Action::DocEnd),
+                // `Ctrl-Q F` busca, `Ctrl-Q A` busca y reemplaza (autentico de
+                // WordStar: find y find/replace).
+                'f' => Resolve::Action(Action::Search),
+                'a' => Resolve::Action(Action::Replace),
                 _ => Resolve::None,
             },
             _ => Resolve::None,
@@ -106,6 +110,18 @@ impl Keymap for WordstarKeymap {
 
     fn name(&self) -> &'static str {
         "wordstar"
+    }
+
+    fn hints(&self, _mode: Mode) -> Vec<Hint> {
+        vec![
+            Hint::new(Action::Save, "^K S", "Guardar"),
+            Hint::new(Action::Search, "^Q F", "Buscar"),
+            Hint::new(Action::Replace, "^Q A", "Reemplazar"),
+            Hint::new(Action::Undo, "^Z", "Deshacer"),
+            Hint::new(Action::Yank, "^K C", "Copiar"),
+            Hint::new(Action::Paste, "^K V", "Pegar"),
+            Hint::new(Action::SaveAndQuit, "^K X", "Salir"),
+        ]
     }
 }
 

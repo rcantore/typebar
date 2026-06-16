@@ -3,7 +3,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
+use super::{Action, Hint, Keymap, Resolve, has_ctrl, is_format_prefix, resolve_format_second};
 use crate::document::Mode;
 
 pub struct VimKeymap;
@@ -35,6 +35,9 @@ impl VimKeymap {
             KeyCode::Char('p') => Resolve::Action(Action::Paste),
             // `u` deshace (canonico de Vim; en Insert no se bindea).
             KeyCode::Char('u') => Resolve::Action(Action::Undo),
+            // `/` busca (canonico de Vim). El reemplazo (`:s`) no se modela; se
+            // puede bindear a gusto con los keybindings remapeables.
+            KeyCode::Char('/') => Resolve::Action(Action::Search),
             KeyCode::Char('q') => Resolve::Action(Action::Quit),
             _ => Resolve::None,
         }
@@ -110,6 +113,29 @@ impl Keymap for VimKeymap {
 
     fn name(&self) -> &'static str {
         "vim"
+    }
+
+    fn hints(&self, mode: Mode) -> Vec<Hint> {
+        match mode {
+            Mode::Normal => vec![
+                Hint::new(Action::EnterInsert, "i", "Insertar"),
+                Hint::new(Action::EnterVisual, "v", "Visual"),
+                Hint::new(Action::Search, "/", "Buscar"),
+                Hint::new(Action::Undo, "u", "Deshacer"),
+                Hint::new(Action::Paste, "p", "Pegar"),
+                Hint::new(Action::Save, "^S", "Guardar"),
+                Hint::new(Action::Quit, "q", "Salir"),
+            ],
+            Mode::Insert => vec![
+                Hint::new(Action::EnterNormal, "Esc", "Normal"),
+                Hint::new(Action::Save, "^S", "Guardar"),
+            ],
+            Mode::Visual => vec![
+                Hint::new(Action::Yank, "y", "Copiar"),
+                Hint::new(Action::DeleteSelection, "x", "Borrar"),
+                Hint::new(Action::EnterNormal, "Esc", "Normal"),
+            ],
+        }
     }
 }
 

@@ -29,7 +29,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{Action, Keymap, Resolve};
+use super::{Action, Hint, Keymap, Resolve};
 use crate::document::Mode;
 
 /// Una tecla individual normalizada para comparar contra los `KeyEvent` que
@@ -110,6 +110,72 @@ impl Keymap for CustomKeymap {
 
     fn name(&self) -> &'static str {
         self.base.name()
+    }
+
+    fn hints(&self, mode: Mode) -> Vec<Hint> {
+        let mut hints = self.base.hints(mode);
+        // Reflejar los remapeos: si el usuario rebindeo la accion de un hint (en
+        // este modo o de forma agnostica), mostrar SU tecla en vez de la del
+        // preset. Se queda con el primer binding que matchea la accion.
+        for hint in &mut hints {
+            if let Some(b) = self
+                .bindings
+                .iter()
+                .find(|b| b.action == hint.action && b.mode.is_none_or(|m| m == mode))
+            {
+                hint.keys = render_key_label(&b.keys);
+            }
+        }
+        hints
+    }
+}
+
+/// Etiqueta legible de una secuencia de teclas para la barra de atajos, ej
+/// `^K X` o `⇧→`. Los tokens se separan por espacio.
+fn render_key_label(specs: &[KeySpec]) -> String {
+    specs
+        .iter()
+        .map(render_one_key)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Etiqueta de una sola tecla: prefijo de modificadores (`^` ctrl, `⇧` shift,
+/// `M-` alt) + el nombre de la tecla.
+fn render_one_key(spec: &KeySpec) -> String {
+    let mut s = String::new();
+    if spec.mods.contains(KeyModifiers::CONTROL) {
+        s.push('^');
+    }
+    if spec.mods.contains(KeyModifiers::SHIFT) {
+        s.push('⇧');
+    }
+    if spec.mods.contains(KeyModifiers::ALT) {
+        s.push_str("M-");
+    }
+    s.push_str(&key_code_label(spec.code));
+    s
+}
+
+/// Nombre corto de un `KeyCode` para la barra de atajos. Las letras bajo Ctrl se
+/// muestran en mayuscula (convencion `^S`).
+fn key_code_label(code: KeyCode) -> String {
+    match code {
+        KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
+        KeyCode::Left => "←".to_string(),
+        KeyCode::Right => "→".to_string(),
+        KeyCode::Up => "↑".to_string(),
+        KeyCode::Down => "↓".to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Backspace => "Bksp".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Delete => "Del".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PgUp".to_string(),
+        KeyCode::PageDown => "PgDn".to_string(),
+        other => format!("{other:?}"),
     }
 }
 
@@ -253,6 +319,8 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "redo" => Action::Redo,
         "yank" => Action::Yank,
         "paste" => Action::Paste,
+        "search" => Action::Search,
+        "replace" => Action::Replace,
         other => return Err(format!("accion desconocida: {other:?}")),
     };
     Ok(action)
@@ -390,5 +458,27 @@ mod tests {
         assert_eq!(km.name(), "standard");
         assert!(!km.is_modal());
         assert_eq!(km.initial_mode(), Mode::Insert);
+    }
+
+    #[test]
+    fn hints_reflejan_el_remapeo_del_usuario() {
+        // standard muestra Guardar con "^S"; si el usuario lo remapea a Ctrl-W,
+        // la barra de atajos debe mostrar "^W".
+        let b = parse_binding("ctrl-w", "save", None).unwrap();
+        let km = CustomKeymap::new(Box::new(StandardKeymap), vec![b]);
+        let save = km
+            .hints(Mode::Insert)
+            .into_iter()
+            .find(|h| h.action == Action::Save)
+            .expect("deberia haber hint de Guardar");
+        assert_eq!(save.keys, "^W");
+    }
+
+    #[test]
+    fn render_key_label_de_un_chord() {
+        let specs = parse_key_seq("ctrl-k x").unwrap();
+        assert_eq!(render_key_label(&specs), "^K X");
+        let arrow = parse_key_seq("shift-right").unwrap();
+        assert_eq!(render_key_label(&arrow), "⇧→");
     }
 }

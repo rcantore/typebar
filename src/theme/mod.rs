@@ -34,6 +34,11 @@ pub struct Theme {
     pub marker: Color,
     /// Background del resalte de seleccion (solo pisa el `bg`, preserva el fg).
     pub selection_bg: Color,
+    /// Background de una coincidencia de busqueda (todas las que matchean).
+    pub search_match_bg: Color,
+    /// Background de la coincidencia de busqueda ACTUAL (a la que salto el
+    /// cursor), mas marcada que el resto para distinguirla.
+    pub search_current_bg: Color,
 }
 
 impl Theme {
@@ -49,6 +54,8 @@ impl Theme {
             code_bg: Color::Rgb(0x41, 0x45, 0x59),      // surface0
             marker: Color::Rgb(0x73, 0x7a, 0x94),       // overlay0 (dimmeado)
             selection_bg: Color::Rgb(0x51, 0x57, 0x6d), // surface1 (resalte sutil)
+            search_match_bg: Color::Rgb(0x8c, 0x73, 0x4a), // yellow apagado (match)
+            search_current_bg: Color::Rgb(0xe5, 0xc8, 0x90), // yellow vivo (actual)
         }
     }
 
@@ -63,6 +70,8 @@ impl Theme {
             code_bg: Color::Rgb(0x31, 0x32, 0x44),      // surface0
             marker: Color::Rgb(0x6c, 0x70, 0x86),       // overlay0 (dimmeado)
             selection_bg: Color::Rgb(0x45, 0x47, 0x5a), // surface1 (resalte sutil)
+            search_match_bg: Color::Rgb(0x9a, 0x7e, 0x4e), // yellow apagado (match)
+            search_current_bg: Color::Rgb(0xf9, 0xe2, 0xaf), // yellow vivo (actual)
         }
     }
 

@@ -14,6 +14,7 @@
 
 mod clipboard;
 mod edit;
+mod find;
 mod history;
 mod motion;
 mod select;
