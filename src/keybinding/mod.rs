@@ -15,11 +15,18 @@
 //! - `vim`: modal (Normal/Insert), replica el comportamiento Vim minimo.
 //! - `wordstar`: modeless con chords, homenaje al editor clasico (diamante de
 //!   navegacion `Ctrl-E/X/S/D` + chords `Ctrl-K`/`Ctrl-Q`).
+//!
+//! Encima de cualquier preset, el usuario puede definir overrides en
+//! `config.toml` (ver `custom`): un `CustomKeymap` envuelve el preset base y
+//! antepone los bindings del usuario, cayendo al preset cuando una secuencia no
+//! esta overrideada.
 
+mod custom;
 mod standard;
 mod vim;
 mod wordstar;
 
+pub use custom::{Binding, CustomKeymap, parse_binding};
 pub use standard::StandardKeymap;
 pub use vim::VimKeymap;
 pub use wordstar::WordstarKeymap;

@@ -18,7 +18,7 @@ mod text;
 mod theme;
 
 use document::{Document, Mode};
-use keybinding::{Action, Keymap, Resolve, keymap_from_name};
+use keybinding::{Action, Binding, CustomKeymap, Keymap, Resolve, keymap_from_name, parse_binding};
 use markdown::InlineKind;
 use theme::Theme;
 
@@ -87,6 +87,28 @@ fn resolve_preset(cli_preset: Option<String>, config: &config::Config) -> String
     }
 }
 
+/// Aplica los overrides de teclas del usuario encima del preset `base`. Cada
+/// entrada se parsea en el borde: las invalidas se reportan por stderr y se
+/// descartan (igual que el resto de la config, el editor arranca igual). Si no
+/// queda ningun override valido, devuelve el preset base sin envolver.
+fn apply_overrides(base: Box<dyn Keymap>, entries: &[config::BindEntry]) -> Box<dyn Keymap> {
+    let mut bindings: Vec<Binding> = Vec::new();
+    for entry in entries {
+        match parse_binding(&entry.keys, &entry.action, entry.mode.as_deref()) {
+            Ok(binding) => bindings.push(binding),
+            Err(err) => eprintln!(
+                "typebar: keybinding invalido {:?} -> {:?}: {err}; ignorado",
+                entry.keys, entry.action
+            ),
+        }
+    }
+    if bindings.is_empty() {
+        base
+    } else {
+        Box::new(CustomKeymap::new(base, bindings))
+    }
+}
+
 fn main() -> std::io::Result<()> {
     // Saltar argv[0] (nombre del binario).
     let args = parse_args(std::env::args().skip(1));
@@ -98,7 +120,8 @@ fn main() -> std::io::Result<()> {
         None => config::Config::default(),
     };
     let preset = resolve_preset(args.preset, &config);
-    let keymap = keymap_from_name(&preset);
+    // Preset base + overrides del usuario encima (si los hay).
+    let keymap = apply_overrides(keymap_from_name(&preset), &config.keybindings.bind);
 
     // Theme desde el config. `by_name` cae a `frappe` ante un nombre
     // desconocido, asi que no hace falta validarlo aca (a diferencia del preset).
@@ -376,6 +399,7 @@ mod tests {
         config::Config {
             keybindings: config::KeybindingsConfig {
                 preset: preset.map(str::to_string),
+                bind: Vec::new(),
             },
             ui: config::UiConfig::default(),
         }

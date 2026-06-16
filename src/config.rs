@@ -40,6 +40,27 @@ pub struct KeybindingsConfig {
     /// Preset por defecto (`standard` | `vim` | `wordstar`). `None` cuando el
     /// usuario no fijo ninguno: en ese caso `main` deja el default built-in.
     pub preset: Option<String>,
+    /// Overrides de teclas del usuario, como array de tablas `[[keybindings.bind]]`.
+    /// Se aplican encima del preset (ver `crate::keybinding::CustomKeymap`). Cada
+    /// entrada se valida en `main`; las invalidas se reportan y descartan sin
+    /// abortar el arranque. Si falta, queda vacio (solo el preset base).
+    #[serde(default)]
+    pub bind: Vec<BindEntry>,
+}
+
+/// Una entrada del array `[[keybindings.bind]]`: la representacion cruda (sin
+/// parsear) de un override de teclas. La validacion/traduccion a un binding real
+/// la hace `crate::keybinding::parse_binding`.
+#[derive(Debug, Deserialize)]
+pub struct BindEntry {
+    /// Secuencia de teclas, ej `"ctrl-s"` o `"ctrl-k ctrl-x"`.
+    pub keys: String,
+    /// Nombre de la accion en kebab-case, ej `"save"` o `"save-and-quit"`.
+    pub action: String,
+    /// Modo opcional (`normal` | `insert` | `visual`). Si falta, el binding
+    /// aplica en todos los modos.
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 /// Seccion `[ui]` del config: opciones de presentacion (por ahora, el theme).
@@ -136,6 +157,31 @@ mod tests {
         // Un archivo vacio es valido: la seccion es opcional.
         let config = parse_config("", "<test>");
         assert_eq!(config.keybindings.preset, None);
+        // Sin `[[keybindings.bind]]` la lista de overrides queda vacia.
+        assert!(config.keybindings.bind.is_empty());
+    }
+
+    #[test]
+    fn parsea_array_de_bindings() {
+        let raw = r#"
+            [keybindings]
+            preset = "vim"
+
+            [[keybindings.bind]]
+            keys = "ctrl-s"
+            action = "save"
+
+            [[keybindings.bind]]
+            keys = "ctrl-k ctrl-x"
+            action = "save-and-quit"
+            mode = "normal"
+        "#;
+        let config = parse_config(raw, "<test>");
+        assert_eq!(config.keybindings.bind.len(), 2);
+        assert_eq!(config.keybindings.bind[0].keys, "ctrl-s");
+        assert_eq!(config.keybindings.bind[0].action, "save");
+        assert_eq!(config.keybindings.bind[0].mode, None);
+        assert_eq!(config.keybindings.bind[1].mode.as_deref(), Some("normal"));
     }
 
     #[test]
