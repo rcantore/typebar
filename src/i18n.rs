@@ -20,12 +20,14 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-/// Idiomas soportados por la UI. `Es` es el default historico del editor.
+/// Idiomas soportados por la UI. `En` es el default (convencion de proyectos
+/// open-source); los usuarios hispanohablantes obtienen `Es` automaticamente
+/// via `from_env` cuando el sistema esta en español (`$LANG=es_*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Locale {
     #[default]
-    Es,
     En,
+    Es,
 }
 
 impl Locale {
@@ -42,7 +44,7 @@ impl Locale {
     }
 
     /// Adivina el locale desde la variable de entorno `LANG`/`LC_ALL` con
-    /// fallback al default (`Es`). `"C"` o `"POSIX"` cuentan como desconocidos.
+    /// fallback al default (`En`). `"C"` o `"POSIX"` cuentan como desconocidos.
     pub fn from_env() -> Locale {
         std::env::var("LC_ALL")
             .or_else(|_| std::env::var("LANG"))
@@ -97,8 +99,8 @@ pub enum Key {
 }
 
 /// Locale activo, seteado UNA vez al arrancar `main`. Antes (o en tests) cae a
-/// `Locale::default()`. Usar `OnceLock` (no `RwLock`) deja explicito que es
-/// inmutable post-init.
+/// `Locale::default()` (`En`). Usar `OnceLock` (no `RwLock`) deja explicito que
+/// es inmutable post-init.
 static LOCALE: OnceLock<Locale> = OnceLock::new();
 
 /// Fija el locale activo para el resto del proceso. Llamarse a si misma o
@@ -255,8 +257,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_es_espanol() {
-        assert_eq!(Locale::default(), Locale::Es);
+    fn default_es_ingles() {
+        // Convencion OSS: el default es ingles. Los usuarios hispanohablantes
+        // obtienen `Es` automaticamente via `from_env` cuando $LANG arranca con
+        // `es_*`. Esto no rompe el caso 'sistema en español': se usa Es igual.
+        assert_eq!(Locale::default(), Locale::En);
     }
 
     #[test]
