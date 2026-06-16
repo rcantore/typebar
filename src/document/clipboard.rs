@@ -1,5 +1,10 @@
-//! Portapapeles INTERNO del editor (no el del SO): copiar (`yank`) y pegar
-//! (`paste`) texto via el campo `clipboard: Option<String>` del `Document`.
+//! Portapapeles del editor: copiar (`yank`) y pegar (`paste`).
+//!
+//! Por defecto usa el portapapeles del SISTEMA OPERATIVO via `arboard` (asi se
+//! puede copiar/pegar contra otras apps), con FALLBACK al buffer interno
+//! `clipboard: Option<String>` del `Document` cuando el clipboard del SO no esta
+//! disponible (headless/CI) o cuando una operacion de get/set falla. Nunca se
+//! paniquea por el clipboard: cualquier error cae al buffer interno.
 //!
 //! `yank` lee la seleccion y la guarda; NO es una mutacion del buffer (no toma
 //! snapshot ni marca `dirty`). `paste` SI es una mutacion: inserta en el cursor,
@@ -13,22 +18,48 @@
 use super::Document;
 
 impl Document {
-    /// Copia el rango seleccionado al portapapeles interno y limpia la
-    /// seleccion. No hace nada si no hay seleccion. NO es una mutacion del
-    /// buffer: no toma snapshot ni toca `dirty`.
+    /// Escribe `text` al clipboard del SO (si hay handle) y SIEMPRE tambien al
+    /// buffer interno como fallback. Si el SO falla, el buffer interno alcanza
+    /// para que `paste` siga funcionando en esta sesion. No paniquea.
+    fn clipboard_set(&mut self, text: String) {
+        if let Some(cb) = self.sys_clipboard.as_mut() {
+            // Ignoramos el error a proposito: si el SO no acepta el set, igual
+            // queda guardado en el buffer interno de abajo.
+            let _ = cb.set_text(text.clone());
+        }
+        self.clipboard = Some(text);
+    }
+
+    /// Lee el texto a pegar: primero intenta el clipboard del SO; si no hay
+    /// handle o la lectura falla, cae al buffer interno. `None` = no hay nada
+    /// para pegar. No paniquea.
+    fn clipboard_get(&mut self) -> Option<String> {
+        if let Some(cb) = self.sys_clipboard.as_mut()
+            && let Ok(text) = cb.get_text()
+        {
+            return Some(text);
+        }
+        self.clipboard.clone()
+    }
+
+    /// Copia el rango seleccionado al portapapeles (SO + fallback interno) y
+    /// limpia la seleccion. No hace nada si no hay seleccion. NO es una mutacion
+    /// del buffer: no toma snapshot ni toca `dirty`.
     pub fn yank(&mut self) {
         let Some(range) = self.selection_range() else {
             return;
         };
-        self.clipboard = Some(self.buffer.slice(range).to_string());
+        let text = self.buffer.slice(range).to_string();
+        self.clipboard_set(text);
         self.clear_selection();
     }
 
-    /// Pega el texto del portapapeles interno en la posicion del cursor y deja
-    /// el cursor al final del texto pegado. No hace nada si el portapapeles esta
-    /// vacio. Es una MUTACION: toma snapshot (es undoable) y marca `dirty`.
+    /// Pega el texto del portapapeles (SO o fallback interno) en la posicion del
+    /// cursor y deja el cursor al final del texto pegado. No hace nada si el
+    /// portapapeles esta vacio. Es una MUTACION: toma snapshot (es undoable) y
+    /// marca `dirty`.
     pub fn paste(&mut self) {
-        let Some(text) = self.clipboard.clone() else {
+        let Some(text) = self.clipboard_get() else {
             return;
         };
         if text.is_empty() {
@@ -49,6 +80,37 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::doc_with;
+
+    // Nota: `doc_with` arranca con `sys_clipboard: None`, asi que TODOS estos
+    // tests ejercitan el path de FALLBACK al buffer interno, sin tocar el
+    // clipboard global del SO (que en CI no existe y seria estado compartido).
+
+    #[test]
+    fn yank_sin_clipboard_del_so_usa_el_buffer_interno() {
+        // Con el clipboard del SO ausente, yank igual deja el texto en el
+        // fallback interno (verifica que `clipboard_set` no depende del SO).
+        let mut d = doc_with("hola mundo");
+        assert!(d.sys_clipboard.is_none()); // precondicion: no hay clipboard del SO
+        d.col = 0;
+        d.start_selection();
+        d.col = 4; // seleccion [0, 4) = "hola"
+        d.yank();
+        assert_eq!(d.clipboard.as_deref(), Some("hola"));
+    }
+
+    #[test]
+    fn ciclo_yank_paste_funciona_solo_con_fallback() {
+        // Sin clipboard del SO, el ciclo completo yank -> paste sigue andando
+        // 100% via el buffer interno (es el contrato del fallback).
+        let mut d = doc_with("hola mundo");
+        d.col = 0;
+        d.start_selection();
+        d.col = 5; // "hola "
+        d.yank();
+        d.col = 10; // final
+        d.paste();
+        assert_eq!(d.text(), "hola mundohola ");
+    }
 
     #[test]
     fn yank_con_seleccion_copia_y_limpia() {
