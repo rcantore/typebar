@@ -67,9 +67,17 @@ pub struct Document {
     /// toda la corrida de tipeo de una). Un movimiento o cualquier otra mutacion
     /// lo apaga, cortando el grupo.
     last_was_insert: bool,
-    /// Portapapeles INTERNO del editor (no el del SO): texto copiado con `yank`
-    /// que `paste` reinserta. `None` = vacio. No persiste entre sesiones.
+    /// Portapapeles INTERNO del editor, usado como FALLBACK cuando el clipboard
+    /// del SO no esta disponible o una operacion falla (ej. headless/CI): texto
+    /// copiado con `yank` que `paste` reinserta. `None` = vacio. No persiste
+    /// entre sesiones.
     clipboard: Option<String>,
+    /// Handle al clipboard del SO via `arboard`. Es lazy/opcional a proposito:
+    /// `arboard::Clipboard::new()` puede fallar en entornos sin servidor de
+    /// portapapeles (CI, ssh sin X11, etc.), y en ese caso queda en `None` y
+    /// todo cae al buffer interno. No es `Clone`, por eso se maneja por
+    /// operacion y nunca entra en los snapshots de undo.
+    sys_clipboard: Option<arboard::Clipboard>,
 }
 
 impl Document {
@@ -95,6 +103,10 @@ impl Document {
             redo_stack: Vec::new(),
             last_was_insert: false,
             clipboard: None,
+            // Intentamos abrir el clipboard del SO al inicio. Si falla (headless,
+            // sin X11, etc.) queda en `None` y se usa el buffer interno. Nunca
+            // paniquea: `.ok()` se traga el error a proposito.
+            sys_clipboard: arboard::Clipboard::new().ok(),
         })
     }
 
@@ -219,6 +231,11 @@ pub(crate) mod test_support {
             redo_stack: Vec::new(),
             last_was_insert: false,
             clipboard: None,
+            // En tests no abrimos el clipboard del SO a proposito: en CI no
+            // existe y ademas seria estado global compartido entre tests. Con
+            // `None` forzamos el path de FALLBACK al buffer interno, que es
+            // justo lo que queremos verificar de forma deterministica.
+            sys_clipboard: None,
         }
     }
 }
