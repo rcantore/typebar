@@ -15,10 +15,12 @@ mod keybinding;
 mod markdown;
 mod render;
 mod text;
+mod theme;
 
 use document::{Document, Mode};
 use keybinding::{Action, Keymap, Resolve, keymap_from_name};
 use markdown::InlineKind;
+use theme::Theme;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
@@ -98,11 +100,15 @@ fn main() -> std::io::Result<()> {
     let preset = resolve_preset(args.preset, &config);
     let keymap = keymap_from_name(&preset);
 
+    // Theme desde el config. `by_name` cae a `frappe` ante un nombre
+    // desconocido, asi que no hace falta validarlo aca (a diferencia del preset).
+    let theme = Theme::by_name(&config.ui.theme);
+
     let mut document = Document::open(&args.path)?;
     document.mode = keymap.initial_mode();
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, document, keymap.as_ref());
+    let result = run(&mut terminal, document, keymap.as_ref(), &theme);
     ratatui::restore();
     result
 }
@@ -111,6 +117,7 @@ fn run(
     terminal: &mut ratatui::DefaultTerminal,
     mut doc: Document,
     keymap: &dyn Keymap,
+    theme: &Theme,
 ) -> std::io::Result<()> {
     // Offset vertical de scroll: primera linea visible del documento.
     let mut scroll: usize = 0;
@@ -118,7 +125,7 @@ fn run(
     let mut pending: Vec<KeyEvent> = Vec::new();
 
     loop {
-        terminal.draw(|frame| draw(frame, &doc, keymap, &pending, &mut scroll))?;
+        terminal.draw(|frame| draw(frame, &doc, keymap, &pending, &mut scroll, theme))?;
 
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
@@ -149,6 +156,7 @@ fn draw(
     keymap: &dyn Keymap,
     pending: &[KeyEvent],
     scroll: &mut usize,
+    theme: &Theme,
 ) {
     // Partir la pantalla: area de editor (resto) + 1 linea de status.
     let [editor_area, status_area] =
@@ -167,7 +175,7 @@ fn draw(
     }
 
     let block = Block::bordered().title(format!(" typebar · {} ", doc.path.display()));
-    let lines = render::render(&doc.text(), doc.selection_byte_range());
+    let lines = render::render(&doc.text(), doc.selection_byte_range(), theme);
     let paragraph = Paragraph::new(lines)
         .block(block)
         .scroll((*scroll as u16, 0));
@@ -363,11 +371,13 @@ mod tests {
     }
 
     /// Construye una `Config` con un preset dado para los tests de precedencia.
+    /// La seccion `[ui]` queda en su default (irrelevante para estos tests).
     fn config_con_preset(preset: Option<&str>) -> config::Config {
         config::Config {
             keybindings: config::KeybindingsConfig {
                 preset: preset.map(str::to_string),
             },
+            ui: config::UiConfig::default(),
         }
     }
 

@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::keybinding::keymap_from_name;
+use crate::theme::DEFAULT_THEME;
 
 /// Esquema v1 del archivo de configuracion.
 #[derive(Debug, Deserialize, Default)]
@@ -28,6 +29,9 @@ pub struct Config {
     /// `KeybindingsConfig`.
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
+    /// Seccion `[ui]`. Opcional: si falta, se usan los defaults de `UiConfig`.
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 /// Seccion `[keybindings]` del config.
@@ -36,6 +40,32 @@ pub struct KeybindingsConfig {
     /// Preset por defecto (`standard` | `vim` | `wordstar`). `None` cuando el
     /// usuario no fijo ninguno: en ese caso `main` deja el default built-in.
     pub preset: Option<String>,
+}
+
+/// Seccion `[ui]` del config: opciones de presentacion (por ahora, el theme).
+#[derive(Debug, Deserialize)]
+pub struct UiConfig {
+    /// Nombre del theme de colores (ver `crate::theme::Theme::by_name`). A
+    /// diferencia del preset de keybindings, aca usamos `String` (no `Option`)
+    /// con default `frappe`: `Theme::by_name` ya cae a `frappe` ante un nombre
+    /// desconocido, asi que un theme invalido nunca rompe el arranque.
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+/// Default del campo `theme`: el theme por defecto del editor (`frappe`).
+fn default_theme() -> String {
+    DEFAULT_THEME.to_string()
+}
+
+/// El default de `UiConfig` reusa el default del campo para no duplicar el
+/// nombre: si falta la seccion `[ui]`, queda el theme por defecto.
+impl Default for UiConfig {
+    fn default() -> Self {
+        UiConfig {
+            theme: default_theme(),
+        }
+    }
 }
 
 /// Resuelve el path del config file respetando `XDG_CONFIG_HOME` (via el crate
@@ -106,6 +136,25 @@ mod tests {
         // Un archivo vacio es valido: la seccion es opcional.
         let config = parse_config("", "<test>");
         assert_eq!(config.keybindings.preset, None);
+    }
+
+    #[test]
+    fn parsea_seccion_ui_theme() {
+        // La seccion `[ui]` con `theme` se parsea al campo correspondiente.
+        let raw = r#"
+            [ui]
+            theme = "mocha"
+        "#;
+        let config = parse_config(raw, "<test>");
+        assert_eq!(config.ui.theme, "mocha");
+    }
+
+    #[test]
+    fn toml_sin_seccion_ui_usa_theme_default() {
+        // Sin `[ui]`, el theme cae al default (`frappe`), no queda vacio.
+        let config = parse_config("", "<test>");
+        assert_eq!(config.ui.theme, DEFAULT_THEME);
+        assert_eq!(config.ui.theme, "frappe");
     }
 
     #[test]

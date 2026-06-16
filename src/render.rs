@@ -4,32 +4,26 @@
 //! por byte -> `ratatui::Line`s. Los marcadores de sintaxis nunca se ocultan,
 //! solo se dimmean (ver docs/ARCHITECTURE.md, modulo Renderer Engine).
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use tree_sitter_md::MarkdownParser;
 
-// --- Paleta (hardcodeada para el spike; sale de Catppuccin Frappe) ---------
-// En el editor real esto viene del Theme Engine (src/theme/).
+use crate::theme::Theme;
 
-const HEADING_1: Color = Color::Rgb(0xca, 0x9e, 0xe6); // mauve
-const HEADING_2: Color = Color::Rgb(0x99, 0xd1, 0xdb); // sky
-const HEADING_N: Color = Color::Rgb(0xa6, 0xd1, 0x89); // green
-const CODE_FG: Color = Color::Rgb(0xe7, 0x82, 0x84); // red
-const CODE_BG: Color = Color::Rgb(0x41, 0x45, 0x59); // surface0
-const MARKER: Color = Color::Rgb(0x73, 0x7a, 0x94); // overlay0 (dimmeado)
-const SELECTION_BG: Color = Color::Rgb(0x51, 0x57, 0x6d); // surface1 (resalte sutil)
+// La paleta ya no vive aca: la provee el Theme Engine (src/theme/). El renderer
+// recibe un `&Theme` y lee sus campos, sin conocer colores concretos.
 
-fn heading_style(level: usize) -> Style {
+fn heading_style(theme: &Theme, level: usize) -> Style {
     let fg = match level {
-        1 => HEADING_1,
-        2 => HEADING_2,
-        _ => HEADING_N,
+        1 => theme.heading_1,
+        2 => theme.heading_2,
+        _ => theme.heading_n,
     };
     Style::default().fg(fg).add_modifier(Modifier::BOLD)
 }
 
-fn marker_style() -> Style {
-    Style::default().fg(MARKER)
+fn marker_style(theme: &Theme) -> Style {
+    Style::default().fg(theme.marker)
 }
 
 // --- Mapa de estilos por byte ----------------------------------------------
@@ -46,7 +40,8 @@ struct StyleSpan {
 }
 
 /// Recorre el arbol Markdown (block + inline) y junta los tramos estilizados.
-fn collect_styles(source: &str) -> Vec<StyleSpan> {
+/// Los colores salen del `theme` (no hay paleta hardcodeada en el renderer).
+fn collect_styles(source: &str, theme: &Theme) -> Vec<StyleSpan> {
     let mut parser = MarkdownParser::default();
     let tree = parser
         .parse(source.as_bytes(), None)
@@ -80,12 +75,14 @@ fn collect_styles(source: &str) -> Vec<StyleSpan> {
                 heading_level = Some(level);
                 None
             }
-            "inline" if parent == Some("atx_heading") => heading_level.map(heading_style),
+            "inline" if parent == Some("atx_heading") => {
+                heading_level.map(|level| heading_style(theme, level))
+            }
             "strong_emphasis" => Some(Style::default().add_modifier(Modifier::BOLD)),
             "emphasis" => Some(Style::default().add_modifier(Modifier::ITALIC)),
-            "code_span" => Some(Style::default().fg(CODE_FG).bg(CODE_BG)),
+            "code_span" => Some(Style::default().fg(theme.code_fg).bg(theme.code_bg)),
             // Todos los marcadores y delimitadores: dimmeados.
-            k if k.ends_with("_marker") || k.ends_with("_delimiter") => Some(marker_style()),
+            k if k.ends_with("_marker") || k.ends_with("_delimiter") => Some(marker_style(theme)),
             _ => None,
         };
 
@@ -124,8 +121,14 @@ fn collect_styles(source: &str) -> Vec<StyleSpan> {
 /// `selection` es un rango en BYTES del documento (ver `Document::selection_byte_range`):
 /// los bytes adentro reciben el `bg` de seleccion, preservando el fg/modifiers
 /// del estilo de texto que ya tenian (solo se pisa el fondo).
-pub fn render(source: &str, selection: Option<std::ops::Range<usize>>) -> Vec<Line<'static>> {
-    let spans = collect_styles(source);
+///
+/// `theme` provee la paleta de colores (ver `crate::theme::Theme`).
+pub fn render(
+    source: &str,
+    selection: Option<std::ops::Range<usize>>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let spans = collect_styles(source, theme);
 
     // Estilo por byte. Pintamos los tramos de menor a mayor profundidad, asi
     // el mas profundo (mas especifico) queda arriba.
@@ -144,7 +147,7 @@ pub fn render(source: &str, selection: Option<std::ops::Range<usize>>) -> Vec<Li
         let end = sel.end.min(source.len());
         if sel.start < end {
             for slot in &mut by_byte[sel.start..end] {
-                *slot = slot.bg(SELECTION_BG);
+                *slot = slot.bg(theme.selection_bg);
             }
         }
     }
@@ -177,16 +180,28 @@ pub fn render(source: &str, selection: Option<std::ops::Range<usize>>) -> Vec<Li
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
+
+    /// Theme de referencia para los tests: el default (`frappe`), que conserva
+    /// la paleta historica. Los codigos de estilo se comparan contra sus campos.
+    fn test_theme() -> Theme {
+        Theme::by_name("frappe")
+    }
 
     /// Codigo de una sola letra para resumir el estilo de un byte. Sirve para
     /// validar el mapeo tree-sitter -> estilo en texto plano, sin terminal.
-    fn code(style: &Style) -> char {
+    /// Compara contra los campos de `theme` (antes contra las constantes de
+    /// paleta, que ahora viven en el Theme Engine).
+    fn code(theme: &Theme, style: &Style) -> char {
         let bold = style.add_modifier.contains(Modifier::BOLD);
         let italic = style.add_modifier.contains(Modifier::ITALIC);
+        let is_heading = |c: Option<Color>| {
+            c == Some(theme.heading_1) || c == Some(theme.heading_2) || c == Some(theme.heading_n)
+        };
         match (style.fg, style.bg) {
-            _ if style.fg == Some(MARKER) => 'm', // marcador dimmeado
-            (Some(CODE_FG), _) => 'C',            // inline code
-            (Some(HEADING_1), _) | (Some(HEADING_2), _) | (Some(HEADING_N), _) => 'H',
+            _ if style.fg == Some(theme.marker) => 'm', // marcador dimmeado
+            (Some(fg), _) if fg == theme.code_fg => 'C', // inline code
+            (fg, _) if is_heading(fg) => 'H',
             _ if bold => 'B',
             _ if italic => 'I',
             _ => '.',
@@ -197,9 +212,10 @@ mod tests {
     /// linea de texto. Correr con: `cargo test -- --nocapture dump`
     #[test]
     fn dump() {
+        let theme = test_theme();
         let source =
             std::fs::read_to_string("examples/sample.md").expect("falta examples/sample.md");
-        let lines = render(&source, None);
+        let lines = render(&source, None, &theme);
         println!(
             "\n--- volcado de estilos (.=plano B=bold I=italic C=code H=heading m=marker) ---"
         );
@@ -209,7 +225,7 @@ mod tests {
                 .spans
                 .iter()
                 .flat_map(|s| {
-                    let c = code(&s.style);
+                    let c = code(&theme, &s.style);
                     s.content.chars().map(move |_| c)
                 })
                 .collect();
@@ -225,15 +241,16 @@ mod tests {
     /// linea tardia no caeria sobre los asteriscos reales.
     #[test]
     fn inline_offsets_son_absolutos() {
+        let theme = test_theme();
         let source = "# T\n\nplano **negrita** fin\n";
-        let lines = render(source, None);
+        let lines = render(source, None, &theme);
         // Linea 2 (indice 2): "plano **negrita** fin"
         let line = &lines[2];
         // Reconstruir el estilo por char y chequear que los '*' esten dimmeados
         // y "negrita" en bold.
         let mut per_char: Vec<(char, char)> = Vec::new();
         for span in &line.spans {
-            let c = code(&span.style);
+            let c = code(&theme, &span.style);
             for ch in span.content.chars() {
                 per_char.push((ch, c));
             }
@@ -259,8 +276,9 @@ mod tests {
     fn seleccion_pinta_el_bg_del_rango() {
         // "hola mundo": seleccionar bytes [0,4) = "hola". Esos chars deben tener
         // el bg de seleccion; el resto no.
+        let theme = test_theme();
         let source = "hola mundo";
-        let lines = render(source, Some(0..4));
+        let lines = render(source, Some(0..4), &theme);
         // Reconstruir el bg por char.
         let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
         for span in &lines[0].spans {
@@ -272,14 +290,14 @@ mod tests {
         for slot in per_char.iter().take(4) {
             assert_eq!(
                 slot.1,
-                Some(SELECTION_BG),
+                Some(theme.selection_bg),
                 "'{}' deberia estar resaltado",
                 slot.0
             );
         }
         // El resto sin bg de seleccion.
         for slot in per_char.iter().skip(4) {
-            assert_ne!(slot.1, Some(SELECTION_BG));
+            assert_ne!(slot.1, Some(theme.selection_bg));
         }
     }
 }
