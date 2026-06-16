@@ -23,13 +23,54 @@ impl Document {
     }
 
     /// Inserta un salto de linea en el cursor; baja a la linea nueva, col 0.
+    ///
+    /// Si la linea actual es un item de lista Markdown y el cursor esta en/despues
+    /// del contenido, la lista se continua: un item no vacio arranca el siguiente
+    /// con la misma sangria y marcador (incrementando el numero en ordenadas); un
+    /// item vacio "sale" de la lista borrando su marcador en vez de crear otro.
     pub fn insert_newline(&mut self) {
         self.snapshot();
         self.last_was_insert = false;
+
+        if let Some(prefix) = crate::markdown::list_prefix(&self.line_text(self.line))
+            && self.col >= prefix.content_col
+        {
+            self.insert_newline_in_list(&prefix);
+            return;
+        }
+
         let idx = self.cursor_char_idx();
         self.buffer.insert_char(idx, '\n');
         self.line += 1;
         self.col = 0;
+        self.preferred_display_col = 0;
+        self.dirty = true;
+    }
+
+    /// Maneja Enter dentro de un item de lista (ver `insert_newline`). Asume que
+    /// el snapshot ya se tomo y que el cursor esta en/despues del contenido.
+    fn insert_newline_in_list(&mut self, prefix: &crate::markdown::ListPrefix) {
+        let base = self.buffer.line_to_char(self.line);
+        let line_len = self.line_len_chars(self.line);
+
+        // Item vacio (no hay contenido tras el marcador): salir de la lista
+        // borrando el prefijo. La linea queda vacia, el cursor al inicio.
+        if prefix.content_col >= line_len {
+            self.buffer.remove(base..base + prefix.content_col);
+            self.col = 0;
+            self.preferred_display_col = 0;
+            self.dirty = true;
+            return;
+        }
+
+        // Item con contenido: cortar en el cursor e iniciar el siguiente item con
+        // el prefijo de continuacion antes del texto que quedaba a la derecha.
+        let cont = prefix.continuation();
+        let idx = base + self.col;
+        self.buffer.insert_char(idx, '\n');
+        self.buffer.insert(idx + 1, &cont);
+        self.line += 1;
+        self.col = cont.chars().count();
         self.preferred_display_col = 0;
         self.dirty = true;
     }
@@ -295,6 +336,67 @@ mod tests {
         d.col = 2;
         d.delete_char();
         assert_eq!(d.text(), "ab");
+    }
+
+    // --- Continuacion de listas Markdown -----------------------------------
+
+    #[test]
+    fn enter_continua_vineta() {
+        let mut d = doc_with("- uno");
+        d.col = 5; // al final del item
+        d.insert_newline();
+        assert_eq!(d.text(), "- uno\n- ");
+        assert_eq!((d.line, d.col), (1, 2)); // tras "- "
+    }
+
+    #[test]
+    fn enter_continua_ordenada_incrementando() {
+        let mut d = doc_with("1. uno");
+        d.col = 6;
+        d.insert_newline();
+        assert_eq!(d.text(), "1. uno\n2. ");
+        assert_eq!((d.line, d.col), (1, 3));
+    }
+
+    #[test]
+    fn enter_en_item_vacio_sale_de_la_lista() {
+        // Un item vacio (solo el marcador) al apretar Enter borra el marcador.
+        let mut d = doc_with("- uno\n- ");
+        d.line = 1;
+        d.col = 2; // al final de "- "
+        d.insert_newline();
+        assert_eq!(d.text(), "- uno\n");
+        assert_eq!((d.line, d.col), (1, 0));
+    }
+
+    #[test]
+    fn enter_en_medio_del_item_parte_y_prefija() {
+        // Cursor en medio de "- hola" (col 4, tras "- ho"): parte y el resto baja
+        // con su propio marcador.
+        let mut d = doc_with("- hola");
+        d.col = 4;
+        d.insert_newline();
+        assert_eq!(d.text(), "- ho\n- la");
+        assert_eq!((d.line, d.col), (1, 2));
+    }
+
+    #[test]
+    fn enter_antes_del_marcador_es_newline_normal() {
+        // Con el cursor antes del contenido (col 0), Enter no continua la lista.
+        let mut d = doc_with("- hola");
+        d.col = 0;
+        d.insert_newline();
+        assert_eq!(d.text(), "\n- hola");
+        assert_eq!((d.line, d.col), (1, 0));
+    }
+
+    #[test]
+    fn enter_fuera_de_lista_sigue_normal() {
+        let mut d = doc_with("texto");
+        d.col = 5;
+        d.insert_newline();
+        assert_eq!(d.text(), "texto\n");
+        assert_eq!((d.line, d.col), (1, 0));
     }
 
     #[test]

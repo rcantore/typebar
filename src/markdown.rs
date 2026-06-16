@@ -61,6 +61,87 @@ pub struct Markers {
     pub close: Range<usize>,
 }
 
+/// Marcador de un item de lista: vineta (`-`/`*`/`+`) u ordenado (`1.`/`2)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListMarker {
+    /// Vineta con el char usado (`-`, `*` o `+`).
+    Bullet(char),
+    /// Ordenado: numero actual y delimitador (`.` o `)`).
+    Ordered(u64, char),
+}
+
+/// Prefijo de un item de lista Markdown al inicio de una linea: la sangria, el
+/// marcador y la columna (en chars) donde arranca el contenido. Sirve para que
+/// el editor continue la lista al apretar Enter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListPrefix {
+    /// Espacios/tabs iniciales, reproducidos tal cual en la continuacion.
+    pub indent: String,
+    /// El marcador del item.
+    pub marker: ListMarker,
+    /// Indice de char donde empieza el contenido (despues del marcador y su
+    /// espacio). Si la linea no tiene mas que el marcador, el item esta vacio.
+    pub content_col: usize,
+}
+
+impl ListPrefix {
+    /// String del prefijo para el SIGUIENTE item: misma sangria y vineta, o el
+    /// numero incrementado en listas ordenadas. Incluye el espacio final.
+    pub fn continuation(&self) -> String {
+        match self.marker {
+            ListMarker::Bullet(c) => format!("{}{} ", self.indent, c),
+            ListMarker::Ordered(n, delim) => format!("{}{}{} ", self.indent, n + 1, delim),
+        }
+    }
+}
+
+/// Detecta si `line` (sin el `\n`) arranca con un item de lista Markdown y
+/// devuelve su prefijo. Acepta vinetas `-`/`*`/`+` y ordenados `N.`/`N)`, en
+/// ambos casos seguidos de al menos un espacio. `None` si no es un item.
+pub fn list_prefix(line: &str) -> Option<ListPrefix> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+
+    // Sangria inicial (espacios o tabs).
+    while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
+        i += 1;
+    }
+    let indent: String = chars[..i].iter().collect();
+
+    let marker = if matches!(chars.get(i), Some('-' | '*' | '+')) {
+        let c = chars[i];
+        i += 1;
+        ListMarker::Bullet(c)
+    } else {
+        // Ordenado: una corrida de digitos seguida de '.' o ')'.
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start || !matches!(chars.get(i), Some('.' | ')')) {
+            return None;
+        }
+        let n: u64 = chars[start..i].iter().collect::<String>().parse().ok()?;
+        let delim = chars[i];
+        i += 1;
+        ListMarker::Ordered(n, delim)
+    };
+
+    // Tiene que haber al menos un espacio tras el marcador para ser un item.
+    if !matches!(chars.get(i), Some(' ' | '\t')) {
+        return None;
+    }
+    while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
+        i += 1;
+    }
+
+    Some(ListPrefix {
+        indent,
+        marker,
+        content_col: i,
+    })
+}
+
 /// Si `byte_offset` cae dentro de un nodo del tipo `kind`, devuelve los rangos
 /// (en bytes) de sus marcadores de apertura y cierre. Si no, `None`.
 ///
@@ -211,5 +292,58 @@ mod tests {
         let m = enclosing(t, pos, InlineKind::Bold).expect("deberia matchear");
         let open_start = t.find("**").unwrap();
         assert_eq!(m.open, open_start..open_start + 2);
+    }
+
+    // --- Prefijos de lista -------------------------------------------------
+
+    #[test]
+    fn list_prefix_vineta() {
+        let p = list_prefix("- hola").expect("deberia ser item");
+        assert_eq!(p.indent, "");
+        assert_eq!(p.marker, ListMarker::Bullet('-'));
+        assert_eq!(p.content_col, 2);
+        assert_eq!(p.continuation(), "- ");
+    }
+
+    #[test]
+    fn list_prefix_vineta_con_sangria_y_asterisco() {
+        let p = list_prefix("    * item").expect("deberia ser item");
+        assert_eq!(p.indent, "    ");
+        assert_eq!(p.marker, ListMarker::Bullet('*'));
+        assert_eq!(p.continuation(), "    * ");
+    }
+
+    #[test]
+    fn list_prefix_ordenado_incrementa() {
+        let p = list_prefix("3. tercero").expect("deberia ser item");
+        assert_eq!(p.marker, ListMarker::Ordered(3, '.'));
+        assert_eq!(p.content_col, 3);
+        assert_eq!(p.continuation(), "4. ");
+    }
+
+    #[test]
+    fn list_prefix_ordenado_con_paren() {
+        let p = list_prefix("10) diez").expect("deberia ser item");
+        assert_eq!(p.marker, ListMarker::Ordered(10, ')'));
+        assert_eq!(p.continuation(), "11) ");
+    }
+
+    #[test]
+    fn list_prefix_item_vacio() {
+        // Solo el marcador y un espacio: content_col cae al final (item vacio).
+        let p = list_prefix("- ").expect("deberia ser item");
+        assert_eq!(p.content_col, 2);
+        assert_eq!("- ".chars().count(), p.content_col);
+    }
+
+    #[test]
+    fn list_prefix_rechaza_no_items() {
+        // Sin espacio tras el marcador no es item.
+        assert_eq!(list_prefix("-sin-espacio"), None);
+        assert_eq!(list_prefix("1.sin"), None);
+        // Texto plano.
+        assert_eq!(list_prefix("hola mundo"), None);
+        // Solo el guion sin espacio (posible thematic break, no item).
+        assert_eq!(list_prefix("-"), None);
     }
 }
