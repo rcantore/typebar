@@ -32,7 +32,6 @@ impl Locale {
     /// Parsea un nombre canonico (`"es"`, `"en"`, etc.). Acepta tambien locales
     /// estilo `LANG` (`"es_AR.UTF-8"` -> `Es`) mirando solo el prefijo de 2
     /// chars. `None` si no matchea ninguno conocido.
-    #[allow(dead_code)] // se cablea en el commit que agrega la deteccion de locale.
     pub fn from_str(s: &str) -> Option<Locale> {
         let head: String = s.trim().chars().take(2).collect::<String>().to_lowercase();
         match head.as_str() {
@@ -44,7 +43,6 @@ impl Locale {
 
     /// Adivina el locale desde la variable de entorno `LANG`/`LC_ALL` con
     /// fallback al default (`Es`). `"C"` o `"POSIX"` cuentan como desconocidos.
-    #[allow(dead_code)] // se cablea en el commit que agrega la deteccion de locale.
     pub fn from_env() -> Locale {
         std::env::var("LC_ALL")
             .or_else(|_| std::env::var("LANG"))
@@ -106,7 +104,6 @@ static LOCALE: OnceLock<Locale> = OnceLock::new();
 /// Fija el locale activo para el resto del proceso. Llamarse a si misma o
 /// llamarla dos veces es NO-OP (el segundo set se ignora silenciosamente, como
 /// quiere `OnceLock::set`).
-#[allow(dead_code)] // se cablea en el commit que agrega la deteccion de locale.
 pub fn init(locale: Locale) {
     let _ = LOCALE.set(locale);
 }

@@ -121,6 +121,18 @@ fn main() -> std::io::Result<()> {
         Some(path) => config::load_from_path(&path),
         None => config::Config::default(),
     };
+
+    // Resolver y fijar el idioma de la UI ANTES de leer cualquier label
+    // (los presets traducen sus hints en `keymap.hints`, los mensajes de error
+    // que vienen abajo tambien). Precedencia: config > $LANG/$LC_ALL > default.
+    let locale = config
+        .ui
+        .locale
+        .as_deref()
+        .and_then(i18n::Locale::from_str)
+        .unwrap_or_else(i18n::Locale::from_env);
+    i18n::init(locale);
+
     let preset = resolve_preset(args.preset, &config);
     // Preset base + overrides del usuario encima (si los hay).
     let keymap = apply_overrides(keymap_from_name(&preset), &config.keybindings.bind);

@@ -72,6 +72,11 @@ pub struct UiConfig {
     /// desconocido, asi que un theme invalido nunca rompe el arranque.
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Idioma de la UI: `"es"` o `"en"`. `None` cuando el usuario no fijo
+    /// ninguno: en ese caso `main` adivina desde `$LANG`/`$LC_ALL` (con fallback
+    /// al default historico, `Es`).
+    #[serde(default)]
+    pub locale: Option<String>,
 }
 
 /// Default del campo `theme`: el theme por defecto del editor (`frappe`).
@@ -85,6 +90,7 @@ impl Default for UiConfig {
     fn default() -> Self {
         UiConfig {
             theme: default_theme(),
+            locale: None,
         }
     }
 }
