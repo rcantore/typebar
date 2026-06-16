@@ -53,7 +53,7 @@ impl Theme {
             code_fg: Color::Rgb(0xe7, 0x82, 0x84),      // red
             code_bg: Color::Rgb(0x41, 0x45, 0x59),      // surface0
             marker: Color::Rgb(0x73, 0x7a, 0x94),       // overlay0 (dimmeado)
-            selection_bg: Color::Rgb(0x51, 0x57, 0x6d), // surface1 (resalte sutil)
+            selection_bg: Color::Rgb(0x57, 0x6a, 0xa6), // azul-gris (resalte visible)
             search_match_bg: Color::Rgb(0x8c, 0x73, 0x4a), // yellow apagado (match)
             search_current_bg: Color::Rgb(0xe5, 0xc8, 0x90), // yellow vivo (actual)
         }
@@ -69,7 +69,7 @@ impl Theme {
             code_fg: Color::Rgb(0xf3, 0x8b, 0xa8),      // red/pink
             code_bg: Color::Rgb(0x31, 0x32, 0x44),      // surface0
             marker: Color::Rgb(0x6c, 0x70, 0x86),       // overlay0 (dimmeado)
-            selection_bg: Color::Rgb(0x45, 0x47, 0x5a), // surface1 (resalte sutil)
+            selection_bg: Color::Rgb(0x4e, 0x5c, 0x9c), // azul-gris (resalte visible)
             search_match_bg: Color::Rgb(0x9a, 0x7e, 0x4e), // yellow apagado (match)
             search_current_bg: Color::Rgb(0xf9, 0xe2, 0xaf), // yellow vivo (actual)
         }
