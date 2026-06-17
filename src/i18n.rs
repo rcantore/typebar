@@ -229,12 +229,10 @@ pub fn error_config_invalid(origen: &str, err: impl std::fmt::Display) -> String
 /// "typebar: preset desconocido en la config: {name}; usando {default}"
 pub fn error_unknown_preset(name: &str, default: &str) -> String {
     match locale() {
-        Locale::Es => format!(
-            "typebar: preset desconocido en la config: {name:?}; usando {default}"
-        ),
-        Locale::En => format!(
-            "typebar: unknown preset in config: {name:?}; using {default}"
-        ),
+        Locale::Es => {
+            format!("typebar: preset desconocido en la config: {name:?}; usando {default}")
+        }
+        Locale::En => format!("typebar: unknown preset in config: {name:?}; using {default}"),
     }
 }
 

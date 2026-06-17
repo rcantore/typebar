@@ -126,10 +126,7 @@ fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Ve
         //     enfasis correspondiente. Se valida el parent inmediato para no
         //     esconder marcadores de bloques que tambien terminan en _marker.
         if kind.ends_with("_delimiter")
-            && matches!(
-                parent,
-                Some("strong_emphasis" | "emphasis" | "code_span")
-            )
+            && matches!(parent, Some("strong_emphasis" | "emphasis" | "code_span"))
         {
             for slot in &mut hide_byte[range.start..range.end] {
                 *slot = true;
@@ -142,9 +139,7 @@ fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Ve
         //     a veces no, asi que extendemos por las dudas.
         if kind.starts_with("atx_") && kind.ends_with("_marker") {
             let mut end = range.end;
-            while end < source.len()
-                && matches!(source.as_bytes()[end], b' ' | b'\t')
-            {
+            while end < source.len() && matches!(source.as_bytes()[end], b' ' | b'\t') {
                 end += 1;
             }
             for slot in &mut hide_byte[range.start..end] {

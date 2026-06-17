@@ -50,14 +50,14 @@ impl Theme {
     /// `render.rs`, asi el theme por defecto no cambia ni un pixel.
     pub fn frappe() -> Self {
         Theme {
-            heading_1: Color::Rgb(0xca, 0x9e, 0xe6),    // mauve
-            heading_2: Color::Rgb(0x99, 0xd1, 0xdb),    // sky
-            heading_n: Color::Rgb(0xa6, 0xd1, 0x89),    // green
-            code_fg: Color::Rgb(0xe7, 0x82, 0x84),      // red
-            code_bg: Color::Rgb(0x41, 0x45, 0x59),      // surface0
-            marker: Color::Rgb(0x73, 0x7a, 0x94),       // overlay0 (dimmeado)
-            selection_bg: Color::Rgb(0x57, 0x6a, 0xa6), // azul-gris (resalte visible)
-            search_match_bg: Color::Rgb(0x8c, 0x73, 0x4a), // yellow apagado (match)
+            heading_1: Color::Rgb(0xca, 0x9e, 0xe6),         // mauve
+            heading_2: Color::Rgb(0x99, 0xd1, 0xdb),         // sky
+            heading_n: Color::Rgb(0xa6, 0xd1, 0x89),         // green
+            code_fg: Color::Rgb(0xe7, 0x82, 0x84),           // red
+            code_bg: Color::Rgb(0x41, 0x45, 0x59),           // surface0
+            marker: Color::Rgb(0x73, 0x7a, 0x94),            // overlay0 (dimmeado)
+            selection_bg: Color::Rgb(0x57, 0x6a, 0xa6),      // azul-gris (resalte visible)
+            search_match_bg: Color::Rgb(0x8c, 0x73, 0x4a),   // yellow apagado (match)
             search_current_bg: Color::Rgb(0xe5, 0xc8, 0x90), // yellow vivo (actual)
             toolbar_button_bg: Color::Rgb(0x51, 0x57, 0x6d), // surface1 (boton)
         }
@@ -67,14 +67,14 @@ impl Theme {
     /// el motor de themes funciona (la seleccion por nombre cambia la paleta).
     pub fn mocha() -> Self {
         Theme {
-            heading_1: Color::Rgb(0xcb, 0xa6, 0xf7),    // mauve
-            heading_2: Color::Rgb(0x89, 0xdc, 0xeb),    // sky
-            heading_n: Color::Rgb(0xa6, 0xe3, 0xa1),    // green
-            code_fg: Color::Rgb(0xf3, 0x8b, 0xa8),      // red/pink
-            code_bg: Color::Rgb(0x31, 0x32, 0x44),      // surface0
-            marker: Color::Rgb(0x6c, 0x70, 0x86),       // overlay0 (dimmeado)
-            selection_bg: Color::Rgb(0x4e, 0x5c, 0x9c), // azul-gris (resalte visible)
-            search_match_bg: Color::Rgb(0x9a, 0x7e, 0x4e), // yellow apagado (match)
+            heading_1: Color::Rgb(0xcb, 0xa6, 0xf7),         // mauve
+            heading_2: Color::Rgb(0x89, 0xdc, 0xeb),         // sky
+            heading_n: Color::Rgb(0xa6, 0xe3, 0xa1),         // green
+            code_fg: Color::Rgb(0xf3, 0x8b, 0xa8),           // red/pink
+            code_bg: Color::Rgb(0x31, 0x32, 0x44),           // surface0
+            marker: Color::Rgb(0x6c, 0x70, 0x86),            // overlay0 (dimmeado)
+            selection_bg: Color::Rgb(0x4e, 0x5c, 0x9c),      // azul-gris (resalte visible)
+            search_match_bg: Color::Rgb(0x9a, 0x7e, 0x4e),   // yellow apagado (match)
             search_current_bg: Color::Rgb(0xf9, 0xe2, 0xaf), // yellow vivo (actual)
             toolbar_button_bg: Color::Rgb(0x45, 0x47, 0x5a), // surface1 (boton)
         }

@@ -411,7 +411,10 @@ mod tests {
         let b = parse_binding("ctrl-q", "save", None).unwrap();
         let km = CustomKeymap::new(Box::new(StandardKeymap), vec![b]);
         assert_eq!(
-            km.resolve(Mode::Insert, &[ev(KeyCode::Char('q'), KeyModifiers::CONTROL)]),
+            km.resolve(
+                Mode::Insert,
+                &[ev(KeyCode::Char('q'), KeyModifiers::CONTROL)]
+            ),
             Resolve::Action(Action::Save)
         );
     }
@@ -422,7 +425,10 @@ mod tests {
         let km = CustomKeymap::new(Box::new(StandardKeymap), vec![b]);
         // Ctrl-S no fue tocado: sigue siendo Save del preset.
         assert_eq!(
-            km.resolve(Mode::Insert, &[ev(KeyCode::Char('s'), KeyModifiers::CONTROL)]),
+            km.resolve(
+                Mode::Insert,
+                &[ev(KeyCode::Char('s'), KeyModifiers::CONTROL)]
+            ),
             Resolve::Action(Action::Save)
         );
         // Una letra normal sigue insertandose via el preset.

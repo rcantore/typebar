@@ -146,7 +146,13 @@ fn main() -> std::io::Result<()> {
     document.mode = keymap.initial_mode();
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, document, keymap.as_ref(), &theme, wysiwyg_level);
+    let result = run(
+        &mut terminal,
+        document,
+        keymap.as_ref(),
+        &theme,
+        wysiwyg_level,
+    );
     ratatui::restore();
     result
 }
@@ -171,20 +177,19 @@ fn run(
     let mut overlay: Option<Overlay> = None;
 
     loop {
-        terminal
-            .draw(|frame| {
-                draw(
-                    frame,
-                    &doc,
-                    keymap,
-                    &pending,
-                    &mut scroll,
-                    &mut viewport_height,
-                    theme,
-                    overlay.as_ref(),
-                    wysiwyg_level,
-                )
-            })?;
+        terminal.draw(|frame| {
+            draw(
+                frame,
+                &doc,
+                keymap,
+                &pending,
+                &mut scroll,
+                &mut viewport_height,
+                theme,
+                overlay.as_ref(),
+                wysiwyg_level,
+            )
+        })?;
 
         let Event::Key(key) = event::read()? else {
             continue;
@@ -327,7 +332,12 @@ fn draw(
 /// por el prefijo (ej `^P ▸`). Si no, muestra los atajos top-level del modo. Los
 /// keybindings remapeados ya vienen reflejados en `keymap.hints`. Si no entran
 /// todos, ratatui los trunca al ancho.
-fn hints_bar(keymap: &dyn Keymap, mode: Mode, pending: &[KeyEvent], theme: &Theme) -> Line<'static> {
+fn hints_bar(
+    keymap: &dyn Keymap,
+    mode: Mode,
+    pending: &[KeyEvent],
+    theme: &Theme,
+) -> Line<'static> {
     // El boton entero comparte el fondo; la tecla ademas lleva acento y negrita.
     let button = Style::default().bg(theme.toolbar_button_bg);
     let key_style = button.fg(theme.heading_2).add_modifier(Modifier::BOLD);
