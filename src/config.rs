@@ -63,7 +63,7 @@ pub struct BindEntry {
     pub mode: Option<String>,
 }
 
-/// Seccion `[ui]` del config: opciones de presentacion (por ahora, el theme).
+/// Seccion `[ui]` del config: opciones de presentacion.
 #[derive(Debug, Deserialize)]
 pub struct UiConfig {
     /// Nombre del theme de colores (ver `crate::theme::Theme::by_name`). A
@@ -77,6 +77,29 @@ pub struct UiConfig {
     /// al default historico, `Es`).
     #[serde(default)]
     pub locale: Option<String>,
+    /// Nivel WYSIWYG (`1` soft, `2` markers inline ocultos fuera de la linea
+    /// activa). Default `2`. Cualquier otro valor se clampea a `2` en
+    /// `resolved_wysiwyg_level()` para que un typo en el config no rompa el
+    /// arranque.
+    #[serde(default = "default_wysiwyg_level")]
+    pub wysiwyg_level: u8,
+}
+
+/// Default del campo `wysiwyg_level`: Nivel 2 (markers inline ocultos fuera
+/// de la linea activa).
+fn default_wysiwyg_level() -> u8 {
+    2
+}
+
+impl UiConfig {
+    /// Devuelve el nivel WYSIWYG valido: `1` o `2`. Cualquier otro valor se
+    /// trata como `2` (default).
+    pub fn resolved_wysiwyg_level(&self) -> u8 {
+        match self.wysiwyg_level {
+            1 => 1,
+            _ => 2,
+        }
+    }
 }
 
 /// Default del campo `theme`: el theme por defecto del editor (`frappe`).
@@ -91,6 +114,7 @@ impl Default for UiConfig {
         UiConfig {
             theme: default_theme(),
             locale: None,
+            wysiwyg_level: default_wysiwyg_level(),
         }
     }
 }
@@ -204,6 +228,35 @@ mod tests {
         let config = parse_config("", "<test>");
         assert_eq!(config.ui.theme, DEFAULT_THEME);
         assert_eq!(config.ui.theme, "frappe");
+    }
+
+    #[test]
+    fn wysiwyg_level_default_es_2() {
+        // Sin `[ui]` o sin `wysiwyg_level`, el default es Nivel 2 (markers
+        // inline ocultos fuera de la linea activa).
+        let config = parse_config("", "<test>");
+        assert_eq!(config.ui.resolved_wysiwyg_level(), 2);
+    }
+
+    #[test]
+    fn wysiwyg_level_1_explicito() {
+        let raw = r#"
+            [ui]
+            wysiwyg_level = 1
+        "#;
+        let config = parse_config(raw, "<test>");
+        assert_eq!(config.ui.resolved_wysiwyg_level(), 1);
+    }
+
+    #[test]
+    fn wysiwyg_level_invalido_cae_a_2() {
+        // Un valor fuera de {1, 2} no rompe: cae al default Nivel 2.
+        let raw = r#"
+            [ui]
+            wysiwyg_level = 9
+        "#;
+        let config = parse_config(raw, "<test>");
+        assert_eq!(config.ui.resolved_wysiwyg_level(), 2);
     }
 
     #[test]

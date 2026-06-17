@@ -8,7 +8,8 @@ typebar es un editor de Markdown WYSIWYG para terminal, con keybindings
 configurables por presets (default `standard` modeless, `vim` modal opt-in),
 theming configurable para ricing, y diseno modular para contribuciones open
 source. Primera version: soporte exclusivo de Markdown con rendering inline
-"soft WYSIWYG" (Nivel 1).
+"soft WYSIWYG" (Nivel 1) y un Nivel 2 que oculta los delimitadores inline
+fuera de la linea activa.
 
 El nombre viene de la pieza mecanica de la maquina de escribir: la barra que
 lleva el tipo grabado y lo imprime contra el papel a traves de la cinta. Igual
@@ -62,7 +63,7 @@ struct CursorState {
 }
 ```
 
-En Nivel 1 el mapeo de cursor es 1:1 (no ocultamos markers), por lo que `position` siempre coincide con la posicion visual.
+En Nivel 1 el mapeo de cursor es 1:1 (no ocultamos markers), por lo que `position` siempre coincide con la posicion visual. En Nivel 2 el mapeo sigue siendo 1:1 sobre la linea activa, porque esa linea se renderiza como Nivel 1; los markers solo se contraen en las lineas inactivas, donde el cursor no esta.
 
 ### 2. Renderer Engine (`src/renderer/`)
 
@@ -87,6 +88,22 @@ Transforma el AST de Markdown en widgets estilizados de ratatui.
 | Tables | Box-drawing borders + alignment |
 
 **Principio clave:** los markers de sintaxis NUNCA desaparecen en Nivel 1. Solo se dimmean. Esto elimina el problema de cursor mapping y mantiene la edicion predecible. El usuario siempre sabe que esta editando.
+
+**Nivel 2 (soft WYSIWYG con linea activa visible):** transformaciones aplicadas SOLO en las lineas que NO tienen el cursor (la linea activa sigue renderizandose como Nivel 1, asi que el mapeo cursor->columna no cambia):
+
+| Elemento | Linea activa (Nivel 1) | Linea inactiva (Nivel 2) |
+|---|---|---|
+| `**bold**` | `**bold**` | `bold` |
+| `*italic*` | `*italic*` | `italic` |
+| `` `code` `` | `` `code` `` | `code` |
+| `# Heading`, `## H2`, ... | `# Heading` | `Heading` |
+| `- item`, `* item`, `+ item` | `- item` | `• item` |
+| `1. item` | `1. item` | `1. item` (sin cambios) |
+| `> cita` | `> cita` | `│ cita` |
+| `[texto](url)` | `[texto](url)` | `texto` |
+| `![alt](src)` | `![alt](src)` | `alt` |
+
+Si hay seleccion no vacia o coincidencias de busqueda activas, se vuelve a Nivel 1 global mientras dure el estado, para que los highlights caigan sobre celdas reales y no sobre bytes ocultos. Se configura con `[ui].wysiwyg_level = 1 | 2` en el TOML (default `2`).
 
 ### 3. Keybinding System (`src/keybinding.rs`)
 
@@ -492,7 +509,7 @@ language = "es"
 
 ## Evolucion Post-MVP
 
-- **Nivel 2 WYSIWYG:** markers ocultos fuera de la linea activa
+- **Nivel 2 WYSIWYG:** implementado completo (inline `**`/`*`/`` ` ``, headings, listas no ordenadas, blockquote, links, imagenes).
 - **Split panels:** multi-buffer con splits
 - **Sistema de plugins:** Lua / WASM / trait-based
 - **Undo tree:** reemplazar stack lineal con visualizacion

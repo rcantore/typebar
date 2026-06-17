@@ -121,6 +121,38 @@ impl Document {
         self.sync_preferred();
     }
 
+    /// Mueve el cursor `page_size` lineas hacia arriba, preservando la columna
+    /// visual deseada (igual que `move_up`). Si `page_size` excede la posicion
+    /// actual, queda en la linea 0. `page_size` lo decide el caller a partir
+    /// del alto del viewport (ver `main::draw`).
+    pub fn move_page_up(&mut self, page_size: usize) {
+        self.last_was_insert = false;
+        self.clear_selection();
+        self.line = self.line.saturating_sub(page_size);
+        self.col = self
+            .graphemes(self.line)
+            .col_for_display(self.preferred_display_col);
+    }
+
+    /// Mueve el cursor `page_size` lineas hacia abajo, preservando la columna
+    /// visual deseada. Si excede el documento, queda en la ultima linea valida
+    /// (igual criterio que `move_down`/`move_to_doc_end`: ignora la linea
+    /// extra vacia que ropey cuenta cuando el buffer termina en '\n').
+    pub fn move_page_down(&mut self, page_size: usize) {
+        self.last_was_insert = false;
+        self.clear_selection();
+        let last_idx = self.buffer.len_lines().saturating_sub(1);
+        let last_valid = if last_idx > 0 && self.line_len_chars(last_idx) == 0 {
+            last_idx - 1
+        } else {
+            last_idx
+        };
+        self.line = (self.line + page_size).min(last_valid);
+        self.col = self
+            .graphemes(self.line)
+            .col_for_display(self.preferred_display_col);
+    }
+
     /// Mueve el cursor al fin del documento: ultima linea con contenido (mismo
     /// criterio que `move_down`, que ignora la linea extra vacia que ropey
     /// cuenta cuando el buffer termina en '\n'), col al final de esa linea.
@@ -208,6 +240,35 @@ mod tests {
         d.col = 2;
         d.move_to_doc_start();
         assert_eq!((d.line, d.col), (0, 0));
+    }
+
+    #[test]
+    fn move_page_up_no_pasa_de_linea_cero() {
+        let mut d = doc_with("a\nb\nc\nd\ne\nf");
+        d.line = 2;
+        d.move_page_up(5);
+        assert_eq!(d.line, 0);
+    }
+
+    #[test]
+    fn move_page_down_clampa_a_ultima_linea_con_contenido() {
+        // El '\n' final cuenta una linea extra vacia que ignoramos.
+        let mut d = doc_with("a\nb\nc\n");
+        d.move_page_down(10);
+        assert_eq!(d.line, 2); // "c", no la linea vacia despues del '\n'
+    }
+
+    #[test]
+    fn move_page_up_y_down_preservan_preferred_col() {
+        // El movimiento vertical preserva la columna deseada (sin tocar el
+        // preferred), igual que move_up/move_down.
+        let mut d = doc_with("largo\nx\notrolargo\ny\nz");
+        d.col = 5;
+        d.preferred_display_col = 5;
+        d.move_page_down(2); // baja 2 lineas: a "otrolargo" (len 9), col=5
+        assert_eq!((d.line, d.col), (2, 5));
+        d.move_page_up(2); // sube 2: a "largo" (len 5)
+        assert_eq!((d.line, d.col), (0, 5));
     }
 
     #[test]

@@ -311,6 +311,8 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "line-end" => Action::LineEnd,
         "doc-start" => Action::DocStart,
         "doc-end" => Action::DocEnd,
+        "page-up" => Action::PageUp,
+        "page-down" => Action::PageDown,
         "save" => Action::Save,
         "save-and-quit" => Action::SaveAndQuit,
         "quit" => Action::Quit,

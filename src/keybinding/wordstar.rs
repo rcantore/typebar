@@ -44,6 +44,13 @@ impl WordstarKeymap {
             KeyCode::Right => Resolve::Action(Action::CursorRight),
             KeyCode::Up => Resolve::Action(Action::CursorUp),
             KeyCode::Down => Resolve::Action(Action::CursorDown),
+            // Aceptamos las teclas modernas tambien: WordStar las hacia con
+            // chords (`Ctrl-Q S` / `Ctrl-Q D` / `Ctrl-R` / `Ctrl-C`), pero los
+            // usuarios actuales esperan que Home/End/PgUp/PgDn funcionen igual.
+            KeyCode::Home => Resolve::Action(Action::LineStart),
+            KeyCode::End => Resolve::Action(Action::LineEnd),
+            KeyCode::PageUp => Resolve::Action(Action::PageUp),
+            KeyCode::PageDown => Resolve::Action(Action::PageDown),
             KeyCode::Enter => Resolve::Action(Action::InsertNewline),
             KeyCode::Backspace => Resolve::Action(Action::Backspace),
             KeyCode::Char(c) => Resolve::Action(Action::InsertChar(c)),
@@ -166,6 +173,29 @@ mod tests {
     use crate::keybinding::test_support::{ctrl, key, resolve1, shift};
     use crate::keybinding::{Action, Keymap, Resolve};
     use ratatui::crossterm::event::KeyCode;
+
+    #[test]
+    fn wordstar_home_end_pgup_pgdown_modernos() {
+        // Sumamos las teclas modernas ademas de los chords clasicos
+        // (`Ctrl-Q S`/`Ctrl-Q D`).
+        let km = WordstarKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::Home)),
+            Resolve::Action(Action::LineStart)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::End)),
+            Resolve::Action(Action::LineEnd)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::PageUp)),
+            Resolve::Action(Action::PageUp)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::PageDown)),
+            Resolve::Action(Action::PageDown)
+        );
+    }
 
     #[test]
     fn wordstar_shift_flechas_extienden_seleccion() {

@@ -64,6 +64,11 @@ impl StandardKeymap {
             KeyCode::Right => Resolve::Action(Action::CursorRight),
             KeyCode::Up => Resolve::Action(Action::CursorUp),
             KeyCode::Down => Resolve::Action(Action::CursorDown),
+            // Saltos comunes (esperados por usuarios de cualquier editor).
+            KeyCode::Home => Resolve::Action(Action::LineStart),
+            KeyCode::End => Resolve::Action(Action::LineEnd),
+            KeyCode::PageUp => Resolve::Action(Action::PageUp),
+            KeyCode::PageDown => Resolve::Action(Action::PageDown),
             KeyCode::Enter => Resolve::Action(Action::InsertNewline),
             KeyCode::Backspace => Resolve::Action(Action::Backspace),
             KeyCode::Char(c) => Resolve::Action(Action::InsertChar(c)),
@@ -283,6 +288,27 @@ mod tests {
         assert_eq!(
             km.resolve(Mode::Insert, &[p, key(KeyCode::Char('z'))]),
             Resolve::None
+        );
+    }
+
+    #[test]
+    fn standard_home_end_pgup_pgdown() {
+        let km = StandardKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::Home)),
+            Resolve::Action(Action::LineStart)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::End)),
+            Resolve::Action(Action::LineEnd)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::PageUp)),
+            Resolve::Action(Action::PageUp)
+        );
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::PageDown)),
+            Resolve::Action(Action::PageDown)
         );
     }
 

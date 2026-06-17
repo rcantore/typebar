@@ -61,6 +61,10 @@ pub enum Action {
     DocStart,
     /// Fin del documento (ultima linea con contenido).
     DocEnd,
+    /// Avanzar el cursor una pagina (~ alto del viewport) hacia arriba.
+    PageUp,
+    /// Avanzar el cursor una pagina (~ alto del viewport) hacia abajo.
+    PageDown,
     Save,
     /// Guardar y salir (el `Ctrl-K D`/`Ctrl-K X` de WordStar).
     SaveAndQuit,

@@ -8,6 +8,20 @@ use super::{
 };
 use crate::document::Mode;
 
+/// Teclas "modernas" de salto (Home/End/PgUp/PgDn): aunque Vim canonico usa
+/// `0`/`$`/`Ctrl-B`/`Ctrl-F`, en Insert y Normal aceptamos las teclas fisicas
+/// para que la edicion cotidiana no sorprenda. En Visual no estan bindeadas
+/// para no introducir SelectLineStart/etc; usar los movimientos canonicos.
+fn modern_motion(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Home => Some(Action::LineStart),
+        KeyCode::End => Some(Action::LineEnd),
+        KeyCode::PageUp => Some(Action::PageUp),
+        KeyCode::PageDown => Some(Action::PageDown),
+        _ => None,
+    }
+}
+
 pub struct VimKeymap;
 
 impl VimKeymap {
@@ -22,6 +36,9 @@ impl VimKeymap {
                 KeyCode::Char('p') => Resolve::Pending,
                 _ => Resolve::None,
             };
+        }
+        if let Some(action) = modern_motion(key) {
+            return Resolve::Action(action);
         }
         match key.code {
             KeyCode::Char('h') | KeyCode::Left => Resolve::Action(Action::CursorLeft),
@@ -79,6 +96,9 @@ impl VimKeymap {
                 KeyCode::Char('p') => Resolve::Pending,
                 _ => Resolve::None,
             };
+        }
+        if let Some(action) = modern_motion(key) {
+            return Resolve::Action(action);
         }
         match key.code {
             KeyCode::Esc => Resolve::Action(Action::EnterNormal),
@@ -333,6 +353,29 @@ mod tests {
             resolve1(&km, Mode::Visual, key(KeyCode::Char('y'))),
             Resolve::Action(Action::Yank)
         );
+    }
+
+    #[test]
+    fn vim_home_end_pgup_pgdn_en_normal_e_insert() {
+        let km = VimKeymap;
+        for mode in [Mode::Normal, Mode::Insert] {
+            assert_eq!(
+                resolve1(&km, mode, key(KeyCode::Home)),
+                Resolve::Action(Action::LineStart)
+            );
+            assert_eq!(
+                resolve1(&km, mode, key(KeyCode::End)),
+                Resolve::Action(Action::LineEnd)
+            );
+            assert_eq!(
+                resolve1(&km, mode, key(KeyCode::PageUp)),
+                Resolve::Action(Action::PageUp)
+            );
+            assert_eq!(
+                resolve1(&km, mode, key(KeyCode::PageDown)),
+                Resolve::Action(Action::PageDown)
+            );
+        }
     }
 
     #[test]

@@ -140,12 +140,13 @@ fn main() -> std::io::Result<()> {
     // Theme desde el config. `by_name` cae a `frappe` ante un nombre
     // desconocido, asi que no hace falta validarlo aca (a diferencia del preset).
     let theme = Theme::by_name(&config.ui.theme);
+    let wysiwyg_level = config.ui.resolved_wysiwyg_level();
 
     let mut document = Document::open(&args.path)?;
     document.mode = keymap.initial_mode();
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, document, keymap.as_ref(), &theme);
+    let result = run(&mut terminal, document, keymap.as_ref(), &theme, wysiwyg_level);
     ratatui::restore();
     result
 }
@@ -155,9 +156,15 @@ fn run(
     mut doc: Document,
     keymap: &dyn Keymap,
     theme: &Theme,
+    wysiwyg_level: u8,
 ) -> std::io::Result<()> {
     // Offset vertical de scroll: primera linea visible del documento.
     let mut scroll: usize = 0;
+    // Alto del area de edicion (en lineas) tras el ultimo draw. Lo escribe
+    // `draw`; lo lee `apply_action` para las acciones que dependen del
+    // viewport (PageUp/PageDown). Antes del primer draw queda en 1, que es
+    // un fallback razonable para no entregar 0 a un calculo de pagina.
+    let mut viewport_height: usize = 1;
     // Buffer de teclas de un chord en curso (vacio si no hay nada pendiente).
     let mut pending: Vec<KeyEvent> = Vec::new();
     // Overlay de busqueda/reemplazo activo (None = edicion normal).
@@ -165,7 +172,19 @@ fn run(
 
     loop {
         terminal
-            .draw(|frame| draw(frame, &doc, keymap, &pending, &mut scroll, theme, overlay.as_ref()))?;
+            .draw(|frame| {
+                draw(
+                    frame,
+                    &doc,
+                    keymap,
+                    &pending,
+                    &mut scroll,
+                    &mut viewport_height,
+                    theme,
+                    overlay.as_ref(),
+                    wysiwyg_level,
+                )
+            })?;
 
         let Event::Key(key) = event::read()? else {
             continue;
@@ -192,7 +211,7 @@ fn run(
                     Action::Search => overlay = Some(Overlay::new_search(&doc)),
                     Action::Replace => overlay = Some(Overlay::new_replace()),
                     _ => {
-                        if apply_action(&mut doc, action)? {
+                        if apply_action(&mut doc, action, viewport_height)? {
                             return Ok(());
                         }
                     }
@@ -209,14 +228,17 @@ fn run(
 
 /// Dibuja el editor. Devuelve via `scroll` (mut) el offset usado, ajustado para
 /// mantener el cursor visible.
+#[allow(clippy::too_many_arguments)] // todos los args son contexto de un draw frame
 fn draw(
     frame: &mut ratatui::Frame,
     doc: &Document,
     keymap: &dyn Keymap,
     pending: &[KeyEvent],
     scroll: &mut usize,
+    viewport_height_out: &mut usize,
     theme: &Theme,
     overlay: Option<&Overlay>,
+    wysiwyg_level: u8,
 ) {
     // Partir la pantalla: editor (resto) + toolbar + gap + status bar. El gap
     // de 1 linea separa visualmente el chrome de comandos del de estado.
@@ -230,6 +252,8 @@ fn draw(
 
     // Alto util dentro del borde del Block (resta 2: arriba y abajo).
     let viewport_height = editor_area.height.saturating_sub(2) as usize;
+    // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
+    *viewport_height_out = viewport_height.max(1);
 
     // Ajustar scroll para que el cursor quede dentro del viewport.
     if viewport_height > 0 {
@@ -256,7 +280,18 @@ fn draw(
     };
 
     let block = Block::bordered().title(format!(" typebar · {} ", doc.path.display()));
-    let lines = render::render(&text, doc.selection_byte_range(), &matches, current, theme);
+    // En Nivel 2 la linea con el cursor se renderiza como Nivel 1 (markers
+    // visibles) para preservar el mapeo cursor->columna 1:1. Las demas lineas
+    // ocultan los delimiters inline (ver `render::render`).
+    let lines = render::render(
+        &text,
+        doc.selection_byte_range(),
+        &matches,
+        current,
+        theme,
+        Some(doc.line),
+        wysiwyg_level,
+    );
     let paragraph = Paragraph::new(lines)
         .block(block)
         .scroll((*scroll as u16, 0));
@@ -551,8 +586,14 @@ impl Overlay {
 }
 
 /// Aplica una accion semantica sobre el documento. Devuelve `Ok(true)` si hay
-/// que salir del editor (Quit).
-fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
+/// que salir del editor (Quit). `viewport_height` se usa para acciones que
+/// dependen del alto visible (Page Up/Down); el resto de las acciones lo
+/// ignora.
+fn apply_action(
+    doc: &mut Document,
+    action: Action,
+    viewport_height: usize,
+) -> std::io::Result<bool> {
     match action {
         Action::CursorLeft => doc.move_left(),
         Action::CursorRight => doc.move_right(),
@@ -576,6 +617,8 @@ fn apply_action(doc: &mut Document, action: Action) -> std::io::Result<bool> {
         Action::LineEnd => doc.move_to_line_end(),
         Action::DocStart => doc.move_to_doc_start(),
         Action::DocEnd => doc.move_to_doc_end(),
+        Action::PageUp => doc.move_page_up(viewport_height),
+        Action::PageDown => doc.move_page_down(viewport_height),
         Action::Save => doc.save()?,
         Action::SaveAndQuit => {
             doc.save()?;
