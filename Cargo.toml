@@ -1,23 +1,12 @@
-[package]
-name = "typebar"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+# Metadata compartida por todos los crates del workspace (typebar-tui y, mas
+# adelante, typebar-core / typebar-gui). Cada crate la hereda con `*.workspace = true`.
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 authors = ["Roberto Cantore Galvez"]
-description = "Editor de Markdown WYSIWYG para terminal, con keybindings configurables (standard/vim/wordstar)."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rcantore/typebar"
-keywords = ["markdown", "editor", "tui", "wysiwyg", "terminal"]
-categories = ["command-line-utilities", "text-editors"]
-
-[dependencies]
-arboard = { version = "3.6.1", default-features = false }
-crossterm = "0.29"
-dirs = "6.0.0"
-ratatui = "0.30"
-ropey = "1.6.1"
-serde = { version = "1.0.228", features = ["derive"] }
-toml = "1.1.2"
-tree-sitter = "0.26"
-tree-sitter-md = { version = "0.5", features = ["parser"] }
-unicode-segmentation = "1.13.3"
-unicode-width = "0.2.2"

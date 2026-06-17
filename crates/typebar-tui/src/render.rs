@@ -450,8 +450,10 @@ mod tests {
     #[test]
     fn dump() {
         let theme = test_theme();
-        let source =
-            std::fs::read_to_string("examples/sample.md").expect("falta examples/sample.md");
+        // Ruta anclada al crate (CARGO_MANIFEST_DIR), no al CWD: asi funciona
+        // se corra `cargo test` desde la raiz del workspace o desde el crate.
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/sample.md");
+        let source = std::fs::read_to_string(fixture).expect("falta examples/sample.md");
         // Nivel 1 (volcado simple, sin ocultar markers).
         let lines = render(&source, None, &[], None, &theme, None, 1);
         println!(
