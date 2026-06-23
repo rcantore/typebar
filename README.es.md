@@ -134,6 +134,13 @@ cargo clippy --all-targets -- -D warnings   # lints (exigidos en CI)
 La arquitectura y el pipeline de renderizado están documentados en
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+## Contribuir
+
+¡Las contribuciones son bienvenidas! Leé [`CONTRIBUTING.es.md`](CONTRIBUTING.es.md)
+para saber cómo compilar, testear y enviar cambios, y tené en cuenta el
+[Código de Conducta](CODE_OF_CONDUCT.md). Los cambios relevantes se registran en
+el [changelog](CHANGELOG.md).
+
 ## Licencia
 
 Licenciado bajo [MIT](LICENSE-MIT) o [Apache-2.0](LICENSE-APACHE), a tu
