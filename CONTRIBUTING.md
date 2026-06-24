@@ -3,7 +3,7 @@
 *Read this in [Español](CONTRIBUTING.es.md).*
 
 Thanks for your interest in typebar! This is a small, early-stage project, so
-contributions of any size — bug reports, fixes, docs, ideas — are welcome.
+contributions of any size (bug reports, fixes, docs, ideas) are welcome.
 
 ## Code of conduct
 
@@ -27,7 +27,7 @@ For a high-level tour of how the editor is structured, read
 
 ## Before you open a pull request
 
-Run the same checks CI runs — all four must pass:
+Run the same checks CI runs, all four must pass:
 
 ```bash
 cargo fmt --check                          # formatting
@@ -51,7 +51,7 @@ before pushing will save you a CI round-trip.
 
 ## Commit messages
 
-Use short, prefixed, imperative messages — the style already used in the repo:
+Use short, prefixed, imperative messages, the style already used in the repo:
 
 ```
 feat: add soft-wrap toggle
@@ -75,7 +75,7 @@ Open an issue with:
 
 ## Proposing features
 
-For anything non-trivial, open an issue to discuss before writing code — it
+For anything non-trivial, open an issue to discuss before writing code; it
 saves everyone time if the approach can be agreed on first. Small, focused PRs
 are much easier to review than large ones.
 

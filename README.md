@@ -3,7 +3,7 @@
 *Read this in [Español](README.es.md).*
 
 A WYSIWYG Markdown editor for the terminal, written in Rust. typebar renders
-Markdown inline as you type — bold looks bold, headings look like headings —
+Markdown inline as you type (bold looks bold, headings look like headings)
 while keeping editing predictable through configurable keybinding presets
 (`standard`, `vim`, `wordstar`).
 
@@ -14,10 +14,10 @@ type and strikes it against the paper through the ribbon.
 
 I spend most of my day in the terminal, and I could never find a Markdown
 editor that felt at home there. There's Obsidian, and there are plenty of
-beautiful GUI editors — but I wanted something closer to
+beautiful GUI editors, but I wanted something closer to
 Typora: clean, live-rendered, get-out-of-your-way
 WYSIWYG, except open source and running in a terminal. WordStar scratched a bit
-of that itch — at least in my nostalgia — so it felt like a good direction to
+of that itch, at least in my nostalgia, so it felt like a good direction to
 build from.
 
 > **Status:** early development (`v0.1.0`). Markdown-only, single buffer.
@@ -26,18 +26,18 @@ build from.
 
 - **Soft WYSIWYG rendering** powered by [tree-sitter](https://tree-sitter.github.io/),
   in two levels:
-  - **Level 1** — syntax markers are never hidden, only dimmed. Cursor-to-column
+  - **Level 1**: syntax markers are never hidden, only dimmed. Cursor-to-column
     mapping stays 1:1 on every line, so editing is always predictable.
-  - **Level 2** *(default)* — inline delimiters are collapsed on **inactive**
+  - **Level 2** *(default)*: inline delimiters are collapsed on **inactive**
     lines: `**bold**` → **bold**, `# Heading` drops the `#`, `- item` → `• item`,
     `> quote` → `│ quote`, and `[text](url)` shows just the text. The line under
     the cursor always renders as Level 1, so the cursor mapping never shifts.
     During an active selection or search, the whole view falls back to Level 1
     so highlights land on real cells.
 - **Three keybinding presets**, swappable at launch or via config:
-  - `standard` — modeless, arrow-key navigation (default).
-  - `vim` — modal (Normal / Insert / Visual).
-  - `wordstar` — modeless with classic chords (`Ctrl-K S`, `Ctrl-Q S`, …).
+  - `standard`: modeless, arrow-key navigation (default).
+  - `vim`: modal (Normal / Insert / Visual).
+  - `wordstar`: modeless with classic chords (`Ctrl-K S`, `Ctrl-Q S`, …).
   - Plus per-key **custom overrides** layered on top of any preset.
 - **Editing essentials**: undo/redo, visual selection, system clipboard
   copy/paste/cut, find & replace, bold/italic/code toggles, and full motions
@@ -71,8 +71,8 @@ cargo build --release
 typebar [PATH] [--keys <preset>]
 ```
 
-- `PATH` — file to open (defaults to `scratch.md` if omitted).
-- `--keys <preset>` — keybinding preset: `standard`, `vim`, or `wordstar`.
+- `PATH`: file to open (defaults to `scratch.md` if omitted).
+- `--keys <preset>`: keybinding preset (`standard`, `vim`, or `wordstar`).
   Takes precedence over the config file.
 
 ```bash
@@ -83,7 +83,7 @@ typebar              # opens scratch.md with the standard preset
 ## Configuration
 
 typebar reads an optional TOML file at `~/.config/typebar/config.toml`
-(honoring `XDG_CONFIG_HOME`). Everything is optional — without the file, the
+(honoring `XDG_CONFIG_HOME`). Everything is optional; without the file, the
 built-in defaults apply. A starting point lives in
 [`examples/config.toml`](examples/config.toml).
 

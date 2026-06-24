@@ -1,4 +1,4 @@
-# typebar — Documento de Arquitectura v0.1
+# typebar: Documento de Arquitectura v0.1
 
 > Editor de Markdown WYSIWYG para terminal. CLI: `tb`. Licencia dual MIT + Apache-2.0.
 
@@ -71,7 +71,7 @@ Transforma el AST de Markdown en widgets estilizados de ratatui.
 
 **Pipeline:** Buffer (texto crudo) -> tree-sitter parse (AST) -> Style Mapper (AST node a estilo terminal) -> ratatui Spans (texto + estilos) -> Terminal draw.
 
-**Style mapping (Nivel 1 — Soft WYSIWYG):**
+**Style mapping (Nivel 1, Soft WYSIWYG):**
 
 | Markdown element | Rendering terminal |
 |---|---|
@@ -234,7 +234,7 @@ sin exponer el buffer.
   seleccion (las flechas sin shift colapsan). No usan `Mode::Visual`: la
   seleccion vive solo en el ancla, y la status bar muestra `SEL` si esta activa.
 - **Operaciones**: `toggle_inline` con seleccion envuelve EL RANGO con el
-  marcador (sin detectar enfasis existente: siempre envuelve, nunca destogglea —
+  marcador (sin detectar enfasis existente: siempre envuelve, nunca destogglea,
   limitacion conocida). `delete_selection` borra el rango y reubica el cursor en
   el inicio; `backspace`/`delete_char` borran la seleccion si hay una activa.
 - **Resaltado**: `render(source, selection)` recibe el rango en BYTES y, tras
@@ -481,15 +481,15 @@ language = "es"
 
 ---
 
-## Plan de Implementacion — MVP
+## Plan de Implementacion: MVP
 
-**Fase 1: Foundation (semanas 1-2)** — scaffold Cargo, event loop crossterm, document model (Rope + cursor), render de texto plano, modos Normal/Insert con Vim minimo, abrir/editar/guardar archivo.
+**Fase 1: Foundation (semanas 1-2).** Scaffold Cargo, event loop crossterm, document model (Rope + cursor), render de texto plano, modos Normal/Insert con Vim minimo, abrir/editar/guardar archivo.
 
-**Fase 2: Markdown Rendering (semanas 3-4)** — integracion tree-sitter-markdown, style mapper (headings, bold, italic, code), markers dimmeados, syntax highlighting en code blocks, status bar.
+**Fase 2: Markdown Rendering (semanas 3-4).** Integracion tree-sitter-markdown, style mapper (headings, bold, italic, code), markers dimmeados, syntax highlighting en code blocks, status bar.
 
-**Fase 3: UX Polish (semanas 5-6)** — theme engine + 2-3 themes, zen mode, file manager, fuzzy finder, word count, keybindings configurables via TOML.
+**Fase 3: UX Polish (semanas 5-6).** Theme engine + 2-3 themes, zen mode, file manager, fuzzy finder, word count, keybindings configurables via TOML.
 
-**Fase 4: Release Prep (semana 7)** — README con GIFs, CONTRIBUTING.md, CI (build + test + clippy + fmt), release binaries Linux/macOS/Windows, publicar en crates.io, post de anuncio (r/rust, r/commandline, r/unixporn).
+**Fase 4: Release Prep (semana 7).** README con GIFs, CONTRIBUTING.md, CI (build + test + clippy + fmt), release binaries Linux/macOS/Windows, publicar en crates.io, post de anuncio (r/rust, r/commandline, r/unixporn).
 
 ---
 

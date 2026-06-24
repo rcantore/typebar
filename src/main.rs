@@ -1,4 +1,4 @@
-//! typebar — editor de Markdown WYSIWYG para terminal (milestone editable minimo).
+//! typebar: editor de Markdown WYSIWYG para terminal (milestone editable minimo).
 //!
 //! Render "soft WYSIWYG": los marcadores (`**`, `*`, backticks, `#`) siempre
 //! quedan visibles y dimmeados, asi el cursor se mueve 1:1 sobre el texto y la

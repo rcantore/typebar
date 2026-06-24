@@ -3,7 +3,7 @@
 *Read this in [English](CONTRIBUTING.md).*
 
 ¡Gracias por tu interés en typebar! Es un proyecto chico y en etapa temprana,
-así que toda contribución es bienvenida — reportes de bugs, fixes, docs, ideas.
+así que toda contribución es bienvenida: reportes de bugs, fixes, docs, ideas.
 
 ## Código de conducta
 
@@ -28,7 +28,7 @@ Para entender cómo está estructurado el editor, leé
 
 ## Antes de abrir un pull request
 
-Corré los mismos checks que corre CI — los cuatro tienen que pasar:
+Corré los mismos checks que corre CI, los cuatro tienen que pasar:
 
 ```bash
 cargo fmt --check                          # formato
@@ -53,7 +53,7 @@ de pushear te ahorra una vuelta de CI.
 
 ## Mensajes de commit
 
-Usá mensajes cortos, con prefijo, en imperativo — el estilo que ya usa el repo:
+Usá mensajes cortos, con prefijo, en imperativo, el estilo que ya usa el repo:
 
 ```
 feat: add soft-wrap toggle
@@ -77,7 +77,7 @@ Abrí un issue con:
 
 ## Proponer features
 
-Para algo no trivial, abrí un issue para discutir antes de escribir código —
+Para algo no trivial, abrí un issue para discutir antes de escribir código;
 ahorra tiempo si se acuerda el enfoque primero. Los PRs chicos y enfocados son
 mucho más fáciles de revisar que los grandes.
 
