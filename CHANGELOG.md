@@ -16,6 +16,8 @@ How to maintain this file:
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-24
+
 ### Added
 
 - WYSIWYG inline rendering as you type: bold, italic, headings, bullet/ordered
@@ -29,4 +31,5 @@ How to maintain this file:
 - System clipboard integration.
 - Bilingual README (English / Español).
 
-[Unreleased]: https://github.com/rcantore/typebar/commits/main
+[Unreleased]: https://github.com/rcantore/typebar/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/rcantore/typebar/releases/tag/v0.1.0
