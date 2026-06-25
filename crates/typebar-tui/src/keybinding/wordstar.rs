@@ -8,7 +8,10 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use super::{Action, Hint, Keymap, Resolve, format_hints, has_ctrl, resolve_format_second};
+use super::{
+    Action, Hint, Keymap, Resolve, format_hints, has_ctrl, resolve_format_second,
+    resolve_view_second, view_hints,
+};
 use crate::document::Mode;
 
 pub struct WordstarKeymap;
@@ -33,9 +36,13 @@ impl WordstarKeymap {
                 KeyCode::Char('z') => Resolve::Action(Action::Undo),
                 KeyCode::Char('y') => Resolve::Action(Action::Redo),
                 // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
-                // prefijo de formato (negrita/italica/codigo), uniforme con los
-                // otros presets.
-                KeyCode::Char('k') | KeyCode::Char('q') | KeyCode::Char('p') => Resolve::Pending,
+                // prefijo de formato (negrita/italica/codigo) y `Ctrl-O` el
+                // submenu "view" (zen, etc., homenaje al Onscreen format del
+                // WordStar real), ambos uniformes con los otros presets.
+                KeyCode::Char('k')
+                | KeyCode::Char('q')
+                | KeyCode::Char('p')
+                | KeyCode::Char('o') => Resolve::Pending,
                 _ => Resolve::None,
             };
         }
@@ -65,6 +72,11 @@ impl WordstarKeymap {
         // otros presets.
         if matches!(prefix.code, KeyCode::Char('p')) {
             return resolve_format_second(second);
+        }
+        // `Ctrl-O` + letra: submenu "view" (z = zen), compartido con los otros
+        // presets.
+        if matches!(prefix.code, KeyCode::Char('o')) {
+            return resolve_view_second(second);
         }
         // La segunda tecla se acepta como letra plana, sin importar mayuscula.
         let letter = match second.code {
@@ -129,6 +141,7 @@ impl Keymap for WordstarKeymap {
             Hint::new(Action::Yank, "^K C", t(Key::HintYank)),
             Hint::new(Action::Paste, "^K V", t(Key::HintPaste)),
             Hint::prefix("^P", t(Key::HintFormatPrefix)),
+            Hint::prefix("^O", t(Key::HintViewPrefix)),
             Hint::new(Action::SaveAndQuit, "^K X", t(Key::HintQuit)),
         ]
     }
@@ -144,6 +157,8 @@ impl Keymap for WordstarKeymap {
         match k.code {
             // `Ctrl-P` + letra: formato (compartido con los otros presets).
             KeyCode::Char('p') => format_hints(),
+            // `Ctrl-O` + letra: submenu "view" (compartido con los otros presets).
+            KeyCode::Char('o') => view_hints(),
             // `Ctrl-K` + letra: comandos de bloque/archivo.
             KeyCode::Char('k') => vec![
                 Hint::new(Action::Save, "S", t(Key::HintSave)),
@@ -375,6 +390,30 @@ mod tests {
         );
         assert_eq!(
             km.resolve(Mode::Insert, &[p, key(KeyCode::Char('z'))]),
+            Resolve::None
+        );
+    }
+
+    #[test]
+    fn wordstar_ctrl_o_submenu_view_zen() {
+        // `^O` (homenaje al Onscreen format) queda pendiente; `^O Z` togglea zen.
+        let km = WordstarKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('o'))),
+            Resolve::Pending
+        );
+        let o = ctrl(KeyCode::Char('o'));
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('z'))]),
+            Resolve::Action(Action::ToggleZen)
+        );
+        // Case-insensitive; letra invalida cancela.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('Z'))]),
+            Resolve::Action(Action::ToggleZen)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('w'))]),
             Resolve::None
         );
     }

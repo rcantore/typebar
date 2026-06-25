@@ -49,9 +49,16 @@ and your text rendered as you type.
   (line/doc start & end, Page Up/Down, Home/End).
 - **Live word count** in the status bar (Unicode word boundaries), with a
   selected-words count while text is selected.
+- **Zen / focus mode**: hide all chrome (border, toolbar, status bar) to write
+  distraction-free. Toggle from the *view* submenu — `Ctrl-O Z` (standard /
+  wordstar, echoing WordStar's onscreen-format prefix) or `z z` (vim); in the
+  modeless presets `Esc` also exits.
 - **Unicode-aware**: grapheme-cluster cursor movement and correct display width
   for CJK, emoji, and combining characters.
-- **Themeable** for ricing: `frappe` (default) and `mocha` Catppuccin palettes.
+- **HTML export**: `typebar notes.md --export-html` writes a standalone
+  `notes.html` (CommonMark via pulldown-cmark) without opening the editor.
+- **Themeable** for ricing: `frappe` (default), `mocha`, and the light `latte`
+  Catppuccin palettes.
 - **Internationalized UI**: English by default, Spanish auto-detected from
   `$LANG`, both overridable in config.
 
@@ -81,10 +88,13 @@ typebar [PATH] [--keys <preset>]
 - `PATH`: file to open (defaults to `scratch.md` if omitted).
 - `--keys <preset>`: keybinding preset (`standard`, `vim`, or `wordstar`).
   Takes precedence over the config file.
+- `--export-html`: convert `PATH` to a standalone `.html` file and exit, without
+  opening the editor.
 
 ```bash
 typebar README.md --keys vim
 typebar              # opens scratch.md with the standard preset
+typebar notes.md --export-html   # writes notes.html and exits
 ```
 
 ## Configuration

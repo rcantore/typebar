@@ -20,6 +20,16 @@ How to maintain this file:
 
 - Word count in the status bar (Unicode-aware), showing the document total and
   the selected count while a selection is active.
+- Zen / focus mode: hides all chrome (border, toolbar, status bar) to leave only
+  the text. Toggled from the new "view" submenu — `Ctrl-O Z` (standard and
+  wordstar, echoing WordStar's onscreen-format prefix) or `z z` (vim, its view
+  command prefix). In the modeless presets `Esc` also exits. Remappable via the
+  `toggle-zen` action.
+- Catppuccin Latte light theme, selectable with `theme = "latte"` in the config
+  (joins the dark `frappe` and `mocha` palettes).
+- HTML export: `typebar <file> --export-html` converts the Markdown to a
+  standalone HTML document (CommonMark via pulldown-cmark, with tables,
+  strikethrough, footnotes and task lists) and exits without opening the editor.
 
 ## [0.1.0] - 2026-06-24
 

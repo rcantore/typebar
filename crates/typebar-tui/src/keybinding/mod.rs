@@ -97,6 +97,10 @@ pub enum Action {
     Search,
     /// Abrir el overlay de buscar y reemplazar.
     Replace,
+    /// Togglear el modo zen/focus: oculta todo el chrome (borde, toolbar, status
+    /// bar) para dejar solo el texto. Es estado de la vista del loop, no del
+    /// documento; building block del modo whitepaper.
+    ToggleZen,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
@@ -186,6 +190,13 @@ fn is_format_prefix(key: KeyEvent) -> bool {
     has_ctrl(key) && matches!(key.code, KeyCode::Char('p'))
 }
 
+/// Devuelve true si `key` es el prefijo del submenu "view" `Ctrl-O` (standard y
+/// wordstar; homenaje al *Onscreen format* del WordStar real). En vim el submenu
+/// cuelga de `z` y se detecta aparte. Ver `resolve_view_second`/`view_hints`.
+fn is_view_prefix(key: KeyEvent) -> bool {
+    has_ctrl(key) && matches!(key.code, KeyCode::Char('o'))
+}
+
 /// Resuelve la SEGUNDA tecla de un chord de formato `Ctrl-P` + letra
 /// (case-insensitive): `b` -> negrita, `i` -> italica, `c` -> codigo. Cualquier
 /// otra tecla cancela (`None`). Compartido por los tres presets.
@@ -211,6 +222,32 @@ fn format_hints() -> Vec<Hint> {
         Hint::new(Action::ToggleItalic, "I", t(Key::HintItalic)),
         Hint::new(Action::ToggleCode, "C", t(Key::HintCode)),
     ]
+}
+
+/// Submenu "view": prefijo de toggles de vista. El prefijo fisico difiere por
+/// preset (homenaje a cada idioma: `Ctrl-O` —el *Onscreen format* de WordStar—
+/// en standard/wordstar, `z` —el prefijo de comandos de vista de Vim— en vim),
+/// pero la SEGUNDA tecla y los hints son compartidos para que la familia crezca
+/// uniforme (hoy `Z` -> zen; manana `L` -> theme light, `W` -> whitepaper, etc.).
+///
+/// Resuelve la segunda tecla del submenu (case-insensitive). Cualquier otra
+/// cancela (`None`).
+fn resolve_view_second(second: KeyEvent) -> Resolve {
+    let letter = match second.code {
+        KeyCode::Char(c) => c.to_ascii_lowercase(),
+        _ => return Resolve::None,
+    };
+    match letter {
+        'z' => Resolve::Action(Action::ToggleZen),
+        _ => Resolve::None,
+    }
+}
+
+/// Hints de continuacion del submenu "view", compartido por los tres presets
+/// (igual que `format_hints`). La `keys` es solo la segunda tecla.
+fn view_hints() -> Vec<Hint> {
+    use crate::i18n::{Key, t};
+    vec![Hint::new(Action::ToggleZen, "Z", t(Key::HintZen))]
 }
 
 /// Construye el preset segun su nombre. Si no matchea ninguno conocido, cae al

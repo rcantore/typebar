@@ -11,6 +11,7 @@
 
 mod config;
 mod document;
+mod export;
 mod i18n;
 mod keybinding;
 mod markdown;
@@ -41,6 +42,9 @@ const DEFAULT_PRESET: &str = "standard";
 struct Args {
     path: String,
     preset: Option<String>,
+    /// Si esta en `true` (flag `--export-html`), el programa convierte el
+    /// archivo a HTML standalone y sale sin abrir la TUI.
+    export_html: bool,
 }
 
 /// Parsea los argumentos a mano (sin clap). Soporta `--keys <nombre>` y
@@ -50,6 +54,7 @@ struct Args {
 fn parse_args(raw: impl Iterator<Item = String>) -> Args {
     let mut path: Option<String> = None;
     let mut preset: Option<String> = None;
+    let mut export_html = false;
     let mut args = raw.peekable();
 
     while let Some(arg) = args.next() {
@@ -58,6 +63,9 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
         } else if arg == "--keys" {
             // Tomar el siguiente token como valor (si lo hay).
             preset = args.next();
+        } else if arg == "--export-html" {
+            // Flag booleano (sin valor): exportar a HTML y salir.
+            export_html = true;
         } else if !arg.starts_with('-') && path.is_none() {
             path = Some(arg);
         }
@@ -67,6 +75,7 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
     Args {
         path: path.unwrap_or_else(|| DEFAULT_PATH.to_string()),
         preset,
+        export_html,
     }
 }
 
@@ -111,9 +120,41 @@ fn apply_overrides(base: Box<dyn Keymap>, entries: &[config::BindEntry]) -> Box<
     }
 }
 
+/// Calcula el path de salida del HTML a partir del path del archivo de entrada:
+/// reemplaza la extension por `.html` (ej `notes.md` -> `notes.html`); si no
+/// tiene extension, le agrega `.html` (ej `notes` -> `notes.html`).
+fn html_output_path(input: &str) -> std::path::PathBuf {
+    std::path::Path::new(input).with_extension("html")
+}
+
+/// Exporta el archivo Markdown en `path` a un HTML standalone junto a el (misma
+/// ruta, extension `.html`) y avisa por stderr. Si el archivo no existe, se
+/// trata su contenido como vacio (genera un HTML valido pero sin cuerpo). El
+/// resto de los errores de IO (lectura/escritura) se propagan.
+fn export_to_html(path: &str) -> std::io::Result<()> {
+    // Un archivo inexistente se trata como contenido vacio; el resto de los
+    // errores de lectura (permisos, etc.) se propagan.
+    let content = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let html = export::to_html(&content, path);
+    let out = html_output_path(path);
+    std::fs::write(&out, html)?;
+    // Mensaje simple en ingles por stderr (se puede i18n-izar mas adelante).
+    eprintln!("exported to {}", out.display());
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     // Saltar argv[0] (nombre del binario).
     let args = parse_args(std::env::args().skip(1));
+
+    // Export a HTML: convertir y salir ANTES de inicializar la terminal.
+    if args.export_html {
+        return export_to_html(&args.path);
+    }
 
     // Cargar config primero; el override del CLI se aplica encima en
     // `resolve_preset`. Sin config file valido, esto cae a defaults en silencio.
@@ -175,6 +216,10 @@ fn run(
     let mut pending: Vec<KeyEvent> = Vec::new();
     // Overlay de busqueda/reemplazo activo (None = edicion normal).
     let mut overlay: Option<Overlay> = None;
+    // Zen/focus mode: oculta el chrome (borde, toolbar, status) para dejar solo
+    // el texto. Estado de la vista, no del documento. Se togglea con el submenu
+    // "view" (ver keybindings) y, en presets modeless, sale tambien con Esc.
+    let mut zen = false;
 
     loop {
         terminal.draw(|frame| {
@@ -188,6 +233,7 @@ fn run(
                 theme,
                 overlay.as_ref(),
                 wysiwyg_level,
+                zen,
             )
         })?;
 
@@ -207,14 +253,26 @@ fn run(
             continue;
         }
 
+        // Red de seguridad para salir de zen: en presets modeless (standard/
+        // wordstar) `Esc` no esta bindeado, asi que lo usamos como escape garantizado
+        // del modo focus (en zen el chrome esta oculto y el toggle no se ve). En Vim
+        // NO lo interceptamos: `Esc` tiene semantica (volver a Normal); ahi se sale
+        // con el mismo `z z` que entro.
+        if zen && key.code == KeyCode::Esc && !keymap.is_modal() {
+            zen = false;
+            pending.clear();
+            continue;
+        }
+
         pending.push(key);
         match keymap.resolve(doc.mode, &pending) {
             Resolve::Action(action) => {
                 pending.clear();
                 match action {
-                    // Estas acciones abren un overlay en vez de mutar el doc.
+                    // Estas acciones tocan estado de la vista del loop, no el doc.
                     Action::Search => overlay = Some(Overlay::new_search(&doc)),
                     Action::Replace => overlay = Some(Overlay::new_replace()),
+                    Action::ToggleZen => zen = !zen,
                     _ => {
                         if apply_action(&mut doc, action, viewport_height)? {
                             return Ok(());
@@ -244,19 +302,37 @@ fn draw(
     theme: &Theme,
     overlay: Option<&Overlay>,
     wysiwyg_level: u8,
+    zen: bool,
 ) {
-    // Partir la pantalla: editor (resto) + toolbar + gap + status bar. El gap
-    // de 1 linea separa visualmente el chrome de comandos del de estado.
-    let [editor_area, hints_area, _gap, status_area] = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(frame.area());
+    // Zen/focus: ocultamos todo el chrome (borde, toolbar, status) para dejar
+    // solo el texto. Excepcion: si hay un overlay de busqueda activo reservamos
+    // la ultima linea para el minibuffer (si no, no se veria que se esta
+    // buscando). Fuera de zen: editor (resto) + toolbar + gap + status bar; el
+    // gap de 1 linea separa visualmente el chrome de comandos del de estado.
+    let (editor_area, hints_area, status_area) = if zen {
+        if overlay.is_some() {
+            let [editor, mini] =
+                Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+            (editor, None, Some(mini))
+        } else {
+            (frame.area(), None, None)
+        }
+    } else {
+        let [editor, hints, _gap, status] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(frame.area());
+        (editor, Some(hints), Some(status))
+    };
 
-    // Alto util dentro del borde del Block (resta 2: arriba y abajo).
-    let viewport_height = editor_area.height.saturating_sub(2) as usize;
+    // En zen no hay borde (el editor ocupa todo); fuera de zen, el Block bordered
+    // come 1 linea arriba y 1 abajo. Este offset alinea el alto util y el cursor.
+    let border: u16 = if zen { 0 } else { 1 };
+    // Alto util dentro del borde del Block.
+    let viewport_height = editor_area.height.saturating_sub(2 * border) as usize;
     // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
     *viewport_height_out = viewport_height.max(1);
 
@@ -284,7 +360,13 @@ fn draw(
         matches.iter().position(|m| m.start == doc.cursor_byte())
     };
 
-    let block = Block::bordered().title(format!(" typebar · {} ", doc.path.display()));
+    // En zen el Block va sin borde ni titulo (solo texto); fuera de zen, bordered
+    // con el path en el titulo.
+    let block = if zen {
+        Block::default()
+    } else {
+        Block::bordered().title(format!(" typebar · {} ", doc.path.display()))
+    };
     // En Nivel 2 la linea con el cursor se renderiza como Nivel 1 (markers
     // visibles) para preservar el mapeo cursor->columna 1:1. Las demas lineas
     // ocultan los delimiters inline (ver `render::render`).
@@ -303,21 +385,27 @@ fn draw(
     frame.render_widget(paragraph, editor_area);
 
     // Barra de atajos (toolbar estilo WordStar/Norton Commander): los atajos del
-    // preset para el modo actual, reflejando los remapeos del usuario.
-    frame.render_widget(hints_bar(keymap, doc.mode, pending, theme), hints_area);
+    // preset para el modo actual, reflejando los remapeos del usuario. En zen se
+    // oculta (hints_area = None).
+    if let Some(hints_area) = hints_area {
+        frame.render_widget(hints_bar(keymap, doc.mode, pending, theme), hints_area);
+    }
 
-    // Con overlay abierto, el minibuffer reemplaza la status bar.
-    match overlay {
-        Some(ov) => frame.render_widget(ov.minibuffer(), status_area),
-        None => frame.render_widget(status_bar(doc, keymap, pending), status_area),
+    // Status bar (o, con overlay abierto, el minibuffer en su lugar). En zen sin
+    // overlay no hay area (status_area = None) y no se dibuja nada.
+    if let Some(status_area) = status_area {
+        match overlay {
+            Some(ov) => frame.render_widget(ov.minibuffer(), status_area),
+            None => frame.render_widget(status_bar(doc, keymap, pending), status_area),
+        }
     }
 
     // Cursor real de terminal: +1,+1 por el borde del Block, y restando scroll.
     // La X es la columna *visual* (celdas), no el indice de char: asi cae sobre
     // el glifo que dibujo el render aunque haya CJK/emoji de doble ancho.
     if doc.line >= *scroll {
-        let cursor_x = editor_area.x + 1 + doc.display_col() as u16;
-        let cursor_y = editor_area.y + 1 + (doc.line - *scroll) as u16;
+        let cursor_x = editor_area.x + border + doc.display_col() as u16;
+        let cursor_y = editor_area.y + border + (doc.line - *scroll) as u16;
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
 }
@@ -670,9 +758,10 @@ fn apply_action(
             }
         }
         Action::Paste => doc.paste(),
-        // Search/Replace abren un overlay; las intercepta `run` antes de llegar
-        // aca. Se listan para que el match siga exhaustivo.
-        Action::Search | Action::Replace => {}
+        // Search/Replace abren un overlay y ToggleZen togglea la vista; las
+        // intercepta `run` antes de llegar aca. Se listan para que el match siga
+        // exhaustivo.
+        Action::Search | Action::Replace | Action::ToggleZen => {}
     }
     Ok(false)
 }
@@ -694,6 +783,76 @@ mod tests {
     /// KeyEvent simple para los tests del overlay.
     fn k(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// Renderiza un frame con `draw` sobre un backend de prueba y devuelve todo el
+    /// buffer como texto plano (filas separadas por `\n`). Sirve para verificar
+    /// que cierto chrome aparece o no en pantalla.
+    fn render_to_string(zen: bool) -> String {
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let doc = doc_with("hola mundo");
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        let mut scroll = 0usize;
+        let mut vp = 0usize;
+        terminal
+            .draw(|f| {
+                draw(
+                    f,
+                    &doc,
+                    &km,
+                    &[],
+                    &mut scroll,
+                    &mut vp,
+                    &theme,
+                    None,
+                    2,
+                    zen,
+                )
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        let mut out = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn draw_normal_muestra_chrome() {
+        // Fuera de zen: el borde con el titulo (`typebar`) y la toolbar (`Save`,
+        // locale En por default en tests) estan presentes, igual que el texto.
+        let screen = render_to_string(false);
+        assert!(screen.contains("typebar"), "falta el titulo del borde");
+        assert!(screen.contains("Save"), "falta la toolbar");
+        assert!(screen.contains("hola mundo"), "falta el texto");
+    }
+
+    #[test]
+    fn draw_zen_oculta_chrome_pero_muestra_texto() {
+        // En zen: sin borde/titulo ni toolbar; solo el texto.
+        let screen = render_to_string(true);
+        assert!(
+            !screen.contains("typebar"),
+            "el titulo no deberia verse en zen"
+        );
+        assert!(
+            !screen.contains("Save"),
+            "la toolbar no deberia verse en zen"
+        );
+        assert!(
+            screen.contains("hola mundo"),
+            "el texto deberia seguir visible"
+        );
     }
 
     /// Tipea una cadena en el overlay, tecla por tecla.
@@ -764,6 +923,29 @@ mod tests {
         assert_eq!(a.path, DEFAULT_PATH);
         // Sin `--keys` el preset queda sin resolver (lo decide el config).
         assert_eq!(a.preset, None);
+        // Sin `--export-html` el flag de export queda en false.
+        assert!(!a.export_html);
+    }
+
+    #[test]
+    fn parse_args_export_html_setea_el_flag() {
+        let a = parse_args(vec!["notas.md".to_string(), "--export-html".to_string()].into_iter());
+        assert!(a.export_html);
+        assert_eq!(a.path, "notas.md");
+    }
+
+    #[test]
+    fn html_output_path_cambia_la_extension() {
+        // Con extension: se reemplaza por `.html`.
+        assert_eq!(
+            html_output_path("notes.md"),
+            std::path::PathBuf::from("notes.html")
+        );
+        // Sin extension: se agrega `.html`.
+        assert_eq!(
+            html_output_path("notes"),
+            std::path::PathBuf::from("notes.html")
+        );
     }
 
     #[test]

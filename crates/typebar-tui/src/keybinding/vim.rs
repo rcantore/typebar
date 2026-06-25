@@ -5,8 +5,18 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use super::{
     Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, resolve_format_second,
+    resolve_view_second, view_hints,
 };
 use crate::document::Mode;
+
+/// True si `key` es el prefijo del submenu "view" de Vim: la tecla `z` sin
+/// CONTROL. En Vim `z` ya es el prefijo de comandos de vista (scroll/folds), asi
+/// que el zen/focus cuelga ahi (`z z`). Solo aplica en Normal (en Insert `z` se
+/// tipea); ver `resolve`. Comparte la segunda tecla con standard/wordstar via
+/// `resolve_view_second`.
+fn is_vim_view_prefix(key: KeyEvent) -> bool {
+    !has_ctrl(key) && matches!(key.code, KeyCode::Char('z'))
+}
 
 /// Teclas "modernas" de salto (Home/End/PgUp/PgDn): aunque Vim canonico usa
 /// `0`/`$`/`Ctrl-B`/`Ctrl-F`, en Insert y Normal aceptamos las teclas fisicas
@@ -58,6 +68,9 @@ impl VimKeymap {
             // puede bindear a gusto con los keybindings remapeables.
             KeyCode::Char('/') => Resolve::Action(Action::Search),
             KeyCode::Char('q') => Resolve::Action(Action::Quit),
+            // `z`: prefijo del submenu "view" (zen, etc.). Espera la segunda
+            // tecla (ver `resolve`). Idiomatico: en Vim `z` es vista/scroll.
+            KeyCode::Char('z') => Resolve::Pending,
             _ => Resolve::None,
         }
     }
@@ -116,6 +129,11 @@ impl Keymap for VimKeymap {
             // Chord de formato `Ctrl-P` + letra: funciona en CUALQUIER modo (el
             // formato es agnostico al modo Vim).
             [prefix, second] if is_format_prefix(*prefix) => resolve_format_second(*second),
+            // Submenu "view" `z` + letra (z = zen): solo en Normal (en Insert la
+            // `z` se tipea como texto).
+            [prefix, second] if mode == Mode::Normal && is_vim_view_prefix(*prefix) => {
+                resolve_view_second(*second)
+            }
             [single] => match mode {
                 Mode::Normal => self.resolve_normal(*single),
                 Mode::Insert => self.resolve_insert(*single),
@@ -148,6 +166,7 @@ impl Keymap for VimKeymap {
                 Hint::new(Action::Paste, "p", t(Key::HintPaste)),
                 Hint::new(Action::Save, "^S", t(Key::HintSave)),
                 Hint::prefix("^P", t(Key::HintFormatPrefix)),
+                Hint::prefix("z", t(Key::HintViewPrefix)),
                 Hint::new(Action::Quit, "q", t(Key::HintQuit)),
             ],
             Mode::Insert => vec![
@@ -164,10 +183,12 @@ impl Keymap for VimKeymap {
         }
     }
 
-    fn chord_hints(&self, _mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
-        // `Ctrl-P` (formato) funciona en cualquier modo, igual que en resolve.
+    fn chord_hints(&self, mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
+        // `Ctrl-P` (formato) funciona en cualquier modo; el submenu `z` (view)
+        // solo en Normal, igual que en `resolve`.
         match pending {
             [k] if is_format_prefix(*k) => format_hints(),
+            [k] if mode == Mode::Normal && is_vim_view_prefix(*k) => view_hints(),
             _ => Vec::new(),
         }
     }
@@ -233,10 +254,10 @@ mod tests {
 
     #[test]
     fn vim_normal_no_inserta_texto() {
-        // En Normal, una letra sin binding (ej 'z') no inserta nada.
+        // En Normal, una letra sin binding (ej 'w') no inserta nada.
         let km = VimKeymap;
         assert_eq!(
-            resolve1(&km, Mode::Normal, key(KeyCode::Char('z'))),
+            resolve1(&km, Mode::Normal, key(KeyCode::Char('w'))),
             Resolve::None
         );
     }
@@ -398,5 +419,30 @@ mod tests {
                 Resolve::Action(Action::ToggleCode)
             );
         }
+    }
+
+    #[test]
+    fn vim_submenu_view_zen_solo_en_normal() {
+        // En Normal `z` es el prefijo view: queda pendiente y `z z` togglea zen.
+        let km = VimKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Normal, key(KeyCode::Char('z'))),
+            Resolve::Pending
+        );
+        let z = key(KeyCode::Char('z'));
+        assert_eq!(
+            km.resolve(Mode::Normal, &[z, key(KeyCode::Char('z'))]),
+            Resolve::Action(Action::ToggleZen)
+        );
+        // En Insert `z` es texto (no prefijo): se inserta y la secuencia `z z` no
+        // resuelve a un chord.
+        assert_eq!(
+            resolve1(&km, Mode::Insert, key(KeyCode::Char('z'))),
+            Resolve::Action(Action::InsertChar('z'))
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[z, key(KeyCode::Char('z'))]),
+            Resolve::None
+        );
     }
 }

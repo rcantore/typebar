@@ -80,11 +80,35 @@ impl Theme {
         }
     }
 
+    /// Catppuccin Latte: la variante CLARA de la familia. Espeja los mismos
+    /// roles de paleta que `frappe` (heading_1 = mauve, code_bg = surface0,
+    /// etc.), pero con los hex oficiales de Latte. Los tres backgrounds de
+    /// resalte (`selection_bg`, `search_match_bg`, `search_current_bg`) en
+    /// frappe son blends custom pensados para fondo oscuro, no roles puros: en
+    /// un theme claro un fondo oscuro de resalte queda mal, asi que aca usamos
+    /// surfaces/tints claros del propio Latte que cumplen el mismo proposito
+    /// (pisar el bg dejando legible el texto oscuro encima).
+    pub fn latte() -> Self {
+        Theme {
+            heading_1: Color::Rgb(0x88, 0x39, 0xef),         // mauve
+            heading_2: Color::Rgb(0x04, 0xa5, 0xe5),         // sky
+            heading_n: Color::Rgb(0x40, 0xa0, 0x2b),         // green
+            code_fg: Color::Rgb(0xd2, 0x0f, 0x39),           // red
+            code_bg: Color::Rgb(0xcc, 0xd0, 0xda),           // surface0
+            marker: Color::Rgb(0x9c, 0xa0, 0xb0),            // overlay0 (dimmeado)
+            selection_bg: Color::Rgb(0xac, 0xb0, 0xbe),      // surface2 (resalte claro)
+            search_match_bg: Color::Rgb(0xdf, 0x8e, 0x1d),   // yellow (match)
+            search_current_bg: Color::Rgb(0xfe, 0x64, 0x0b), // peach (actual, mas vivo)
+            toolbar_button_bg: Color::Rgb(0xbc, 0xc0, 0xcc), // surface1 (boton)
+        }
+    }
+
     /// Resuelve un theme built-in por nombre. Cae a `frappe` ante un nombre
     /// desconocido: el config nunca debe poder romper el arranque del editor.
     pub fn by_name(name: &str) -> Theme {
         match name {
             "mocha" => Theme::mocha(),
+            "latte" => Theme::latte(),
             // `frappe` y cualquier otro nombre (incluido invalido) -> default.
             _ => Theme::frappe(),
         }
@@ -120,6 +144,18 @@ mod tests {
         let mocha = Theme::by_name("mocha");
         assert_eq!(mocha, Theme::mocha());
         assert_ne!(mocha, Theme::frappe());
+    }
+
+    #[test]
+    fn by_name_latte_es_el_theme_claro() {
+        // El theme claro tiene que existir y diferir del default. Chequeamos un
+        // campo distintivo: en frappe el `code_bg` es un surface oscuro
+        // (#414559), mientras que en Latte es un surface claro (#ccd0da).
+        let latte = Theme::by_name("latte");
+        assert_eq!(latte, Theme::latte());
+        assert_ne!(latte, Theme::frappe());
+        assert_eq!(latte.code_bg, Color::Rgb(0xcc, 0xd0, 0xda));
+        assert_eq!(latte.heading_1, Color::Rgb(0x88, 0x39, 0xef)); // mauve Latte
     }
 
     #[test]
