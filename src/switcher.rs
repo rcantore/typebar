@@ -5,6 +5,7 @@
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
@@ -125,38 +126,17 @@ impl Switcher {
     }
 
     /// Lineas de resultados a dibujar (hasta `max_rows`), con scroll para mantener
-    /// visible el seleccionado.
+    /// visible el seleccionado. `width` es el ancho interno del box (menos los
+    /// bordes), al que se padea la fila seleccionada.
     ///
     /// Cada fila pinta el path con jerarquia: el directorio (todo hasta el ultimo
     /// `/`, inclusive) va atenuado y el nombre del archivo resaltado, para que la
     /// vista lea como una lista de archivos y no como rutas planas. Encima de eso
     /// se acentuan los chars que matchearon el fuzzy (mapeando los indices, que
     /// son sobre el label completo con el directorio incluido). La fila
-    /// seleccionada lleva una barra de fondo a todo el ancho de la lista: se
-    /// rellena con espacios hasta `width` para que el resalte cubra la fila
-    /// entera, no solo el texto.
-    ///
-    /// Punto de entrada que usa el caller (`draw_switcher` en main.rs): no conoce
-    /// el ancho interno del box, asi que lo derivamos del contenido (el path mas
-    /// largo, mas el marker) y delegamos. Asi la barra de seleccion cubre toda la
-    /// columna de la lista de forma pareja, sin tener que cambiar la firma que el
-    /// caller ya usa.
-    pub fn result_lines(&self, theme: &Theme, max_rows: usize) -> Vec<Line<'static>> {
-        // Marker (`> ` / dos espacios) ocupa 2 celdas en todas las filas.
-        const MARKER_WIDTH: usize = 2;
-        let widest = self
-            .results
-            .iter()
-            .map(|(ci, _)| self.labels[*ci].chars().count())
-            .max()
-            .unwrap_or(0);
-        self.result_lines_padded(theme, max_rows, MARKER_WIDTH + widest)
-    }
-
-    /// Variante con ancho explicito: `width` es el ancho interno disponible (el
-    /// del box menos los bordes). Si es 0 no se padea (la barra cubre solo el
-    /// contenido). Separada para poder testear el padeo de la barra con un ancho
-    /// fijo.
+    /// seleccionada lleva una barra de fondo a todo el ancho: se rellena con
+    /// espacios hasta `width` para que el resalte cubra la fila entera, no solo el
+    /// texto (si `width` es 0, no se padea).
     fn result_lines_padded(
         &self,
         theme: &Theme,
@@ -246,17 +226,30 @@ impl Switcher {
         lines
     }
 
-    /// Dibuja el switcher a pantalla completa: un box con borde cuyo titulo es el
-    /// prompt + lo tipeado (con `_` de cursor) + el conteo, y adentro la lista
-    /// rankeada (con scroll y resaltado del match). Al no setear cursor, ratatui
-    /// lo oculta; el `_` del prompt marca donde se tipea.
+    /// Dibuja el switcher como un popup CENTRADO flotante: limpia toda la pantalla
+    /// (afuera del box queda en blanco) y pinta un box con borde en el centro, con
+    /// el prompt + lo tipeado (con `_` de cursor) + el conteo en el titulo y la
+    /// lista rankeada adentro. Al no setear cursor, ratatui lo oculta; el `_` del
+    /// prompt marca donde se tipea.
     pub fn render(&self, frame: &mut Frame, theme: &Theme) {
         let area = frame.area();
+        // Popup centrado: ~70% del ancho/alto, acotado a la terminal (y a un minimo
+        // usable). En pantallas chicas cae al tamano disponible.
+        let w = (area.width * 7 / 10).clamp(40.min(area.width), area.width);
+        let h = (area.height * 7 / 10).clamp(3.min(area.height), area.height);
+        let popup = Rect {
+            x: area.x + (area.width - w) / 2,
+            y: area.y + (area.height - h) / 2,
+            width: w,
+            height: h,
+        };
+
         let prompt = i18n::t(i18n::Key::SwitcherPrompt);
         let title = format!(" {prompt} {}_   ({}) ", self.query(), self.result_count());
         let block = Block::bordered().title(title);
-        // Alto util dentro del borde (resta 2: arriba y abajo).
-        let rows = area.height.saturating_sub(2) as usize;
+        // Alto/ancho utiles dentro del borde del box (restan 2: ambos lados).
+        let rows = popup.height.saturating_sub(2) as usize;
+        let inner_width = popup.width.saturating_sub(2) as usize;
         // Sin matches: una linea atenuada en vez de un box vacio.
         let lines = if self.result_count() == 0 {
             vec![Line::from(Span::styled(
@@ -264,11 +257,13 @@ impl Switcher {
                 Style::default().add_modifier(Modifier::DIM),
             ))]
         } else {
-            self.result_lines(theme, rows)
+            // Ancho real del box (no el del contenido) para que la barra de
+            // seleccion llegue al borde derecho.
+            self.result_lines_padded(theme, rows, inner_width)
         };
-        // `Clear` borra lo que hubiera debajo (el editor) antes de pintar el box.
+        // `Clear` borra TODA la pantalla (el editor de fondo); despues el box.
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new(lines).block(block), area);
+        frame.render_widget(Paragraph::new(lines).block(block), popup);
     }
 }
 
@@ -345,7 +340,7 @@ mod tests {
         // (y sin DIM). El marker inicial (2 spans/celdas) se saltea.
         let theme = Theme::frappe();
         let s = Switcher::new(paths(&["src/main.rs"]));
-        let lines = s.result_lines(&theme, 10);
+        let lines = s.result_lines_padded(&theme, 10, 20);
         let line = &lines[0];
         // spans[0] es el marker; los chars del path arrancan en spans[1].
         // "src/" son 4 chars -> spans[1..=4] son el directorio.
