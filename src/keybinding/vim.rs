@@ -48,6 +48,8 @@ impl VimKeymap {
                 KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
                 // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo.
                 KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
+                // Ctrl-N: nuevo archivo (buffer vacio).
+                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
                 _ => Resolve::None,
             };
         }
@@ -115,6 +117,8 @@ impl VimKeymap {
                 KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
                 // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo.
                 KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
+                // Ctrl-N: nuevo archivo (buffer vacio).
+                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
                 _ => Resolve::None,
             };
         }
@@ -167,6 +171,7 @@ impl Keymap for VimKeymap {
         use crate::i18n::{Key, t};
         match mode {
             Mode::Normal => vec![
+                Hint::new(Action::NewBuffer, "^N", t(Key::HintNew)),
                 Hint::new(Action::EnterInsert, "i", t(Key::HintInsert)),
                 Hint::new(Action::EnterVisual, "v", t(Key::HintVisual)),
                 Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),

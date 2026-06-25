@@ -114,8 +114,8 @@ impl Theme {
             search_match_bg: Color::Rgb(0xdf, 0x8e, 0x1d),   // yellow (match)
             search_current_bg: Color::Rgb(0xfe, 0x64, 0x0b), // peach (actual, mas vivo)
             toolbar_button_bg: Color::Rgb(0xbc, 0xc0, 0xcc), // surface1 (boton)
-            background: Some(Color::Rgb(0xef, 0xf1, 0xf5)),  // base (paperwhite)
-            text: Some(Color::Rgb(0x4c, 0x4f, 0x69)),        // text (oscuro, legible sobre la base)
+            background: Some(Color::Rgb(0xdc, 0xe0, 0xe8)), // crust (off-white suave, menos blanco que base)
+            text: Some(Color::Rgb(0x4c, 0x4f, 0x69)),       // text (oscuro, legible sobre el fondo)
         }
     }
 
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(latte.code_bg, Color::Rgb(0xcc, 0xd0, 0xda));
         assert_eq!(latte.heading_1, Color::Rgb(0x88, 0x39, 0xef)); // mauve Latte
         // El claro pinta fondo y texto (paperwhite); los oscuros no (transparentes).
-        assert_eq!(latte.background, Some(Color::Rgb(0xef, 0xf1, 0xf5)));
+        assert_eq!(latte.background, Some(Color::Rgb(0xdc, 0xe0, 0xe8)));
         assert_eq!(latte.text, Some(Color::Rgb(0x4c, 0x4f, 0x69)));
         assert_eq!(Theme::frappe().background, None);
         assert_eq!(Theme::frappe().text, None);

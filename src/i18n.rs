@@ -94,6 +94,8 @@ pub enum Key {
     HintZen,
     /// Toggle del theme claro (Latte) dentro del submenu "view".
     HintLight,
+    /// Nuevo archivo / buffer vacio ("Nuevo" / "New").
+    HintNew,
     /// Switcher de archivos ("Ir a…" / "Go to…").
     HintSwitcher,
     /// Prompt del box del switcher de archivos ("ir a archivo:" / "go to file:").
@@ -201,6 +203,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintZen) => "Zen",
         (Locale::Es, Key::HintLight) => "Claro",
         (Locale::En, Key::HintLight) => "Light",
+        (Locale::Es, Key::HintNew) => "Nuevo",
+        (Locale::En, Key::HintNew) => "New",
         (Locale::Es, Key::HintSwitcher) => "Ir a…",
         (Locale::En, Key::HintSwitcher) => "Go to…",
         (Locale::Es, Key::SwitcherPrompt) => "ir a archivo:",

@@ -64,6 +64,8 @@ impl StandardKeymap {
                 // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo:
                 // remapeable por el usuario.
                 KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
+                // Ctrl-N: nuevo archivo (buffer vacio).
+                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
                 _ => Resolve::None,
             };
         }
@@ -112,6 +114,7 @@ impl Keymap for StandardKeymap {
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
         use crate::i18n::{Key, t};
         vec![
+            Hint::new(Action::NewBuffer, "^N", t(Key::HintNew)),
             Hint::new(Action::Save, "^S", t(Key::HintSave)),
             Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
             Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),

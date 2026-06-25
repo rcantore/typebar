@@ -411,6 +411,9 @@ fn dispatch_action(
         Action::ToggleZen => *zen = !*zen,
         // Togglear el theme claro (Latte) <-> oscuro en runtime (submenu view).
         Action::ToggleLightTheme => *light_on = !*light_on,
+        // Nuevo archivo: crea un buffer vacio y lo enfoca. El draw reclampa el
+        // scroll solo (el cursor del buffer nuevo arranca arriba).
+        Action::NewBuffer => workspace.new_buffer(keymap.initial_mode()),
         Action::OpenSwitcher => {
             // Candidatos: archivos del proyecto (cwd recursivo) mas los buffers
             // abiertos que no esten ya en la lista (p.ej. fuera del cwd), para
@@ -514,9 +517,10 @@ fn draw(
     // En zen no hay borde (el editor ocupa todo); fuera de zen, el Block bordered
     // come 1 linea arriba y 1 abajo. Este offset alinea el alto util y el cursor.
     let border: u16 = if zen { 0 } else { 1 };
-    // Margen izquierdo dentro del borde, para que el texto no quede pegado al
-    // marco. En zen (sin marco) no aplica. Suma al offset horizontal del cursor.
-    let pad_left: u16 = if zen { 0 } else { 1 };
+    // Margen izquierdo, para que el texto no quede pegado al borde. En zen (sin
+    // marco) le damos un poco mas de aire (2) ya que no hay borde que separe;
+    // fuera de zen alcanza con 1 (el borde ya separa). Suma al offset del cursor.
+    let pad_left: u16 = if zen { 2 } else { 1 };
     // Alto util dentro del borde del Block.
     let viewport_height = editor_area.height.saturating_sub(2 * border) as usize;
     // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
@@ -546,10 +550,11 @@ fn draw(
         matches.iter().position(|m| m.start == doc.cursor_byte())
     };
 
-    // En zen el Block va sin borde ni titulo (solo texto); fuera de zen, bordered
-    // con el path en el titulo.
+    // En zen el Block va sin borde ni titulo (solo texto), pero con el mismo
+    // margen izquierdo; fuera de zen, bordered con el path en el titulo. El
+    // padding tiene que coincidir con `pad_left` (que ya usa el cursor).
     let block = if zen {
-        Block::default()
+        Block::default().padding(Padding::new(pad_left, 0, 0, 0))
     } else {
         Block::bordered()
             .title(format!(" typebar · {} ", doc.path.display()))
@@ -954,6 +959,7 @@ fn apply_action(
         | Action::Replace
         | Action::ToggleZen
         | Action::ToggleLightTheme
+        | Action::NewBuffer
         | Action::OpenSwitcher
         | Action::OpenPalette => {}
     }

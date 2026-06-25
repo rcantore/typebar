@@ -41,6 +41,8 @@ impl WordstarKeymap {
                 // Ctrl-A: abrir la paleta de comandos ("Actions"), uniforme con
                 // los otros presets. Tentativo: remapeable por el usuario.
                 KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
+                // Ctrl-N: nuevo archivo (buffer vacio), uniforme con los otros.
+                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
                 // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
                 // prefijo de formato (negrita/italica/codigo) y `Ctrl-O` el
                 // submenu "view" (zen, etc., homenaje al Onscreen format del
@@ -140,6 +142,7 @@ impl Keymap for WordstarKeymap {
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
         use crate::i18n::{Key, t};
         vec![
+            Hint::new(Action::NewBuffer, "^N", t(Key::HintNew)),
             Hint::new(Action::Save, "^K S", t(Key::HintSave)),
             Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
             Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),

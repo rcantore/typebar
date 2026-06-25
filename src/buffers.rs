@@ -68,6 +68,37 @@ impl Workspace {
         Ok(())
     }
 
+    /// Crea un buffer nuevo y vacio ("new file") y lo activa. El nombre es
+    /// "untitled.md" (o "untitled-N.md" si ese ya esta abierto, para no chocar con
+    /// otro sin titulo); el archivo recien se crea al guardar. Arranca en
+    /// `initial_mode` (el del preset activo).
+    pub fn new_buffer(&mut self, initial_mode: Mode) {
+        let name = self.untitled_name();
+        let mut doc = Document::empty(&name);
+        doc.mode = initial_mode;
+        self.docs.push(doc);
+        self.active = self.docs.len() - 1;
+    }
+
+    /// Devuelve un nombre "untitled" que no este ya abierto, con sufijo numerico
+    /// si hace falta (`untitled.md`, `untitled-2.md`, ...).
+    fn untitled_name(&self) -> String {
+        let is_open = |name: &str| {
+            self.docs
+                .iter()
+                .any(|d| d.path.as_path() == Path::new(name))
+        };
+        if !is_open("untitled.md") {
+            return "untitled.md".to_string();
+        }
+        // Empezamos en 2 (el sin sufijo es el "1"); el rango es practico, nunca se
+        // agota en un uso real.
+        (2..)
+            .map(|n| format!("untitled-{n}.md"))
+            .find(|name| !is_open(name))
+            .expect("siempre hay un nombre libre")
+    }
+
     /// Mueve el foco al buffer `index`. No-op si esta fuera de rango.
     pub fn switch_to(&mut self, index: usize) {
         if index < self.docs.len() {
@@ -126,6 +157,19 @@ mod tests {
         ws.open_or_switch("a.md", Mode::Insert).unwrap();
         assert_eq!(ws.count(), 2);
         assert_eq!(ws.active_index(), 0);
+    }
+
+    #[test]
+    fn new_buffer_crea_vacio_lo_enfoca_y_desambigua_el_nombre() {
+        let mut ws = Workspace::new(doc_with("hola"));
+        ws.new_buffer(Mode::Insert);
+        assert_eq!(ws.count(), 2);
+        assert_eq!(ws.active_index(), 1);
+        assert_eq!(ws.active().text(), ""); // vacio
+        assert_eq!(ws.active().path.to_string_lossy(), "untitled.md");
+        // Un segundo "new" no pisa el primer untitled: usa un sufijo.
+        ws.new_buffer(Mode::Insert);
+        assert_eq!(ws.active().path.to_string_lossy(), "untitled-2.md");
     }
 
     #[test]

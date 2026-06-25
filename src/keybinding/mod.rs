@@ -114,6 +114,9 @@ pub enum Action {
     /// "view" (`^O L` / `z l`). Es estado de la vista del loop, no del documento;
     /// alterna entre el theme configurado (oscuro) y Latte (claro).
     ToggleLightTheme,
+    /// Crear un buffer nuevo y vacio ("new file") y enfocarlo. Opera a nivel
+    /// workspace, no del documento; lo maneja `run`.
+    NewBuffer,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.

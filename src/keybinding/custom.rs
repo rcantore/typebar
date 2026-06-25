@@ -333,6 +333,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "replace" => Action::Replace,
         "toggle-zen" => Action::ToggleZen,
         "toggle-light" => Action::ToggleLightTheme,
+        "new-buffer" => Action::NewBuffer,
         "open-switcher" => Action::OpenSwitcher,
         "open-palette" => Action::OpenPalette,
         other => return Err(format!("accion desconocida: {other:?}")),
@@ -411,6 +412,7 @@ mod tests {
             parse_action("toggle-light").unwrap(),
             Action::ToggleLightTheme
         );
+        assert_eq!(parse_action("new-buffer").unwrap(), Action::NewBuffer);
         assert_eq!(parse_mode("visual").unwrap(), Mode::Visual);
     }
 
