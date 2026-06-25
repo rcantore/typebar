@@ -334,6 +334,8 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "toggle-zen" => Action::ToggleZen,
         "toggle-light" => Action::ToggleLightTheme,
         "new-buffer" => Action::NewBuffer,
+        "next-buffer" => Action::NextBuffer,
+        "prev-buffer" => Action::PrevBuffer,
         "open-switcher" => Action::OpenSwitcher,
         "open-palette" => Action::OpenPalette,
         other => return Err(format!("accion desconocida: {other:?}")),

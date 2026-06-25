@@ -106,6 +106,17 @@ impl Workspace {
         }
     }
 
+    /// Enfoca el buffer siguiente, con wraparound (del ultimo vuelve al primero).
+    pub fn next_buffer(&mut self) {
+        self.active = (self.active + 1) % self.docs.len();
+    }
+
+    /// Enfoca el buffer anterior, con wraparound (del primero salta al ultimo).
+    pub fn prev_buffer(&mut self) {
+        let n = self.docs.len();
+        self.active = (self.active + n - 1) % n;
+    }
+
     /// Paths de todos los buffers, en orden de apertura.
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         self.docs.iter().map(|d| d.path.as_path())
@@ -170,6 +181,24 @@ mod tests {
         // Un segundo "new" no pisa el primer untitled: usa un sufijo.
         ws.new_buffer(Mode::Insert);
         assert_eq!(ws.active().path.to_string_lossy(), "untitled-2.md");
+    }
+
+    #[test]
+    fn next_y_prev_buffer_ciclan_con_wraparound() {
+        let mut ws = ws_from(vec![
+            doc_at("a.md", ""),
+            doc_at("b.md", ""),
+            doc_at("c.md", ""),
+        ]);
+        assert_eq!(ws.active_index(), 0);
+        ws.next_buffer();
+        assert_eq!(ws.active_index(), 1);
+        ws.next_buffer();
+        assert_eq!(ws.active_index(), 2);
+        ws.next_buffer(); // del ultimo vuelve al primero
+        assert_eq!(ws.active_index(), 0);
+        ws.prev_buffer(); // del primero salta al ultimo
+        assert_eq!(ws.active_index(), 2);
     }
 
     #[test]

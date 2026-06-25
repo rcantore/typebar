@@ -50,6 +50,9 @@ impl VimKeymap {
                 KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
                 // Ctrl-N: nuevo archivo (buffer vacio).
                 KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
+                // Ctrl-PageDown/Up: cambiar de buffer (estilo tabs de browser).
+                KeyCode::PageDown => Resolve::Action(Action::NextBuffer),
+                KeyCode::PageUp => Resolve::Action(Action::PrevBuffer),
                 _ => Resolve::None,
             };
         }
@@ -119,6 +122,9 @@ impl VimKeymap {
                 KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
                 // Ctrl-N: nuevo archivo (buffer vacio).
                 KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
+                // Ctrl-PageDown/Up: cambiar de buffer (estilo tabs de browser).
+                KeyCode::PageDown => Resolve::Action(Action::NextBuffer),
+                KeyCode::PageUp => Resolve::Action(Action::PrevBuffer),
                 _ => Resolve::None,
             };
         }

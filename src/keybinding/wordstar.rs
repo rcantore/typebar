@@ -43,6 +43,9 @@ impl WordstarKeymap {
                 KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
                 // Ctrl-N: nuevo archivo (buffer vacio), uniforme con los otros.
                 KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
+                // Ctrl-PageDown/Up: cambiar de buffer (estilo tabs de browser).
+                KeyCode::PageDown => Resolve::Action(Action::NextBuffer),
+                KeyCode::PageUp => Resolve::Action(Action::PrevBuffer),
                 // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
                 // prefijo de formato (negrita/italica/codigo) y `Ctrl-O` el
                 // submenu "view" (zen, etc., homenaje al Onscreen format del

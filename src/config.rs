@@ -83,6 +83,11 @@ pub struct UiConfig {
     /// arranque.
     #[serde(default = "default_wysiwyg_level")]
     pub wysiwyg_level: u8,
+    /// Captura del mouse. Default `false` (keyboard-first: deja la seleccion
+    /// nativa del terminal intacta). Con `true` se habilita el click en la barra
+    /// de tabs (y abre la puerta a mas interaccion con mouse a futuro).
+    #[serde(default)]
+    pub mouse: bool,
 }
 
 /// Default del campo `wysiwyg_level`: Nivel 2 (markers inline ocultos fuera
@@ -115,6 +120,7 @@ impl Default for UiConfig {
             theme: default_theme(),
             locale: None,
             wysiwyg_level: default_wysiwyg_level(),
+            mouse: false,
         }
     }
 }

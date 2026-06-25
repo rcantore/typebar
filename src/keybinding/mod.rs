@@ -117,6 +117,10 @@ pub enum Action {
     /// Crear un buffer nuevo y vacio ("new file") y enfocarlo. Opera a nivel
     /// workspace, no del documento; lo maneja `run`.
     NewBuffer,
+    /// Enfocar el buffer siguiente / anterior (cycle con wraparound). Nivel
+    /// workspace; lo maneja `run`.
+    NextBuffer,
+    PrevBuffer,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
