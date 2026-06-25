@@ -331,6 +331,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "paste" => Action::Paste,
         "search" => Action::Search,
         "replace" => Action::Replace,
+        "toggle-zen" => Action::ToggleZen,
         other => return Err(format!("accion desconocida: {other:?}")),
     };
     Ok(action)
@@ -402,6 +403,7 @@ mod tests {
         assert!(parse_action("frobnicate").is_err());
         assert!(parse_mode("godmode").is_err());
         assert_eq!(parse_action("save-and-quit").unwrap(), Action::SaveAndQuit);
+        assert_eq!(parse_action("toggle-zen").unwrap(), Action::ToggleZen);
         assert_eq!(parse_mode("visual").unwrap(), Mode::Visual);
     }
 

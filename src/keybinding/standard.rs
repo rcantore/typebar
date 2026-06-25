@@ -5,7 +5,8 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, resolve_format_second,
+    Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, is_view_prefix,
+    resolve_format_second, resolve_view_second, view_hints,
 };
 use crate::document::Mode;
 
@@ -56,6 +57,8 @@ impl StandardKeymap {
                 KeyCode::Char('b') => Resolve::Action(Action::ToggleBold),
                 // Ctrl-P: prefijo de formato, espera la segunda tecla.
                 KeyCode::Char('p') => Resolve::Pending,
+                // Ctrl-O: prefijo del submenu "view" (zen, etc.).
+                KeyCode::Char('o') => Resolve::Pending,
                 _ => Resolve::None,
             };
         }
@@ -83,6 +86,8 @@ impl Keymap for StandardKeymap {
             [single] => self.resolve_key(*single),
             // Chord de formato: `Ctrl-P` + letra (b/i/c).
             [prefix, second] if is_format_prefix(*prefix) => resolve_format_second(*second),
+            // Submenu "view": `Ctrl-O` + letra (z = zen).
+            [prefix, second] if is_view_prefix(*prefix) => resolve_view_second(*second),
             _ => Resolve::None,
         }
     }
@@ -112,14 +117,16 @@ impl Keymap for StandardKeymap {
             // Prefijo de chord de formato: avisa al usuario que `^P` abre un
             // submenu (negrita/italica/codigo). No es una accion: no se remapea.
             Hint::prefix("^P", t(Key::HintFormatPrefix)),
+            Hint::prefix("^O", t(Key::HintViewPrefix)),
             Hint::new(Action::Quit, "^Q", t(Key::HintQuit)),
         ]
     }
 
     fn chord_hints(&self, _mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
-        // El unico chord de standard es el prefijo de formato `Ctrl-P`.
+        // Chords de standard: el prefijo de formato `Ctrl-P` y el submenu `Ctrl-O`.
         match pending {
             [k] if is_format_prefix(*k) => format_hints(),
+            [k] if is_view_prefix(*k) => view_hints(),
             _ => Vec::new(),
         }
     }
@@ -309,6 +316,31 @@ mod tests {
         assert_eq!(
             resolve1(&km, Mode::Insert, key(KeyCode::PageDown)),
             Resolve::Action(Action::PageDown)
+        );
+    }
+
+    #[test]
+    fn standard_ctrl_o_submenu_view_zen() {
+        // `^O` solo queda pendiente (prefijo del submenu view); `^O Z` togglea zen.
+        let km = StandardKeymap;
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('o'))),
+            Resolve::Pending
+        );
+        let o = ctrl(KeyCode::Char('o'));
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('z'))]),
+            Resolve::Action(Action::ToggleZen)
+        );
+        // Case-insensitive.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('Z'))]),
+            Resolve::Action(Action::ToggleZen)
+        );
+        // Segunda tecla no bindeada cancela.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('w'))]),
+            Resolve::None
         );
     }
 

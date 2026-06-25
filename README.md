@@ -49,6 +49,10 @@ and your text rendered as you type.
   (line/doc start & end, Page Up/Down, Home/End).
 - **Live word count** in the status bar (Unicode word boundaries), with a
   selected-words count while text is selected.
+- **Zen / focus mode**: hide all chrome (border, toolbar, status bar) to write
+  distraction-free. Toggle from the *view* submenu — `Ctrl-O Z` (standard /
+  wordstar, echoing WordStar's onscreen-format prefix) or `z z` (vim); in the
+  modeless presets `Esc` also exits.
 - **Unicode-aware**: grapheme-cluster cursor movement and correct display width
   for CJK, emoji, and combining characters.
 - **Themeable** for ricing: `frappe` (default) and `mocha` Catppuccin palettes.

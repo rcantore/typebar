@@ -81,6 +81,10 @@ pub enum Key {
     HintDocEnd,
     /// Prefijo de chord de formato ("Formato…" / "Format…").
     HintFormatPrefix,
+    /// Prefijo del submenu "view" ("Vista…" / "View…").
+    HintViewPrefix,
+    /// Toggle de zen/focus mode dentro del submenu "view".
+    HintZen,
 
     // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
     ModeNormal,
@@ -165,6 +169,10 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintDocEnd) => "Doc end",
         (Locale::Es, Key::HintFormatPrefix) => "Formato…",
         (Locale::En, Key::HintFormatPrefix) => "Format…",
+        (Locale::Es, Key::HintViewPrefix) => "Vista…",
+        (Locale::En, Key::HintViewPrefix) => "View…",
+        (Locale::Es, Key::HintZen) => "Zen",
+        (Locale::En, Key::HintZen) => "Zen",
 
         // --- Status bar (nombres de modo) ---------------------------------
         (Locale::Es, Key::ModeNormal) => "NORMAL",

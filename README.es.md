@@ -50,6 +50,10 @@ texto renderizado mientras escribís.
   Up/Down, Home/End).
 - **Contador de palabras en vivo** en la status bar (límites de palabra Unicode),
   con conteo de las palabras seleccionadas mientras hay selección.
+- **Modo zen / focus**: oculta todo el chrome (borde, toolbar, status bar) para
+  escribir sin distracciones. Se togglea desde el submenú *view* — `Ctrl-O Z`
+  (standard / wordstar, homenaje al prefijo de onscreen-format de WordStar) o
+  `z z` (vim); en los presets modeless `Esc` también sale.
 - **Consciente de Unicode**: movimiento del cursor por clusters de grafemas y
   ancho de display correcto para CJK, emoji y caracteres combinantes.
 - **Themeable** para ricing: paletas Catppuccin `frappe` (default) y `mocha`.
