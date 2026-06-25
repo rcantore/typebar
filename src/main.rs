@@ -11,6 +11,7 @@
 
 mod config;
 mod document;
+mod export;
 mod i18n;
 mod keybinding;
 mod markdown;
@@ -41,6 +42,9 @@ const DEFAULT_PRESET: &str = "standard";
 struct Args {
     path: String,
     preset: Option<String>,
+    /// Si esta en `true` (flag `--export-html`), el programa convierte el
+    /// archivo a HTML standalone y sale sin abrir la TUI.
+    export_html: bool,
 }
 
 /// Parsea los argumentos a mano (sin clap). Soporta `--keys <nombre>` y
@@ -50,6 +54,7 @@ struct Args {
 fn parse_args(raw: impl Iterator<Item = String>) -> Args {
     let mut path: Option<String> = None;
     let mut preset: Option<String> = None;
+    let mut export_html = false;
     let mut args = raw.peekable();
 
     while let Some(arg) = args.next() {
@@ -58,6 +63,9 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
         } else if arg == "--keys" {
             // Tomar el siguiente token como valor (si lo hay).
             preset = args.next();
+        } else if arg == "--export-html" {
+            // Flag booleano (sin valor): exportar a HTML y salir.
+            export_html = true;
         } else if !arg.starts_with('-') && path.is_none() {
             path = Some(arg);
         }
@@ -67,6 +75,7 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
     Args {
         path: path.unwrap_or_else(|| DEFAULT_PATH.to_string()),
         preset,
+        export_html,
     }
 }
 
@@ -111,9 +120,41 @@ fn apply_overrides(base: Box<dyn Keymap>, entries: &[config::BindEntry]) -> Box<
     }
 }
 
+/// Calcula el path de salida del HTML a partir del path del archivo de entrada:
+/// reemplaza la extension por `.html` (ej `notes.md` -> `notes.html`); si no
+/// tiene extension, le agrega `.html` (ej `notes` -> `notes.html`).
+fn html_output_path(input: &str) -> std::path::PathBuf {
+    std::path::Path::new(input).with_extension("html")
+}
+
+/// Exporta el archivo Markdown en `path` a un HTML standalone junto a el (misma
+/// ruta, extension `.html`) y avisa por stderr. Si el archivo no existe, se
+/// trata su contenido como vacio (genera un HTML valido pero sin cuerpo). El
+/// resto de los errores de IO (lectura/escritura) se propagan.
+fn export_to_html(path: &str) -> std::io::Result<()> {
+    // Un archivo inexistente se trata como contenido vacio; el resto de los
+    // errores de lectura (permisos, etc.) se propagan.
+    let content = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let html = export::to_html(&content, path);
+    let out = html_output_path(path);
+    std::fs::write(&out, html)?;
+    // Mensaje simple en ingles por stderr (se puede i18n-izar mas adelante).
+    eprintln!("exported to {}", out.display());
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     // Saltar argv[0] (nombre del binario).
     let args = parse_args(std::env::args().skip(1));
+
+    // Export a HTML: convertir y salir ANTES de inicializar la terminal.
+    if args.export_html {
+        return export_to_html(&args.path);
+    }
 
     // Cargar config primero; el override del CLI se aplica encima en
     // `resolve_preset`. Sin config file valido, esto cae a defaults en silencio.
@@ -882,6 +923,29 @@ mod tests {
         assert_eq!(a.path, DEFAULT_PATH);
         // Sin `--keys` el preset queda sin resolver (lo decide el config).
         assert_eq!(a.preset, None);
+        // Sin `--export-html` el flag de export queda en false.
+        assert!(!a.export_html);
+    }
+
+    #[test]
+    fn parse_args_export_html_setea_el_flag() {
+        let a = parse_args(vec!["notas.md".to_string(), "--export-html".to_string()].into_iter());
+        assert!(a.export_html);
+        assert_eq!(a.path, "notas.md");
+    }
+
+    #[test]
+    fn html_output_path_cambia_la_extension() {
+        // Con extension: se reemplaza por `.html`.
+        assert_eq!(
+            html_output_path("notes.md"),
+            std::path::PathBuf::from("notes.html")
+        );
+        // Sin extension: se agrega `.html`.
+        assert_eq!(
+            html_output_path("notes"),
+            std::path::PathBuf::from("notes.html")
+        );
     }
 
     #[test]
