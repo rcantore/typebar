@@ -50,7 +50,7 @@ texto renderizado mientras escribís.
   Up/Down, Home/End).
 - **Multi-archivo con switcher fuzzy**: `Ctrl-G` abre un fuzzy finder sobre los
   archivos del proyecto y los buffers abiertos — tipeás para filtrar, Enter para
-  abrir o cambiar.
+  abrir o cambiar. `Ctrl-N` arranca un archivo nuevo vacío.
 - **Paleta de comandos**: `Ctrl-A` fuzzy-filtra cualquier comando por nombre
   (mostrando su atajo actual) y lo ejecuta — también sirve para aprender los
   keybindings.

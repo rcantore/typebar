@@ -49,6 +49,7 @@ and your text rendered as you type.
   (line/doc start & end, Page Up/Down, Home/End).
 - **Multiple files with a fuzzy switcher**: `Ctrl-G` opens a fuzzy finder over
   the project files and open buffers — type to filter, Enter to open or switch.
+  `Ctrl-N` starts a new empty file.
 - **Command palette**: `Ctrl-A` fuzzy-finds any command by name (with its current
   shortcut shown) and runs it — also a handy way to learn the keybindings.
 - **Live word count** in the status bar (Unicode word boundaries), with a

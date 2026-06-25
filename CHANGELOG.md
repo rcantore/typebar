@@ -38,6 +38,8 @@ How to maintain this file:
   `.git`/`target`/`node_modules`/hidden) and the open buffers; type to filter,
   arrows or `Ctrl-N`/`Ctrl-P` to move, Enter to open or switch, Esc to cancel.
   Bound in all three presets; remappable via the `open-switcher` action.
+- New file: `Ctrl-N` opens a fresh empty buffer (`untitled.md`), focused, over the
+  multi-buffer workspace. Remappable via the `new-buffer` action.
 - Command palette: `Ctrl-A` opens a fuzzy finder over the editor's commands,
   showing each command's name and its current shortcut, and runs the chosen one
   on Enter (also a way to discover the keybindings). Remappable via the
