@@ -248,24 +248,36 @@ impl Palette {
         lines
     }
 
-    /// Renderiza la paleta a pantalla completa: un box con borde cuyo titulo es
-    /// el prompt + lo tipeado (con un `_` de cursor) + el conteo de resultados, y
-    /// adentro la lista rankeada (con scroll, resaltado del match y el atajo).
-    /// Calca el estilo del switcher para que sean consistentes.
+    /// Renderiza la paleta como un popup CENTRADO flotante (igual que el
+    /// switcher, para que sean consistentes): limpia toda la pantalla y pinta un
+    /// box con borde en el centro. El titulo lleva el prompt, lo tipeado (con `_`
+    /// de cursor) y el conteo; adentro va la lista rankeada (con scroll, resaltado
+    /// del match y el atajo de cada comando).
     pub fn render(&self, frame: &mut ratatui::Frame, theme: &Theme) {
+        use ratatui::layout::Rect;
         use ratatui::widgets::{Block, Clear, Paragraph};
 
         let area = frame.area();
+        // Popup centrado: ~70% del area, acotado (mismo criterio que el switcher).
+        let w = (area.width * 7 / 10).clamp(40.min(area.width), area.width);
+        let h = (area.height * 7 / 10).clamp(3.min(area.height), area.height);
+        let popup = Rect {
+            x: area.x + (area.width - w) / 2,
+            y: area.y + (area.height - h) / 2,
+            width: w,
+            height: h,
+        };
+
         let prompt = i18n::t(Key::PalettePrompt);
         let title = format!(" {prompt} {}_   ({}) ", self.query(), self.result_count());
         let block = Block::bordered().title(title);
-        // Alto y ancho utiles dentro del borde (resta 2: ambos lados).
-        let rows = area.height.saturating_sub(2) as usize;
-        let inner_width = area.width.saturating_sub(2) as usize;
+        // Alto y ancho utiles dentro del borde del box (restan 2: ambos lados).
+        let rows = popup.height.saturating_sub(2) as usize;
+        let inner_width = popup.width.saturating_sub(2) as usize;
         let lines = self.result_lines(theme, rows, inner_width);
-        // `Clear` borra lo que hubiera debajo (el editor) antes de pintar el box.
+        // `Clear` limpia TODA la pantalla (el editor de fondo); despues el box.
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new(lines).block(block), area);
+        frame.render_widget(Paragraph::new(lines).block(block), popup);
     }
 }
 
