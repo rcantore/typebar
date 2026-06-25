@@ -35,6 +35,9 @@ impl WordstarKeymap {
                 // captura Ctrl-Z asi que no suspende el proceso).
                 KeyCode::Char('z') => Resolve::Action(Action::Undo),
                 KeyCode::Char('y') => Resolve::Action(Action::Redo),
+                // Ctrl-G: abrir el switcher de archivos ("Go to file"), uniforme
+                // con los otros presets.
+                KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
                 // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
                 // prefijo de formato (negrita/italica/codigo) y `Ctrl-O` el
                 // submenu "view" (zen, etc., homenaje al Onscreen format del
@@ -135,6 +138,7 @@ impl Keymap for WordstarKeymap {
         use crate::i18n::{Key, t};
         vec![
             Hint::new(Action::Save, "^K S", t(Key::HintSave)),
+            Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
             Hint::new(Action::Search, "^Q F", t(Key::HintSearch)),
             Hint::new(Action::Replace, "^Q A", t(Key::HintReplace)),
             Hint::new(Action::Undo, "^Z", t(Key::HintUndo)),

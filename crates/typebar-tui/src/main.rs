@@ -9,14 +9,18 @@
 //! (modeless con chords tipo `Ctrl-K S`) opt-in via el flag `--keys`. El loop
 //! acumula teclas en un buffer `pending` para resolver secuencias multi-tecla.
 
+mod buffers;
 mod config;
 mod document;
 mod export;
+mod files;
+mod fuzzy;
 mod i18n;
 mod keybinding;
 mod markdown;
 mod render;
 mod search;
+mod switcher;
 mod text;
 mod theme;
 
@@ -25,13 +29,14 @@ use std::ops::Range;
 use document::{Document, Mode};
 use keybinding::{Action, Binding, CustomKeymap, Keymap, Resolve, keymap_from_name, parse_binding};
 use markdown::InlineKind;
+use switcher::{Switcher, SwitcherOutcome};
 use theme::Theme;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 
 const DEFAULT_PATH: &str = "scratch.md";
 const DEFAULT_PRESET: &str = "standard";
@@ -200,11 +205,15 @@ fn main() -> std::io::Result<()> {
 
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
-    mut doc: Document,
+    doc: Document,
     keymap: &dyn Keymap,
     theme: &Theme,
     wysiwyg_level: u8,
 ) -> std::io::Result<()> {
+    // Los buffers abiertos. El editor siempre opera sobre el activo
+    // (`workspace.active*`); el multi-archivo es transparente para draw/acciones/
+    // overlays. Arranca con el documento que abrio `main`.
+    let mut workspace = buffers::Workspace::new(doc);
     // Offset vertical de scroll: primera linea visible del documento.
     let mut scroll: usize = 0;
     // Alto del area de edicion (en lineas) tras el ultimo draw. Lo escribe
@@ -220,12 +229,16 @@ fn run(
     // el texto. Estado de la vista, no del documento. Se togglea con el submenu
     // "view" (ver keybindings) y, en presets modeless, sale tambien con Esc.
     let mut zen = false;
+    // Switcher de archivos (fuzzy finder) activo (None = edicion normal). Opera a
+    // nivel workspace: al aceptar, abre/cambia de buffer. Tapa el editor mientras
+    // esta abierto.
+    let mut switcher: Option<Switcher> = None;
 
     loop {
         terminal.draw(|frame| {
             draw(
                 frame,
-                &doc,
+                workspace.active(),
                 keymap,
                 &pending,
                 &mut scroll,
@@ -234,6 +247,7 @@ fn run(
                 overlay.as_ref(),
                 wysiwyg_level,
                 zen,
+                switcher.as_ref(),
             )
         })?;
 
@@ -244,10 +258,31 @@ fn run(
             continue;
         }
 
+        // Con el switcher abierto, las teclas las consume el switcher (tipear
+        // filtra, flechas/Ctrl-N/P navegan, Enter abre el elegido, Esc cancela).
+        if let Some(sw) = switcher.as_mut() {
+            match sw.handle_key(key) {
+                SwitcherOutcome::Stay => {}
+                SwitcherOutcome::Cancel => switcher = None,
+                SwitcherOutcome::Accept(path) => {
+                    switcher = None;
+                    // Abrir o cambiar al buffer. Si el archivo no se puede abrir,
+                    // lo ignoramos y seguimos en el buffer actual.
+                    if workspace
+                        .open_or_switch(&path, keymap.initial_mode())
+                        .is_ok()
+                    {
+                        scroll = 0; // el buffer recien enfocado arranca arriba
+                    }
+                }
+            }
+            continue;
+        }
+
         // Con un overlay abierto, las teclas las consume el overlay (escribir el
         // termino, navegar, confirmar o cancelar), no el documento.
         if let Some(ov) = overlay.as_mut() {
-            if ov.handle_key(&mut doc, key) {
+            if ov.handle_key(workspace.active_mut(), key) {
                 overlay = None;
             }
             continue;
@@ -265,16 +300,28 @@ fn run(
         }
 
         pending.push(key);
-        match keymap.resolve(doc.mode, &pending) {
+        match keymap.resolve(workspace.active().mode, &pending) {
             Resolve::Action(action) => {
                 pending.clear();
                 match action {
                     // Estas acciones tocan estado de la vista del loop, no el doc.
-                    Action::Search => overlay = Some(Overlay::new_search(&doc)),
+                    Action::Search => overlay = Some(Overlay::new_search(workspace.active())),
                     Action::Replace => overlay = Some(Overlay::new_replace()),
                     Action::ToggleZen => zen = !zen,
+                    Action::OpenSwitcher => {
+                        // Candidatos: archivos del proyecto (cwd recursivo) mas los
+                        // buffers abiertos que no esten ya en la lista (p.ej. fuera
+                        // del cwd), para poder volver a cualquiera.
+                        let mut candidates = files::discover(".");
+                        for p in workspace.paths() {
+                            if !candidates.iter().any(|c| c == p) {
+                                candidates.push(p.to_path_buf());
+                            }
+                        }
+                        switcher = Some(Switcher::new(candidates));
+                    }
                     _ => {
-                        if apply_action(&mut doc, action, viewport_height)? {
+                        if apply_action(workspace.active_mut(), action, viewport_height)? {
                             return Ok(());
                         }
                     }
@@ -303,7 +350,16 @@ fn draw(
     overlay: Option<&Overlay>,
     wysiwyg_level: u8,
     zen: bool,
+    switcher: Option<&Switcher>,
 ) {
+    // Con el switcher abierto tapa todo: dibujamos el picker a pantalla completa
+    // y listo (no hay editor que mostrar detras). Al no setear cursor, ratatui lo
+    // oculta; el `_` del prompt marca donde se tipea.
+    if let Some(sw) = switcher {
+        draw_switcher(frame, sw, theme);
+        return;
+    }
+
     // Zen/focus: ocultamos todo el chrome (borde, toolbar, status) para dejar
     // solo el texto. Excepcion: si hay un overlay de busqueda activo reservamos
     // la ultima linea para el minibuffer (si no, no se veria que se esta
@@ -408,6 +464,22 @@ fn draw(
         let cursor_y = editor_area.y + border + (doc.line - *scroll) as u16;
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
+}
+
+/// Dibuja el switcher de archivos a pantalla completa: un box con borde cuyo
+/// titulo es el prompt + lo tipeado (con un `_` de cursor) + el conteo de
+/// resultados, y adentro la lista rankeada (con scroll y resaltado del match).
+fn draw_switcher(frame: &mut ratatui::Frame, sw: &Switcher, theme: &Theme) {
+    let area = frame.area();
+    let prompt = i18n::t(i18n::Key::SwitcherPrompt);
+    let title = format!(" {prompt} {}_   ({}) ", sw.query(), sw.result_count());
+    let block = Block::bordered().title(title);
+    // Alto util dentro del borde (resta 2: arriba y abajo).
+    let rows = area.height.saturating_sub(2) as usize;
+    let lines = sw.result_lines(theme, rows);
+    // `Clear` borra lo que hubiera debajo (el editor) antes de pintar el box.
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Construye la barra de atajos: cada hint se dibuja como un "boton" con fondo
@@ -758,10 +830,10 @@ fn apply_action(
             }
         }
         Action::Paste => doc.paste(),
-        // Search/Replace abren un overlay y ToggleZen togglea la vista; las
-        // intercepta `run` antes de llegar aca. Se listan para que el match siga
-        // exhaustivo.
-        Action::Search | Action::Replace | Action::ToggleZen => {}
+        // Search/Replace abren un overlay, ToggleZen togglea la vista y
+        // OpenSwitcher abre el switcher (a nivel workspace); las intercepta `run`
+        // antes de llegar aca. Se listan para que el match siga exhaustivo.
+        Action::Search | Action::Replace | Action::ToggleZen | Action::OpenSwitcher => {}
     }
     Ok(false)
 }
@@ -788,7 +860,7 @@ mod tests {
     /// Renderiza un frame con `draw` sobre un backend de prueba y devuelve todo el
     /// buffer como texto plano (filas separadas por `\n`). Sirve para verificar
     /// que cierto chrome aparece o no en pantalla.
-    fn render_to_string(zen: bool) -> String {
+    fn render_to_string(zen: bool, switcher: Option<&Switcher>) -> String {
         use keybinding::StandardKeymap;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -812,6 +884,7 @@ mod tests {
                     None,
                     2,
                     zen,
+                    switcher,
                 )
             })
             .unwrap();
@@ -831,7 +904,7 @@ mod tests {
     fn draw_normal_muestra_chrome() {
         // Fuera de zen: el borde con el titulo (`typebar`) y la toolbar (`Save`,
         // locale En por default en tests) estan presentes, igual que el texto.
-        let screen = render_to_string(false);
+        let screen = render_to_string(false, None);
         assert!(screen.contains("typebar"), "falta el titulo del borde");
         assert!(screen.contains("Save"), "falta la toolbar");
         assert!(screen.contains("hola mundo"), "falta el texto");
@@ -840,7 +913,7 @@ mod tests {
     #[test]
     fn draw_zen_oculta_chrome_pero_muestra_texto() {
         // En zen: sin borde/titulo ni toolbar; solo el texto.
-        let screen = render_to_string(true);
+        let screen = render_to_string(true, None);
         assert!(
             !screen.contains("typebar"),
             "el titulo no deberia verse en zen"
@@ -852,6 +925,27 @@ mod tests {
         assert!(
             screen.contains("hola mundo"),
             "el texto deberia seguir visible"
+        );
+    }
+
+    #[test]
+    fn draw_switcher_tapa_el_editor_y_muestra_prompt_y_candidatos() {
+        // Con el switcher abierto: se ve el prompt (locale En por default) y los
+        // candidatos, y NO el texto del editor de fondo.
+        let sw = Switcher::new(vec![
+            std::path::PathBuf::from("src/main.rs"),
+            std::path::PathBuf::from("README.md"),
+        ]);
+        let screen = render_to_string(false, Some(&sw));
+        assert!(
+            screen.contains("go to file:"),
+            "falta el prompt del switcher"
+        );
+        assert!(screen.contains("main.rs"), "falta un candidato");
+        assert!(screen.contains("README.md"), "falta un candidato");
+        assert!(
+            !screen.contains("hola mundo"),
+            "el editor de fondo no deberia verse con el switcher abierto"
         );
     }
 

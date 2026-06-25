@@ -85,6 +85,10 @@ pub enum Key {
     HintViewPrefix,
     /// Toggle de zen/focus mode dentro del submenu "view".
     HintZen,
+    /// Switcher de archivos ("Ir a…" / "Go to…").
+    HintSwitcher,
+    /// Prompt del box del switcher de archivos ("ir a archivo:" / "go to file:").
+    SwitcherPrompt,
 
     // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
     ModeNormal,
@@ -173,6 +177,10 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintViewPrefix) => "View…",
         (Locale::Es, Key::HintZen) => "Zen",
         (Locale::En, Key::HintZen) => "Zen",
+        (Locale::Es, Key::HintSwitcher) => "Ir a…",
+        (Locale::En, Key::HintSwitcher) => "Go to…",
+        (Locale::Es, Key::SwitcherPrompt) => "ir a archivo:",
+        (Locale::En, Key::SwitcherPrompt) => "go to file:",
 
         // --- Status bar (nombres de modo) ---------------------------------
         (Locale::Es, Key::ModeNormal) => "NORMAL",
