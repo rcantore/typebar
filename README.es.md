@@ -65,7 +65,8 @@ texto renderizado mientras escribís.
 - **Export a HTML**: `typebar notas.md --export-html` escribe un `notas.html`
   standalone (CommonMark vía pulldown-cmark) sin abrir el editor.
 - **Themeable** para ricing: paletas Catppuccin `frappe` (default), `mocha` y la
-  clara `latte`.
+  clara `latte`, con un toggle claro/oscuro en runtime (`Ctrl-O L`, o `z l` en
+  vim).
 - **UI internacionalizada**: inglés por defecto, español autodetectado desde
   `$LANG`, ambos configurables.
 

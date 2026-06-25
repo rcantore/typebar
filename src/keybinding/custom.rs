@@ -332,6 +332,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "search" => Action::Search,
         "replace" => Action::Replace,
         "toggle-zen" => Action::ToggleZen,
+        "toggle-light" => Action::ToggleLightTheme,
         "open-switcher" => Action::OpenSwitcher,
         "open-palette" => Action::OpenPalette,
         other => return Err(format!("accion desconocida: {other:?}")),
@@ -406,6 +407,10 @@ mod tests {
         assert!(parse_mode("godmode").is_err());
         assert_eq!(parse_action("save-and-quit").unwrap(), Action::SaveAndQuit);
         assert_eq!(parse_action("toggle-zen").unwrap(), Action::ToggleZen);
+        assert_eq!(
+            parse_action("toggle-light").unwrap(),
+            Action::ToggleLightTheme
+        );
         assert_eq!(parse_mode("visual").unwrap(), Mode::Visual);
     }
 

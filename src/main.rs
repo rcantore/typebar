@@ -185,9 +185,18 @@ fn main() -> std::io::Result<()> {
     // Preset base + overrides del usuario encima (si los hay).
     let keymap = apply_overrides(keymap_from_name(&preset), &config.keybindings.bind);
 
-    // Theme desde el config. `by_name` cae a `frappe` ante un nombre
-    // desconocido, asi que no hace falta validarlo aca (a diferencia del preset).
-    let theme = Theme::by_name(&config.ui.theme);
+    // Themes para el toggle `^O L` (claro <-> oscuro en runtime). El claro es
+    // siempre Latte; el oscuro es el configurado, salvo que el config YA sea Latte
+    // (ahi el oscuro cae a frappe, para que el toggle tenga a donde ir). El editor
+    // arranca mostrando el theme que el usuario eligio: si configuro Latte, arranca
+    // en claro. `by_name` cae a `frappe` ante un nombre desconocido.
+    let configured_is_light = config.ui.theme.eq_ignore_ascii_case("latte");
+    let light_theme = Theme::latte();
+    let dark_theme = if configured_is_light {
+        Theme::frappe()
+    } else {
+        Theme::by_name(&config.ui.theme)
+    };
     let wysiwyg_level = config.ui.resolved_wysiwyg_level();
 
     let mut document = Document::open(&args.path)?;
@@ -198,7 +207,9 @@ fn main() -> std::io::Result<()> {
         &mut terminal,
         document,
         keymap.as_ref(),
-        &theme,
+        dark_theme,
+        light_theme,
+        configured_is_light,
         wysiwyg_level,
     );
     ratatui::restore();
@@ -209,7 +220,9 @@ fn run(
     terminal: &mut ratatui::DefaultTerminal,
     doc: Document,
     keymap: &dyn Keymap,
-    theme: &Theme,
+    dark: Theme,
+    light: Theme,
+    mut light_on: bool,
     wysiwyg_level: u8,
 ) -> std::io::Result<()> {
     // Los buffers abiertos. El editor siempre opera sobre el activo
@@ -241,6 +254,9 @@ fn run(
     let mut palette: Option<Palette> = None;
 
     loop {
+        // Theme activo segun el toggle `^O L`: el claro (Latte) cuando `light_on`,
+        // si no el configurado (oscuro). Se recalcula cada frame.
+        let theme = if light_on { &light } else { &dark };
         terminal.draw(|frame| {
             draw(
                 frame,
@@ -282,6 +298,7 @@ fn run(
                         viewport_height,
                         &mut overlay,
                         &mut zen,
+                        &mut light_on,
                         &mut switcher,
                         &mut palette,
                     )? {
@@ -347,6 +364,7 @@ fn run(
                     viewport_height,
                     &mut overlay,
                     &mut zen,
+                    &mut light_on,
                     &mut switcher,
                     &mut palette,
                 )? {
@@ -379,6 +397,7 @@ fn dispatch_action(
     viewport_height: usize,
     overlay: &mut Option<Overlay>,
     zen: &mut bool,
+    light_on: &mut bool,
     switcher: &mut Option<Switcher>,
     palette: &mut Option<Palette>,
 ) -> std::io::Result<bool> {
@@ -387,6 +406,8 @@ fn dispatch_action(
         Action::Search => *overlay = Some(Overlay::new_search(workspace.active())),
         Action::Replace => *overlay = Some(Overlay::new_replace()),
         Action::ToggleZen => *zen = !*zen,
+        // Togglear el theme claro (Latte) <-> oscuro en runtime (submenu view).
+        Action::ToggleLightTheme => *light_on = !*light_on,
         Action::OpenSwitcher => {
             // Candidatos: archivos del proyecto (cwd recursivo) mas los buffers
             // abiertos que no esten ya en la lista (p.ej. fuera del cwd), para
@@ -901,6 +922,7 @@ fn apply_action(
         Action::Search
         | Action::Replace
         | Action::ToggleZen
+        | Action::ToggleLightTheme
         | Action::OpenSwitcher
         | Action::OpenPalette => {}
     }

@@ -62,7 +62,8 @@ and your text rendered as you type.
 - **HTML export**: `typebar notes.md --export-html` writes a standalone
   `notes.html` (CommonMark via pulldown-cmark) without opening the editor.
 - **Themeable** for ricing: `frappe` (default), `mocha`, and the light `latte`
-  Catppuccin palettes.
+  Catppuccin palettes, with a runtime light/dark toggle (`Ctrl-O L`, or `z l` in
+  vim).
 - **Internationalized UI**: English by default, Spanish auto-detected from
   `$LANG`, both overridable in config.
 

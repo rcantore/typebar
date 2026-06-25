@@ -92,6 +92,8 @@ pub enum Key {
     HintViewPrefix,
     /// Toggle de zen/focus mode dentro del submenu "view".
     HintZen,
+    /// Toggle del theme claro (Latte) dentro del submenu "view".
+    HintLight,
     /// Switcher de archivos ("Ir a…" / "Go to…").
     HintSwitcher,
     /// Prompt del box del switcher de archivos ("ir a archivo:" / "go to file:").
@@ -197,6 +199,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintViewPrefix) => "View…",
         (Locale::Es, Key::HintZen) => "Zen",
         (Locale::En, Key::HintZen) => "Zen",
+        (Locale::Es, Key::HintLight) => "Claro",
+        (Locale::En, Key::HintLight) => "Light",
         (Locale::Es, Key::HintSwitcher) => "Ir a…",
         (Locale::En, Key::HintSwitcher) => "Go to…",
         (Locale::Es, Key::SwitcherPrompt) => "ir a archivo:",

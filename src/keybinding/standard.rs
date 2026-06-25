@@ -344,6 +344,11 @@ mod tests {
             km.resolve(Mode::Insert, &[o, key(KeyCode::Char('Z'))]),
             Resolve::Action(Action::ToggleZen)
         );
+        // `^O L` togglea el theme claro.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('l'))]),
+            Resolve::Action(Action::ToggleLightTheme)
+        );
         // Segunda tecla no bindeada cancela.
         assert_eq!(
             km.resolve(Mode::Insert, &[o, key(KeyCode::Char('w'))]),
