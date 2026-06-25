@@ -20,6 +20,7 @@ use crate::document::Mode;
 use crate::fuzzy;
 use crate::i18n::{self, Key};
 use crate::keybinding::{Action, Keymap};
+use crate::switcher::scroll_window;
 use crate::theme::Theme;
 
 /// Que debe hacer `run` tras pasarle una tecla a la paleta.
@@ -186,16 +187,13 @@ impl Palette {
     /// atajo actual alineado a la derecha y la fila seleccionada marcada (prefijo
     /// `>` y reverse). `width` es el ancho util del box para alinear el atajo.
     pub fn result_lines(&self, theme: &Theme, max_rows: usize, width: usize) -> Vec<Line<'static>> {
-        if max_rows == 0 || self.results.is_empty() {
+        // Ventana de scroll: que el seleccionado siempre entre en `max_rows`
+        // (logica compartida con el switcher).
+        let std::ops::Range { start, end } =
+            scroll_window(self.selected, self.results.len(), max_rows);
+        if start == end {
             return Vec::new();
         }
-        // Ventana de scroll: que el seleccionado siempre entre en `max_rows`.
-        let start = if self.selected >= max_rows {
-            self.selected + 1 - max_rows
-        } else {
-            0
-        };
-        let end = (start + max_rows).min(self.results.len());
 
         let accent = Style::default()
             .fg(theme.heading_2)

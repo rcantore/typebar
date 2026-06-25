@@ -10,11 +10,32 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
+use std::ops::Range;
 use std::path::PathBuf;
 
 use crate::fuzzy;
 use crate::i18n;
 use crate::theme::Theme;
+
+/// Ventana de scroll de un picker: el rango `[start, end)` de filas a dibujar
+/// para que el item `selected` siempre entre dentro de `max_rows`, dado un total
+/// de `len` resultados. Se comparte entre el switcher y la paleta porque la
+/// logica de scroll es identica en ambos (lo que difiere es como pintan cada
+/// fila, que queda en cada uno). Con `selected` por debajo de `max_rows` la
+/// ventana arranca en 0; pasado ese punto se corre para dejar el seleccionado en
+/// la ultima fila visible. `end` se clampea a `len`.
+pub(crate) fn scroll_window(selected: usize, len: usize, max_rows: usize) -> Range<usize> {
+    if max_rows == 0 || len == 0 {
+        return 0..0;
+    }
+    let start = if selected >= max_rows {
+        selected + 1 - max_rows
+    } else {
+        0
+    };
+    let end = (start + max_rows).min(len);
+    start..end
+}
 
 /// Que debe hacer `run` tras pasarle una tecla al switcher.
 pub enum SwitcherOutcome {
@@ -143,16 +164,12 @@ impl Switcher {
         max_rows: usize,
         width: usize,
     ) -> Vec<Line<'static>> {
-        if max_rows == 0 || self.results.is_empty() {
+        // Ventana de scroll: que el seleccionado siempre entre en `max_rows`
+        // (logica compartida con la paleta).
+        let Range { start, end } = scroll_window(self.selected, self.results.len(), max_rows);
+        if start == end {
             return Vec::new();
         }
-        // Ventana de scroll: que el seleccionado siempre entre en `max_rows`.
-        let start = if self.selected >= max_rows {
-            self.selected + 1 - max_rows
-        } else {
-            0
-        };
-        let end = (start + max_rows).min(self.results.len());
 
         // Acento del match (lo que el usuario tipeo): se pinta ENCIMA de la
         // jerarquia dir/archivo.
@@ -398,6 +415,33 @@ mod tests {
             line_text(&lines[1]).chars().count(),
             2 + "bb.md".chars().count()
         );
+    }
+
+    #[test]
+    fn scroll_window_lista_mas_corta_que_max_rows() {
+        // Con menos resultados que filas disponibles se muestran todos desde 0,
+        // sin scroll (end clampeado a `len`).
+        assert_eq!(scroll_window(0, 3, 10), 0..3);
+        // Aun con el seleccionado en el ultimo, no hay que correr la ventana.
+        assert_eq!(scroll_window(2, 3, 10), 0..3);
+    }
+
+    #[test]
+    fn scroll_window_seleccionado_al_final_corre_la_ventana() {
+        // 100 resultados, 5 filas: el seleccionado al final deja la ventana
+        // pegada al fondo, con el seleccionado en la ultima fila visible.
+        assert_eq!(scroll_window(99, 100, 5), 95..100);
+        // Justo en el borde: selected == max_rows ya corre una fila.
+        assert_eq!(scroll_window(5, 100, 5), 1..6);
+        // Por debajo del borde sigue arrancando en 0.
+        assert_eq!(scroll_window(4, 100, 5), 0..5);
+    }
+
+    #[test]
+    fn scroll_window_casos_vacios() {
+        // Sin filas o sin resultados, rango vacio.
+        assert_eq!(scroll_window(0, 0, 5), 0..0);
+        assert_eq!(scroll_window(3, 10, 0), 0..0);
     }
 
     #[test]
