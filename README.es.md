@@ -56,7 +56,10 @@ texto renderizado mientras escribís.
   `z z` (vim); en los presets modeless `Esc` también sale.
 - **Consciente de Unicode**: movimiento del cursor por clusters de grafemas y
   ancho de display correcto para CJK, emoji y caracteres combinantes.
-- **Themeable** para ricing: paletas Catppuccin `frappe` (default) y `mocha`.
+- **Export a HTML**: `typebar notas.md --export-html` escribe un `notas.html`
+  standalone (CommonMark vía pulldown-cmark) sin abrir el editor.
+- **Themeable** para ricing: paletas Catppuccin `frappe` (default), `mocha` y la
+  clara `latte`.
 - **UI internacionalizada**: inglés por defecto, español autodetectado desde
   `$LANG`, ambos configurables.
 
@@ -86,10 +89,13 @@ typebar [PATH] [--keys <preset>]
 - `PATH`: archivo a abrir (default `scratch.md` si se omite).
 - `--keys <preset>`: preset de teclado (`standard`, `vim` o `wordstar`).
   Tiene prioridad sobre el archivo de config.
+- `--export-html`: convierte `PATH` a un archivo `.html` standalone y sale, sin
+  abrir el editor.
 
 ```bash
 typebar README.md --keys vim
 typebar              # abre scratch.md con el preset standard
+typebar notas.md --export-html   # escribe notas.html y sale
 ```
 
 ## Configuración
