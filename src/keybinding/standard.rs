@@ -59,6 +59,8 @@ impl StandardKeymap {
                 KeyCode::Char('p') => Resolve::Pending,
                 // Ctrl-O: prefijo del submenu "view" (zen, etc.).
                 KeyCode::Char('o') => Resolve::Pending,
+                // Ctrl-G: abrir el switcher de archivos ("Go to file").
+                KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
                 _ => Resolve::None,
             };
         }
@@ -108,6 +110,7 @@ impl Keymap for StandardKeymap {
         use crate::i18n::{Key, t};
         vec![
             Hint::new(Action::Save, "^S", t(Key::HintSave)),
+            Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
             Hint::new(Action::Search, "^F", t(Key::HintSearch)),
             Hint::new(Action::Replace, "^R", t(Key::HintReplace)),
             Hint::new(Action::ToggleBold, "^B", t(Key::HintBold)),

@@ -4,8 +4,10 @@
 //! overlays siguen operando sobre UN documento (`active`/`active_mut`), sin saber
 //! que puede haber varios. Abrir o cambiar de archivo solo mueve el foco aca.
 
-// Varios metodos (open_or_switch, switch_to, paths, ...) los consume el switcher
-// de archivos (en construccion); se quita este allow al cablearlo.
+// `switch_to`/`count`/`active_index` todavia no tienen consumidor en la UI
+// (quedan para la navegacion entre buffers y un indicador en la status bar); se
+// quita este allow cuando se cableen. El resto (new/active/open_or_switch/paths)
+// ya lo usa `run`.
 #![allow(dead_code)]
 
 use std::io;

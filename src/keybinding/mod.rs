@@ -101,6 +101,10 @@ pub enum Action {
     /// bar) para dejar solo el texto. Es estado de la vista del loop, no del
     /// documento; building block del modo whitepaper.
     ToggleZen,
+    /// Abrir el switcher de archivos (fuzzy finder): lista los archivos del
+    /// proyecto y los buffers abiertos para abrir/cambiar de uno. Opera a nivel
+    /// workspace, no del documento; lo maneja `run`.
+    OpenSwitcher,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.

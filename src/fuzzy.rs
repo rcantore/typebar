@@ -17,10 +17,6 @@
 //! matches consecutivos y el prefijo; se penalizan los gaps (mas fuerte el
 //! inicial).
 
-// El consumidor (el overlay del switcher de archivos) todavia no esta cableado;
-// se quita este allow cuando el switcher lo use. Mantener mientras tanto.
-#![allow(dead_code)]
-
 /// Resultado de matchear una query contra un candidato.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FuzzyMatch {
