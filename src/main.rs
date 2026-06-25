@@ -1244,6 +1244,100 @@ mod tests {
         assert!(has_reset_bg, "el theme oscuro no deberia pintar el fondo");
     }
 
+    /// Concatena el texto de todos los spans de una `Line` en un solo String,
+    /// para poder hacer assertions sobre lo que muestra (igual que los tests de
+    /// tabs/switcher inspeccionan sus lineas).
+    fn line_to_string(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn apply_action_movimiento_no_pide_salir() {
+        // Una accion normal de movimiento devuelve Ok(false): no hay que salir.
+        let mut doc = doc_with("hola");
+        let salir = apply_action(&mut doc, Action::CursorRight, 10).unwrap();
+        assert!(!salir, "CursorRight no deberia pedir salir");
+        assert_eq!(doc.cursor_byte(), 1, "CursorRight deberia avanzar un grafema");
+    }
+
+    #[test]
+    fn apply_action_edicion_modifica_el_doc() {
+        // Insertar un caracter modifica el buffer y no pide salir.
+        let mut doc = doc_with("");
+        assert!(!apply_action(&mut doc, Action::InsertChar('x'), 10).unwrap());
+        assert_eq!(doc.text(), "x");
+        // InsertNewline parte la linea.
+        assert!(!apply_action(&mut doc, Action::InsertNewline, 10).unwrap());
+        assert_eq!(doc.text(), "x\n");
+        // Backspace borra hacia atras.
+        assert!(!apply_action(&mut doc, Action::Backspace, 10).unwrap());
+        assert_eq!(doc.text(), "x");
+    }
+
+    #[test]
+    fn apply_action_quit_pide_salir() {
+        // Quit devuelve Ok(true) sin tocar el documento.
+        let mut doc = doc_with("hola");
+        assert!(apply_action(&mut doc, Action::Quit, 10).unwrap());
+        assert_eq!(doc.text(), "hola");
+    }
+
+    #[test]
+    fn apply_action_save_and_quit_pide_salir() {
+        // SaveAndQuit guarda y devuelve Ok(true). Usamos un path temporal para
+        // que el save no escriba en el cwd del repo.
+        let dir = std::env::temp_dir().join(format!("typebar-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("saq.md");
+        let mut doc = doc_with("contenido");
+        doc.path = path.clone();
+        assert!(apply_action(&mut doc, Action::SaveAndQuit, 10).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "contenido");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn status_bar_sin_seleccion_muestra_total_de_palabras() {
+        // Sin seleccion: la status bar muestra el total de palabras del doc.
+        use keybinding::StandardKeymap;
+        let doc = doc_with("uno dos tres");
+        let km = StandardKeymap;
+        let line = status_bar(&doc, &km, &[]);
+        let text = line_to_string(&line);
+        assert!(text.contains("3 words"), "deberia mostrar el total: {text}");
+        // Sin seleccion no aparece el formato "N/M".
+        assert!(!text.contains("/3 words"), "no deberia haber seleccion: {text}");
+    }
+
+    #[test]
+    fn status_bar_con_seleccion_muestra_seleccionadas_sobre_total() {
+        // Con seleccion activa: muestra "N/M" (palabras seleccionadas / total).
+        use keybinding::StandardKeymap;
+        let mut doc = doc_with("uno dos tres");
+        // Seleccionar las primeras 3 letras ("uno" = 1 palabra) extendiendo a la
+        // derecha desde el inicio.
+        doc.extend_right();
+        doc.extend_right();
+        doc.extend_right();
+        let km = StandardKeymap;
+        let line = status_bar(&doc, &km, &[]);
+        let text = line_to_string(&line);
+        assert!(text.contains("1/3 words"), "deberia mostrar sel/total: {text}");
+    }
+
+    #[test]
+    fn status_bar_doc_dirty_muestra_el_marcador() {
+        // Un doc con cambios sin guardar muestra "[+]" en la status bar.
+        use keybinding::StandardKeymap;
+        let mut doc = doc_with("hola");
+        doc.insert_char('!'); // ensucia el doc
+        assert!(doc.dirty, "el doc deberia quedar dirty tras editar");
+        let km = StandardKeymap;
+        let line = status_bar(&doc, &km, &[]);
+        let text = line_to_string(&line);
+        assert!(text.contains("[+]"), "deberia mostrar el marcador dirty: {text}");
+    }
+
     /// Tipea una cadena en el overlay, tecla por tecla.
     fn type_str(ov: &mut Overlay, doc: &mut Document, s: &str) {
         for c in s.chars() {
