@@ -105,6 +105,11 @@ pub enum Action {
     /// proyecto y los buffers abiertos para abrir/cambiar de uno. Opera a nivel
     /// workspace, no del documento; lo maneja `run`.
     OpenSwitcher,
+    /// Abrir la paleta de comandos (estilo M-x): un overlay que fuzzy-filtra los
+    /// comandos del editor por nombre y ejecuta el elegido. Como el switcher,
+    /// opera a nivel del loop (`run`): al aceptar, despacha el `Action` elegido
+    /// por el mismo camino que el keymap.
+    OpenPalette,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.

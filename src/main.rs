@@ -18,6 +18,7 @@ mod fuzzy;
 mod i18n;
 mod keybinding;
 mod markdown;
+mod palette;
 mod render;
 mod search;
 mod switcher;
@@ -29,6 +30,7 @@ use std::ops::Range;
 use document::{Document, Mode};
 use keybinding::{Action, Binding, CustomKeymap, Keymap, Resolve, keymap_from_name, parse_binding};
 use markdown::InlineKind;
+use palette::{Palette, PaletteOutcome};
 use switcher::{Switcher, SwitcherOutcome};
 use theme::Theme;
 
@@ -233,6 +235,10 @@ fn run(
     // nivel workspace: al aceptar, abre/cambia de buffer. Tapa el editor mientras
     // esta abierto.
     let mut switcher: Option<Switcher> = None;
+    // Paleta de comandos (fuzzy sobre los Action) activa (None = edicion normal).
+    // Al aceptar, despacha el Action elegido por el mismo camino que el keymap.
+    // Tapa el editor mientras esta abierta, igual que el switcher.
+    let mut palette: Option<Palette> = None;
 
     loop {
         terminal.draw(|frame| {
@@ -248,6 +254,7 @@ fn run(
                 wysiwyg_level,
                 zen,
                 switcher.as_ref(),
+                palette.as_ref(),
             )
         })?;
 
@@ -255,6 +262,33 @@ fn run(
             continue;
         };
         if key.kind != KeyEventKind::Press {
+            continue;
+        }
+
+        // Con la paleta abierta, las teclas las consume la paleta (tipear filtra,
+        // flechas/Ctrl-N/P navegan, Enter ejecuta el comando, Esc cancela). Al
+        // aceptar, despachamos el Action por el MISMO camino que un action del
+        // keymap (ver `dispatch_action`), asi no se duplica logica.
+        if let Some(pal) = palette.as_mut() {
+            match pal.handle_key(key) {
+                PaletteOutcome::Stay => {}
+                PaletteOutcome::Cancel => palette = None,
+                PaletteOutcome::Accept(action) => {
+                    palette = None;
+                    if dispatch_action(
+                        action,
+                        &mut workspace,
+                        keymap,
+                        viewport_height,
+                        &mut overlay,
+                        &mut zen,
+                        &mut switcher,
+                        &mut palette,
+                    )? {
+                        return Ok(());
+                    }
+                }
+            }
             continue;
         }
 
@@ -303,28 +337,20 @@ fn run(
         match keymap.resolve(workspace.active().mode, &pending) {
             Resolve::Action(action) => {
                 pending.clear();
-                match action {
-                    // Estas acciones tocan estado de la vista del loop, no el doc.
-                    Action::Search => overlay = Some(Overlay::new_search(workspace.active())),
-                    Action::Replace => overlay = Some(Overlay::new_replace()),
-                    Action::ToggleZen => zen = !zen,
-                    Action::OpenSwitcher => {
-                        // Candidatos: archivos del proyecto (cwd recursivo) mas los
-                        // buffers abiertos que no esten ya en la lista (p.ej. fuera
-                        // del cwd), para poder volver a cualquiera.
-                        let mut candidates = files::discover(".");
-                        for p in workspace.paths() {
-                            if !candidates.iter().any(|c| c == p) {
-                                candidates.push(p.to_path_buf());
-                            }
-                        }
-                        switcher = Some(Switcher::new(candidates));
-                    }
-                    _ => {
-                        if apply_action(workspace.active_mut(), action, viewport_height)? {
-                            return Ok(());
-                        }
-                    }
+                // Despachamos por el mismo helper que usa la paleta, asi un action
+                // resuelto por el keymap y uno elegido en la paleta recorren un
+                // unico camino (sin duplicar la logica de overlays/zen/switcher).
+                if dispatch_action(
+                    action,
+                    &mut workspace,
+                    keymap,
+                    viewport_height,
+                    &mut overlay,
+                    &mut zen,
+                    &mut switcher,
+                    &mut palette,
+                )? {
+                    return Ok(());
                 }
             }
             // La secuencia es prefijo de un chord: esperar mas teclas.
@@ -334,6 +360,51 @@ fn run(
             Resolve::None => pending.clear(),
         }
     }
+}
+
+/// Despacha un `Action` resuelto (sea por el keymap o elegido en la paleta) sobre
+/// el estado del loop. Devuelve `Ok(true)` si hay que salir del editor
+/// (Quit/SaveAndQuit). Las acciones "de vista" (Search/Replace abren overlay,
+/// ToggleZen togglea la vista, OpenSwitcher/OpenPalette abren su picker) las
+/// maneja aca; el resto va por `apply_action` sobre el buffer activo.
+///
+/// Centralizar esto en un solo lugar evita duplicar la logica entre el match del
+/// keymap y el `Accept` de la paleta, y garantiza que ambos caminos se comporten
+/// igual (incluido salir del `run` ante Quit/SaveAndQuit).
+#[allow(clippy::too_many_arguments)] // todo es estado del loop; un struct seria mas ruido que senal
+fn dispatch_action(
+    action: Action,
+    workspace: &mut buffers::Workspace,
+    keymap: &dyn Keymap,
+    viewport_height: usize,
+    overlay: &mut Option<Overlay>,
+    zen: &mut bool,
+    switcher: &mut Option<Switcher>,
+    palette: &mut Option<Palette>,
+) -> std::io::Result<bool> {
+    match action {
+        // Estas acciones tocan estado de la vista del loop, no el doc.
+        Action::Search => *overlay = Some(Overlay::new_search(workspace.active())),
+        Action::Replace => *overlay = Some(Overlay::new_replace()),
+        Action::ToggleZen => *zen = !*zen,
+        Action::OpenSwitcher => {
+            // Candidatos: archivos del proyecto (cwd recursivo) mas los buffers
+            // abiertos que no esten ya en la lista (p.ej. fuera del cwd), para
+            // poder volver a cualquiera.
+            let mut candidates = files::discover(".");
+            for p in workspace.paths() {
+                if !candidates.iter().any(|c| c == p) {
+                    candidates.push(p.to_path_buf());
+                }
+            }
+            *switcher = Some(Switcher::new(candidates));
+        }
+        // Abrir la paleta de comandos. Como `OpenPalette` se excluye del catalogo
+        // de comandos, no hay forma de recursar desde la propia paleta.
+        Action::OpenPalette => *palette = Some(Palette::new(keymap)),
+        _ => return apply_action(workspace.active_mut(), action, viewport_height),
+    }
+    Ok(false)
 }
 
 /// Dibuja el editor. Devuelve via `scroll` (mut) el offset usado, ajustado para
@@ -351,9 +422,14 @@ fn draw(
     wysiwyg_level: u8,
     zen: bool,
     switcher: Option<&Switcher>,
+    palette: Option<&Palette>,
 ) {
-    // Con el switcher abierto tapa todo (no hay editor que mostrar detras). El
-    // render vive en el modulo `switcher`.
+    // La paleta y el switcher (mutuamente excluyentes) tapan todo: cada uno se
+    // dibuja via su modulo y corta el draw. El render vive en el modulo respectivo.
+    if let Some(pal) = palette {
+        pal.render(frame, theme);
+        return;
+    }
     if let Some(sw) = switcher {
         sw.render(frame, theme);
         return;
@@ -813,10 +889,15 @@ fn apply_action(
             }
         }
         Action::Paste => doc.paste(),
-        // Search/Replace abren un overlay, ToggleZen togglea la vista y
-        // OpenSwitcher abre el switcher (a nivel workspace); las intercepta `run`
-        // antes de llegar aca. Se listan para que el match siga exhaustivo.
-        Action::Search | Action::Replace | Action::ToggleZen | Action::OpenSwitcher => {}
+        // Search/Replace abren un overlay, ToggleZen togglea la vista,
+        // OpenSwitcher abre el switcher y OpenPalette la paleta de comandos (todos
+        // a nivel del loop); los intercepta `dispatch_action` antes de llegar aca.
+        // Se listan para que el match siga exhaustivo.
+        Action::Search
+        | Action::Replace
+        | Action::ToggleZen
+        | Action::OpenSwitcher
+        | Action::OpenPalette => {}
     }
     Ok(false)
 }
@@ -843,7 +924,11 @@ mod tests {
     /// Renderiza un frame con `draw` sobre un backend de prueba y devuelve todo el
     /// buffer como texto plano (filas separadas por `\n`). Sirve para verificar
     /// que cierto chrome aparece o no en pantalla.
-    fn render_to_string(zen: bool, switcher: Option<&Switcher>) -> String {
+    fn render_to_string(
+        zen: bool,
+        switcher: Option<&Switcher>,
+        palette: Option<&Palette>,
+    ) -> String {
         use keybinding::StandardKeymap;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -868,6 +953,7 @@ mod tests {
                     2,
                     zen,
                     switcher,
+                    palette,
                 )
             })
             .unwrap();
@@ -887,7 +973,7 @@ mod tests {
     fn draw_normal_muestra_chrome() {
         // Fuera de zen: el borde con el titulo (`typebar`) y la toolbar (`Save`,
         // locale En por default en tests) estan presentes, igual que el texto.
-        let screen = render_to_string(false, None);
+        let screen = render_to_string(false, None, None);
         assert!(screen.contains("typebar"), "falta el titulo del borde");
         assert!(screen.contains("Save"), "falta la toolbar");
         assert!(screen.contains("hola mundo"), "falta el texto");
@@ -896,7 +982,7 @@ mod tests {
     #[test]
     fn draw_zen_oculta_chrome_pero_muestra_texto() {
         // En zen: sin borde/titulo ni toolbar; solo el texto.
-        let screen = render_to_string(true, None);
+        let screen = render_to_string(true, None, None);
         assert!(
             !screen.contains("typebar"),
             "el titulo no deberia verse en zen"
@@ -919,7 +1005,7 @@ mod tests {
             std::path::PathBuf::from("src/main.rs"),
             std::path::PathBuf::from("README.md"),
         ]);
-        let screen = render_to_string(false, Some(&sw));
+        let screen = render_to_string(false, Some(&sw), None);
         assert!(
             screen.contains("go to file:"),
             "falta el prompt del switcher"
@@ -929,6 +1015,21 @@ mod tests {
         assert!(
             !screen.contains("hola mundo"),
             "el editor de fondo no deberia verse con el switcher abierto"
+        );
+    }
+
+    #[test]
+    fn draw_palette_tapa_el_editor_y_muestra_prompt_y_comandos() {
+        // Con la paleta abierta: se ve el prompt (locale En por default) y algun
+        // comando, y NO el texto del editor de fondo.
+        let km = keybinding::StandardKeymap;
+        let pal = Palette::new(&km);
+        let screen = render_to_string(false, None, Some(&pal));
+        assert!(screen.contains("command:"), "falta el prompt de la paleta");
+        assert!(screen.contains("Save"), "falta algun comando");
+        assert!(
+            !screen.contains("hola mundo"),
+            "el editor de fondo no deberia verse con la paleta abierta"
         );
     }
 
