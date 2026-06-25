@@ -271,7 +271,10 @@ fn run(
                 zen,
                 switcher.as_ref(),
                 palette.as_ref(),
-            )
+            );
+            // Paperwhite: si el theme activo es claro, pinta fondo/texto sobre el
+            // frame ya dibujado (editor, chrome y pickers de una). No-op en oscuros.
+            apply_theme_fill(frame, theme);
         })?;
 
         let Event::Key(key) = event::read()? else {
@@ -426,6 +429,34 @@ fn dispatch_action(
         _ => return apply_action(workspace.active_mut(), action, viewport_height),
     }
     Ok(false)
+}
+
+/// Post-pass de "paperwhite": en un theme con `background` y `text` definidos
+/// (los claros, ej Latte), recorre el frame YA dibujado y pinta el fondo en cada
+/// celda sin fondo propio y el color de texto en cada celda sin fg propio. Asi un
+/// solo lugar deja el editor, el chrome y los pickers sobre un fondo claro, sin
+/// tener que threadear el color por cada widget. En los themes oscuros
+/// (`background`/`text` en `None`) es no-op: no toca el render y siguen
+/// transparentes (dejan pasar el fondo del terminal).
+fn apply_theme_fill(frame: &mut ratatui::Frame, theme: &Theme) {
+    let (Some(bg), Some(fg)) = (theme.background, theme.text) else {
+        return;
+    };
+    let buf = frame.buffer_mut();
+    let area = buf.area;
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let cell = &mut buf[(x, y)];
+            // `Reset` es "sin color propio": ahi va el fondo/texto del theme; las
+            // celdas con color explicito (headings, code, botones, resaltes) quedan.
+            if cell.bg == ratatui::style::Color::Reset {
+                cell.set_bg(bg);
+            }
+            if cell.fg == ratatui::style::Color::Reset {
+                cell.set_fg(fg);
+            }
+        }
+    }
 }
 
 /// Dibuja el editor. Devuelve via `scroll` (mut) el offset usado, ajustado para
@@ -1058,6 +1089,80 @@ mod tests {
             !screen.contains("hola mundo"),
             "el editor de fondo no deberia verse con la paleta abierta"
         );
+    }
+
+    /// Renderiza el editor con `theme`, corre `apply_theme_fill`, y devuelve por
+    /// cada celda del buffer: si hubo alguna con el fondo del theme, alguna con su
+    /// texto, y si quedo ALGUNA celda con fondo `Reset` (sin pintar).
+    fn fill_report(theme: &Theme) -> (bool, bool, bool) {
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+
+        let doc = doc_with("hola");
+        let km = StandardKeymap;
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        let mut scroll = 0usize;
+        let mut vp = 0usize;
+        terminal
+            .draw(|f| {
+                draw(
+                    f,
+                    &doc,
+                    &km,
+                    &[],
+                    &mut scroll,
+                    &mut vp,
+                    theme,
+                    None,
+                    2,
+                    false,
+                    None,
+                    None,
+                );
+                apply_theme_fill(f, theme);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        let (mut has_bg, mut has_fg, mut has_reset_bg) = (false, false, false);
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                if Some(cell.bg) == theme.background {
+                    has_bg = true;
+                }
+                if Some(cell.fg) == theme.text {
+                    has_fg = true;
+                }
+                if cell.bg == Color::Reset {
+                    has_reset_bg = true;
+                }
+            }
+        }
+        (has_bg, has_fg, has_reset_bg)
+    }
+
+    #[test]
+    fn paperwhite_pinta_fondo_y_texto_en_theme_claro() {
+        // Latte (claro) tiene background/text: el post-pass pinta cada celda, asi
+        // queda fondo claro y texto oscuro, y NINGUNA celda en Reset.
+        let (has_bg, has_fg, has_reset_bg) = fill_report(&Theme::latte());
+        assert!(has_bg, "el theme claro deberia pintar el fondo");
+        assert!(has_fg, "el theme claro deberia pintar el texto");
+        assert!(
+            !has_reset_bg,
+            "no deberia quedar fondo sin pintar en el claro"
+        );
+    }
+
+    #[test]
+    fn paperwhite_no_op_en_theme_oscuro() {
+        // frappe no tiene background/text (None): el fill es no-op, asi que quedan
+        // celdas con fondo Reset (deja pasar el del terminal).
+        let (.., has_reset_bg) = fill_report(&Theme::frappe());
+        assert!(has_reset_bg, "el theme oscuro no deberia pintar el fondo");
     }
 
     /// Tipea una cadena en el overlay, tecla por tecla.
