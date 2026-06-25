@@ -38,7 +38,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, Padding, Paragraph};
 
 const DEFAULT_PATH: &str = "scratch.md";
 const DEFAULT_PRESET: &str = "standard";
@@ -462,6 +462,9 @@ fn draw(
     // En zen no hay borde (el editor ocupa todo); fuera de zen, el Block bordered
     // come 1 linea arriba y 1 abajo. Este offset alinea el alto util y el cursor.
     let border: u16 = if zen { 0 } else { 1 };
+    // Margen izquierdo dentro del borde, para que el texto no quede pegado al
+    // marco. En zen (sin marco) no aplica. Suma al offset horizontal del cursor.
+    let pad_left: u16 = if zen { 0 } else { 1 };
     // Alto util dentro del borde del Block.
     let viewport_height = editor_area.height.saturating_sub(2 * border) as usize;
     // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
@@ -496,7 +499,9 @@ fn draw(
     let block = if zen {
         Block::default()
     } else {
-        Block::bordered().title(format!(" typebar · {} ", doc.path.display()))
+        Block::bordered()
+            .title(format!(" typebar · {} ", doc.path.display()))
+            .padding(Padding::new(pad_left, 0, 0, 0))
     };
     // En Nivel 2 la linea con el cursor se renderiza como Nivel 1 (markers
     // visibles) para preservar el mapeo cursor->columna 1:1. Las demas lineas
@@ -535,7 +540,7 @@ fn draw(
     // La X es la columna *visual* (celdas), no el indice de char: asi cae sobre
     // el glifo que dibujo el render aunque haya CJK/emoji de doble ancho.
     if doc.line >= *scroll {
-        let cursor_x = editor_area.x + border + doc.display_col() as u16;
+        let cursor_x = editor_area.x + border + pad_left + doc.display_col() as u16;
         let cursor_y = editor_area.y + border + (doc.line - *scroll) as u16;
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
