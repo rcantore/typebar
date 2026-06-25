@@ -36,7 +36,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 const DEFAULT_PATH: &str = "scratch.md";
 const DEFAULT_PRESET: &str = "standard";
@@ -352,11 +352,10 @@ fn draw(
     zen: bool,
     switcher: Option<&Switcher>,
 ) {
-    // Con el switcher abierto tapa todo: dibujamos el picker a pantalla completa
-    // y listo (no hay editor que mostrar detras). Al no setear cursor, ratatui lo
-    // oculta; el `_` del prompt marca donde se tipea.
+    // Con el switcher abierto tapa todo (no hay editor que mostrar detras). El
+    // render vive en el modulo `switcher`.
     if let Some(sw) = switcher {
-        draw_switcher(frame, sw, theme);
+        sw.render(frame, theme);
         return;
     }
 
@@ -464,22 +463,6 @@ fn draw(
         let cursor_y = editor_area.y + border + (doc.line - *scroll) as u16;
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
-}
-
-/// Dibuja el switcher de archivos a pantalla completa: un box con borde cuyo
-/// titulo es el prompt + lo tipeado (con un `_` de cursor) + el conteo de
-/// resultados, y adentro la lista rankeada (con scroll y resaltado del match).
-fn draw_switcher(frame: &mut ratatui::Frame, sw: &Switcher, theme: &Theme) {
-    let area = frame.area();
-    let prompt = i18n::t(i18n::Key::SwitcherPrompt);
-    let title = format!(" {prompt} {}_   ({}) ", sw.query(), sw.result_count());
-    let block = Block::bordered().title(title);
-    // Alto util dentro del borde (resta 2: arriba y abajo).
-    let rows = area.height.saturating_sub(2) as usize;
-    let lines = sw.result_lines(theme, rows);
-    // `Clear` borra lo que hubiera debajo (el editor) antes de pintar el box.
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Construye la barra de atajos: cada hint se dibuja como un "boton" con fondo

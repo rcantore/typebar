@@ -3,13 +3,16 @@
 //! opera a nivel workspace (abre o cambia de buffer), no sobre el documento:
 //! `run` lo maneja y, al aceptar, abre el path elegido en el `Workspace`.
 
+use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Clear, Paragraph};
 
 use std::path::PathBuf;
 
 use crate::fuzzy;
+use crate::i18n;
 use crate::theme::Theme;
 
 /// Que debe hacer `run` tras pasarle una tecla al switcher.
@@ -167,6 +170,31 @@ impl Switcher {
             lines.push(Line::from(spans));
         }
         lines
+    }
+
+    /// Dibuja el switcher a pantalla completa: un box con borde cuyo titulo es el
+    /// prompt + lo tipeado (con `_` de cursor) + el conteo, y adentro la lista
+    /// rankeada (con scroll y resaltado del match). Al no setear cursor, ratatui
+    /// lo oculta; el `_` del prompt marca donde se tipea.
+    pub fn render(&self, frame: &mut Frame, theme: &Theme) {
+        let area = frame.area();
+        let prompt = i18n::t(i18n::Key::SwitcherPrompt);
+        let title = format!(" {prompt} {}_   ({}) ", self.query(), self.result_count());
+        let block = Block::bordered().title(title);
+        // Alto util dentro del borde (resta 2: arriba y abajo).
+        let rows = area.height.saturating_sub(2) as usize;
+        // Sin matches: una linea atenuada en vez de un box vacio.
+        let lines = if self.result_count() == 0 {
+            vec![Line::from(Span::styled(
+                i18n::t(i18n::Key::SwitcherEmpty).to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ))]
+        } else {
+            self.result_lines(theme, rows)
+        };
+        // `Clear` borra lo que hubiera debajo (el editor) antes de pintar el box.
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 }
 

@@ -89,6 +89,9 @@ pub enum Key {
     HintSwitcher,
     /// Prompt del box del switcher de archivos ("ir a archivo:" / "go to file:").
     SwitcherPrompt,
+    /// Estado vacio del switcher cuando nada matchea ("(sin resultados)" /
+    /// "(no matches)").
+    SwitcherEmpty,
 
     // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
     ModeNormal,
@@ -181,6 +184,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintSwitcher) => "Go to…",
         (Locale::Es, Key::SwitcherPrompt) => "ir a archivo:",
         (Locale::En, Key::SwitcherPrompt) => "go to file:",
+        (Locale::Es, Key::SwitcherEmpty) => "(sin resultados)",
+        (Locale::En, Key::SwitcherEmpty) => "(no matches)",
 
         // --- Status bar (nombres de modo) ---------------------------------
         (Locale::Es, Key::ModeNormal) => "NORMAL",
