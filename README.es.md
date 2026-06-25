@@ -19,6 +19,11 @@ limpio, renderizado en vivo, un WYSIWYG que no te estorba, pero open source y
 corriendo en una terminal. WordStar cumplía un poco con eso, al menos en mi
 nostalgia, así que me pareció un buen camino para arrancar.
 
+Y es deliberadamente simple. Si usás algo como Typora, normalmente es porque
+disfrutás *escribir*, no porque quieras un asistente que lo haga por vos.
+typebar no tiene IA, ni autocompletado, ni nube. Sólo vos, el teclado, y tu
+texto renderizado mientras escribís.
+
 > **Estado:** desarrollo temprano (`v0.1.0`). Sólo Markdown, un único buffer.
 
 ## Características
@@ -43,6 +48,8 @@ nostalgia, así que me pareció un buen camino para arrancar.
   el portapapeles del sistema, buscar y reemplazar, toggles de negrita/itálica/
   código, y movimientos completos (inicio/fin de línea y de documento, Page
   Up/Down, Home/End).
+- **Contador de palabras en vivo** en la status bar (límites de palabra Unicode),
+  con conteo de las palabras seleccionadas mientras hay selección.
 - **Consciente de Unicode**: movimiento del cursor por clusters de grafemas y
   ancho de display correcto para CJK, emoji y caracteres combinantes.
 - **Themeable** para ricing: paletas Catppuccin `frappe` (default) y `mocha`.

@@ -20,6 +20,11 @@ WYSIWYG, except open source and running in a terminal. WordStar scratched a bit
 of that itch, at least in my nostalgia, so it felt like a good direction to
 build from.
 
+And it stays deliberately simple. If you reach for something like Typora, it's
+usually because you enjoy *writing*, not because you want an assistant doing it
+for you. typebar has no AI, no autocomplete, no cloud. Just you, the keyboard,
+and your text rendered as you type.
+
 > **Status:** early development (`v0.1.0`). Markdown-only, single buffer.
 
 ## Features
@@ -42,6 +47,8 @@ build from.
 - **Editing essentials**: undo/redo, visual selection, system clipboard
   copy/paste/cut, find & replace, bold/italic/code toggles, and full motions
   (line/doc start & end, Page Up/Down, Home/End).
+- **Live word count** in the status bar (Unicode word boundaries), with a
+  selected-words count while text is selected.
 - **Unicode-aware**: grapheme-cluster cursor movement and correct display width
   for CJK, emoji, and combining characters.
 - **Themeable** for ricing: `frappe` (default) and `mocha` Catppuccin palettes.
