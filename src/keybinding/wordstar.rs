@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use super::{
     Action, Hint, Keymap, Resolve, format_hints, has_ctrl, resolve_format_second,
-    resolve_view_second, view_hints,
+    resolve_view_second, view_hints, workspace_ctrl_command,
 };
 use crate::document::Mode;
 
@@ -25,6 +25,12 @@ impl WordstarKeymap {
             return Resolve::Action(action);
         }
         if has_ctrl(key) {
+            // Comandos de workspace uniformes en los tres presets (^G/^A/^N,
+            // Ctrl-PageDown/Up): se resuelven en el helper compartido. Ninguno
+            // pisa el diamante ni los prefijos de chord de abajo.
+            if let Some(action) = workspace_ctrl_command(key) {
+                return Resolve::Action(action);
+            }
             return match key.code {
                 // Diamante de navegacion.
                 KeyCode::Char('e') => Resolve::Action(Action::CursorUp),
@@ -35,17 +41,6 @@ impl WordstarKeymap {
                 // captura Ctrl-Z asi que no suspende el proceso).
                 KeyCode::Char('z') => Resolve::Action(Action::Undo),
                 KeyCode::Char('y') => Resolve::Action(Action::Redo),
-                // Ctrl-G: abrir el switcher de archivos ("Go to file"), uniforme
-                // con los otros presets.
-                KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
-                // Ctrl-A: abrir la paleta de comandos ("Actions"), uniforme con
-                // los otros presets. Tentativo: remapeable por el usuario.
-                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
-                // Ctrl-N: nuevo archivo (buffer vacio), uniforme con los otros.
-                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
-                // Ctrl-PageDown/Up: cambiar de buffer (estilo tabs de browser).
-                KeyCode::PageDown => Resolve::Action(Action::NextBuffer),
-                KeyCode::PageUp => Resolve::Action(Action::PrevBuffer),
                 // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
                 // prefijo de formato (negrita/italica/codigo) y `Ctrl-O` el
                 // submenu "view" (zen, etc., homenaje al Onscreen format del

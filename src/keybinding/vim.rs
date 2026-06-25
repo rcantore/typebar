@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use super::{
     Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, resolve_format_second,
-    resolve_view_second, view_hints,
+    resolve_view_second, view_hints, workspace_ctrl_command,
 };
 use crate::document::Mode;
 
@@ -38,21 +38,17 @@ impl VimKeymap {
     /// Resolucion de teclas en modo Normal.
     fn resolve_normal(&self, key: KeyEvent) -> Resolve {
         if has_ctrl(key) {
+            // Comandos de workspace uniformes en los tres presets (^G/^A/^N,
+            // Ctrl-PageDown/Up): se resuelven en el helper compartido.
+            if let Some(action) = workspace_ctrl_command(key) {
+                return Resolve::Action(action);
+            }
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 // Ctrl-R: rehacer (lo canonico de Vim).
                 KeyCode::Char('r') => Resolve::Action(Action::Redo),
                 // Ctrl-P: prefijo de formato (agnostico al modo).
                 KeyCode::Char('p') => Resolve::Pending,
-                // Ctrl-G: abrir el switcher de archivos ("Go to file").
-                KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
-                // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo.
-                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
-                // Ctrl-N: nuevo archivo (buffer vacio).
-                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
-                // Ctrl-PageDown/Up: cambiar de buffer (estilo tabs de browser).
-                KeyCode::PageDown => Resolve::Action(Action::NextBuffer),
-                KeyCode::PageUp => Resolve::Action(Action::PrevBuffer),
                 _ => Resolve::None,
             };
         }
@@ -112,19 +108,15 @@ impl VimKeymap {
     /// Resolucion de teclas en modo Insert.
     fn resolve_insert(&self, key: KeyEvent) -> Resolve {
         if has_ctrl(key) {
+            // Comandos de workspace uniformes en los tres presets (^G/^A/^N,
+            // Ctrl-PageDown/Up): se resuelven en el helper compartido.
+            if let Some(action) = workspace_ctrl_command(key) {
+                return Resolve::Action(action);
+            }
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 // Ctrl-P: prefijo de formato (agnostico al modo).
                 KeyCode::Char('p') => Resolve::Pending,
-                // Ctrl-G: abrir el switcher de archivos ("Go to file").
-                KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
-                // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo.
-                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
-                // Ctrl-N: nuevo archivo (buffer vacio).
-                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
-                // Ctrl-PageDown/Up: cambiar de buffer (estilo tabs de browser).
-                KeyCode::PageDown => Resolve::Action(Action::NextBuffer),
-                KeyCode::PageUp => Resolve::Action(Action::PrevBuffer),
                 _ => Resolve::None,
             };
         }
