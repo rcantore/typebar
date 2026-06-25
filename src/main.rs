@@ -12,6 +12,7 @@
 mod config;
 mod document;
 mod export;
+mod fuzzy;
 mod i18n;
 mod keybinding;
 mod markdown;
