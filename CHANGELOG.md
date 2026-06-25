@@ -30,11 +30,15 @@ How to maintain this file:
 - HTML export: `typebar <file> --export-html` converts the Markdown to a
   standalone HTML document (CommonMark via pulldown-cmark, with tables,
   strikethrough, footnotes and task lists) and exits without opening the editor.
-- Multiple open files with a fuzzy file switcher: `Ctrl-G` opens a full-screen
+- Multiple open files with a fuzzy file switcher: `Ctrl-G` opens a centered
   finder over the project files (current directory, recursive, skipping
   `.git`/`target`/`node_modules`/hidden) and the open buffers; type to filter,
   arrows or `Ctrl-N`/`Ctrl-P` to move, Enter to open or switch, Esc to cancel.
   Bound in all three presets; remappable via the `open-switcher` action.
+- Command palette: `Ctrl-A` opens a fuzzy finder over the editor's commands,
+  showing each command's name and its current shortcut, and runs the chosen one
+  on Enter (also a way to discover the keybindings). Remappable via the
+  `open-palette` action.
 
 ## [0.1.0] - 2026-06-24
 
