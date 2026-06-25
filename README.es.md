@@ -3,8 +3,8 @@
 *Read this in [English](README.md).*
 
 Un editor de Markdown WYSIWYG para la terminal, escrito en Rust. typebar
-renderiza el Markdown en vivo mientras escribís — la negrita se ve en negrita,
-los títulos parecen títulos — manteniendo la edición predecible a través de
+renderiza el Markdown en vivo mientras escribís (la negrita se ve en negrita,
+los títulos parecen títulos) manteniendo la edición predecible a través de
 presets de teclado configurables (`standard`, `vim`, `wordstar`).
 
 El nombre viene de la pieza mecánica de la máquina de escribir: la barra que
@@ -14,10 +14,15 @@ lleva el tipo grabado y lo imprime contra el papel a través de la cinta.
 
 Paso casi todo el día en la terminal y nunca encontré un editor de Markdown que
 viviera ahí cómodo. Existe Obsidian, y hay un montón de editores gráficos
-lindos — pero yo quería algo más parecido a Typora:
+lindos, pero yo quería algo más parecido a Typora:
 limpio, renderizado en vivo, un WYSIWYG que no te estorba, pero open source y
-corriendo en una terminal. WordStar cumplía un poco con eso — al menos en mi
-nostalgia — así que me pareció un buen camino para arrancar.
+corriendo en una terminal. WordStar cumplía un poco con eso, al menos en mi
+nostalgia, así que me pareció un buen camino para arrancar.
+
+Y es deliberadamente simple. Si usás algo como Typora, normalmente es porque
+disfrutás *escribir*, no porque quieras un asistente que lo haga por vos.
+typebar no tiene IA, ni autocompletado, ni nube. Sólo vos, el teclado, y tu
+texto renderizado mientras escribís.
 
 > **Estado:** desarrollo temprano (`v0.1.0`). Sólo Markdown, un único buffer.
 
@@ -25,24 +30,26 @@ nostalgia — así que me pareció un buen camino para arrancar.
 
 - **Renderizado soft WYSIWYG** con [tree-sitter](https://tree-sitter.github.io/),
   en dos niveles:
-  - **Nivel 1** — los marcadores de sintaxis nunca se ocultan, sólo se atenúan.
+  - **Nivel 1**: los marcadores de sintaxis nunca se ocultan, sólo se atenúan.
     El mapeo cursor→columna queda 1:1 en todas las líneas, así la edición es
     siempre predecible.
-  - **Nivel 2** *(default)* — los delimitadores inline se contraen en las
+  - **Nivel 2** *(default)*: los delimitadores inline se contraen en las
     líneas **inactivas**: `**negrita**` → **negrita**, `# Título` pierde el `#`,
     `- item` → `• item`, `> cita` → `│ cita`, y `[texto](url)` muestra sólo el
     texto. La línea bajo el cursor siempre se renderiza como Nivel 1, así que el
     mapeo del cursor no se corre. Con una selección o búsqueda activa, toda la
     vista vuelve a Nivel 1 para que los resaltados caigan sobre celdas reales.
 - **Tres presets de teclado**, intercambiables al iniciar o por config:
-  - `standard` — modeless, navegación con flechas (default).
-  - `vim` — modal (Normal / Insert / Visual).
-  - `wordstar` — modeless con chords clásicos (`Ctrl-K S`, `Ctrl-Q S`, …).
+  - `standard`: modeless, navegación con flechas (default).
+  - `vim`: modal (Normal / Insert / Visual).
+  - `wordstar`: modeless con chords clásicos (`Ctrl-K S`, `Ctrl-Q S`, …).
   - Además, **overrides por tecla** que se aplican encima de cualquier preset.
 - **Edición esencial**: undo/redo, selección visual, copiar/pegar/cortar contra
   el portapapeles del sistema, buscar y reemplazar, toggles de negrita/itálica/
   código, y movimientos completos (inicio/fin de línea y de documento, Page
   Up/Down, Home/End).
+- **Contador de palabras en vivo** en la status bar (límites de palabra Unicode),
+  con conteo de las palabras seleccionadas mientras hay selección.
 - **Consciente de Unicode**: movimiento del cursor por clusters de grafemas y
   ancho de display correcto para CJK, emoji y caracteres combinantes.
 - **Themeable** para ricing: paletas Catppuccin `frappe` (default) y `mocha`.
@@ -72,8 +79,8 @@ cargo build --release
 typebar [PATH] [--keys <preset>]
 ```
 
-- `PATH` — archivo a abrir (default `scratch.md` si se omite).
-- `--keys <preset>` — preset de teclado: `standard`, `vim` o `wordstar`.
+- `PATH`: archivo a abrir (default `scratch.md` si se omite).
+- `--keys <preset>`: preset de teclado (`standard`, `vim` o `wordstar`).
   Tiene prioridad sobre el archivo de config.
 
 ```bash
@@ -84,7 +91,7 @@ typebar              # abre scratch.md con el preset standard
 ## Configuración
 
 typebar lee un archivo TOML opcional en `~/.config/typebar/config.toml`
-(respeta `XDG_CONFIG_HOME`). Todo es opcional — sin el archivo, se usan los
+(respeta `XDG_CONFIG_HOME`). Todo es opcional; sin el archivo, se usan los
 defaults. Hay un punto de partida en
 [`examples/config.toml`](examples/config.toml).
 
@@ -133,6 +140,13 @@ cargo clippy --all-targets -- -D warnings   # lints (exigidos en CI)
 
 La arquitectura y el pipeline de renderizado están documentados en
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Contribuir
+
+¡Las contribuciones son bienvenidas! Leé [`CONTRIBUTING.es.md`](CONTRIBUTING.es.md)
+para saber cómo compilar, testear y enviar cambios, y tené en cuenta el
+[Código de Conducta](CODE_OF_CONDUCT.md). Los cambios relevantes se registran en
+el [changelog](CHANGELOG.md).
 
 ## Licencia
 

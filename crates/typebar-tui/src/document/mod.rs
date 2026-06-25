@@ -117,6 +117,13 @@ impl Document {
         self.buffer.to_string()
     }
 
+    /// Cantidad de palabras del documento completo (limites Unicode, ver
+    /// `text::count_words`). Se recalcula al vuelo: barato para prosa, que es el
+    /// caso de uso; si algun dia hay documentos enormes, cachear en cada edit.
+    pub fn word_count(&self) -> usize {
+        crate::text::count_words(&self.buffer.to_string())
+    }
+
     // --- Helpers de geometria interna --------------------------------------
 
     /// Largo en chars de una linea SIN contar el `\n` final (si lo hay). Es el
