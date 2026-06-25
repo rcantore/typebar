@@ -47,9 +47,10 @@ and your text rendered as you type.
 - **Editing essentials**: undo/redo, visual selection, system clipboard
   copy/paste/cut, find & replace, bold/italic/code toggles, and full motions
   (line/doc start & end, Page Up/Down, Home/End).
-- **Multiple files with a fuzzy switcher**: `Ctrl-G` opens a fuzzy finder over
-  the project files and open buffers — type to filter, Enter to open or switch.
-  `Ctrl-N` starts a new empty file.
+- **Multiple files with a fuzzy switcher and tabs**: `Ctrl-G` opens a fuzzy finder
+  over the project files and open buffers (type to filter, Enter to open/switch);
+  `Ctrl-N` starts a new file; open buffers show as tabs you can cycle with
+  `Ctrl-PageDown`/`Ctrl-PageUp` (or click, with `[ui] mouse = true`).
 - **Command palette**: `Ctrl-A` fuzzy-finds any command by name (with its current
   shortcut shown) and runs it — also a handy way to learn the keybindings.
 - **Live word count** in the status bar (Unicode word boundaries), with a
@@ -123,7 +124,7 @@ keys = "ctrl-s"
 action = "save"
 
 [ui]
-# "frappe" (default) | "mocha". Unknown names fall back to frappe.
+# "frappe" (default) | "mocha" | "latte" (light). Unknown names fall back to frappe.
 theme = "frappe"
 
 # UI language: "en" | "es". Defaults to English, or to your $LANG if Spanish.
@@ -132,6 +133,10 @@ locale = "en"
 # WYSIWYG level: 1 (markers always visible) or 2 (hidden off the active line).
 # Defaults to 2; invalid values fall back to 2.
 wysiwyg_level = 2
+
+# Mouse capture: enables clicking the buffer tabs. Off by default (keeps the
+# terminal's native text selection).
+mouse = false
 ```
 
 **Preset resolution precedence:** `--keys` flag → config `preset` → built-in

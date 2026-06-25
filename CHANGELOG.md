@@ -40,6 +40,11 @@ How to maintain this file:
   Bound in all three presets; remappable via the `open-switcher` action.
 - New file: `Ctrl-N` opens a fresh empty buffer (`untitled.md`), focused, over the
   multi-buffer workspace. Remappable via the `new-buffer` action.
+- Buffer tab bar across the top (shown with 2+ open buffers), with the active
+  buffer highlighted. Switch buffers with `Ctrl-PageDown`/`Ctrl-PageUp` (next /
+  previous, wrapping); remappable via `next-buffer`/`prev-buffer`. Optional mouse
+  support (`[ui] mouse = true` in the config, off by default) makes the tabs
+  clickable.
 - Command palette: `Ctrl-A` opens a fuzzy finder over the editor's commands,
   showing each command's name and its current shortcut, and runs the chosen one
   on Enter (also a way to discover the keybindings). Remappable via the

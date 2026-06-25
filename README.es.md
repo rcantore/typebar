@@ -48,9 +48,11 @@ texto renderizado mientras escribís.
   el portapapeles del sistema, buscar y reemplazar, toggles de negrita/itálica/
   código, y movimientos completos (inicio/fin de línea y de documento, Page
   Up/Down, Home/End).
-- **Multi-archivo con switcher fuzzy**: `Ctrl-G` abre un fuzzy finder sobre los
-  archivos del proyecto y los buffers abiertos — tipeás para filtrar, Enter para
-  abrir o cambiar. `Ctrl-N` arranca un archivo nuevo vacío.
+- **Multi-archivo con switcher fuzzy y tabs**: `Ctrl-G` abre un fuzzy finder sobre
+  los archivos del proyecto y los buffers abiertos (tipeás para filtrar, Enter
+  para abrir/cambiar); `Ctrl-N` arranca un archivo nuevo; los buffers abiertos se
+  ven como tabs que cambiás con `Ctrl-PageDown`/`Ctrl-PageUp` (o con click, si
+  ponés `[ui] mouse = true`).
 - **Paleta de comandos**: `Ctrl-A` fuzzy-filtra cualquier comando por nombre
   (mostrando su atajo actual) y lo ejecuta — también sirve para aprender los
   keybindings.
@@ -125,7 +127,7 @@ keys = "ctrl-s"
 action = "save"
 
 [ui]
-# "frappe" (default) | "mocha". Nombres desconocidos caen a frappe.
+# "frappe" (default) | "mocha" | "latte" (claro). Nombres desconocidos caen a frappe.
 theme = "frappe"
 
 # Idioma de la UI: "en" | "es". Default inglés, o tu $LANG si es español.
@@ -134,6 +136,10 @@ locale = "es"
 # Nivel WYSIWYG: 1 (markers siempre visibles) o 2 (ocultos fuera de la línea
 # activa). Default 2; valores inválidos caen a 2.
 wysiwyg_level = 2
+
+# Captura del mouse: habilita el click en las tabs de buffers. Off por default
+# (deja intacta la selección nativa del terminal).
+mouse = false
 ```
 
 **Precedencia de presets:** flag `--keys` → `preset` del config → default
