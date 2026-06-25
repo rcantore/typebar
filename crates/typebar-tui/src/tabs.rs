@@ -33,7 +33,10 @@ pub fn build(titles: &[String], active: usize, theme: &Theme) -> (Line<'static>,
     let mut col: u16 = 0;
     for (i, title) in titles.iter().enumerate() {
         let label = format!(" {title} ");
-        let width = label.chars().count() as u16;
+        // El rango de hit son CELDAS visuales (igual que `me.column` del click),
+        // no chars: con CJK/emoji de doble ancho contar chars desalinea. Usamos
+        // el ancho de display real.
+        let width = crate::text::display_width(&label) as u16;
         let style = if i == active {
             active_style
         } else {
@@ -72,6 +75,18 @@ mod tests {
         assert_eq!(hits[0].cols, 0..6);
         assert_eq!(hits[1].index, 1);
         assert_eq!(hits[1].cols, 7..14);
+    }
+
+    #[test]
+    fn el_rango_usa_ancho_de_celda_con_doble_ancho() {
+        let theme = Theme::frappe();
+        // "あ" es de doble ancho (2 celdas), asi que " あ.md " son 1+2+3+1 = 7
+        // celdas, no 6 chars. El rango debe abarcar el ancho de celda real.
+        let (_line, hits) = build(&titles(&["あ.md"]), 0, &theme);
+        assert_eq!(hits.len(), 1);
+        let esperado = crate::text::display_width(" あ.md ") as u16;
+        assert_eq!(esperado, 7);
+        assert_eq!(hits[0].cols, 0..esperado);
     }
 
     #[test]

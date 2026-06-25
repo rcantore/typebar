@@ -383,68 +383,6 @@ mod tests {
         }
     }
 
-    /// EXPLORACION TEMPORAL: verifica si el DFS de `MarkdownCursor::walk()`
-    /// visita los `block_continuation` del block tree (que estan anidados
-    /// dentro del paragraph hijo del block_quote).
-    #[test]
-    fn explora_dfs_visita_block_continuation() {
-        let src = "> a\n> b\n> c\n";
-        let mut p = tree_sitter_md::MarkdownParser::default();
-        let tree = p.parse(src.as_bytes(), None).unwrap();
-        let mut cursor = tree.walk();
-        let mut visited: Vec<(String, std::ops::Range<usize>)> = Vec::new();
-        loop {
-            let node = cursor.node();
-            visited.push((node.kind().to_string(), node.byte_range()));
-            if cursor.goto_first_child() {
-                continue;
-            }
-            loop {
-                if cursor.goto_next_sibling() {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    for (k, r) in &visited {
-                        println!("VISIT {} [{}..{}]", k, r.start, r.end);
-                    }
-                    return;
-                }
-            }
-        }
-    }
-
-    /// EXPLORACION TEMPORAL: ver el AST de un blockquote de 3+ lineas, que
-    /// es donde el render se rompe (el `>` de la 3ra linea no se transforma).
-    #[test]
-    fn explora_blockquote_3_lineas() {
-        fn walk(node: tree_sitter::Node, src: &str, d: usize) {
-            let r = node.byte_range();
-            let snip = &src[r.start..r.end.min(src.len())];
-            let snip = if snip.len() > 50 { &snip[..50] } else { snip };
-            println!(
-                "{}{} [{}..{}] {:?}",
-                "  ".repeat(d),
-                node.kind(),
-                r.start,
-                r.end,
-                snip
-            );
-            let mut c = node.walk();
-            for child in node.children(&mut c) {
-                walk(child, src, d + 1);
-            }
-        }
-        let src = "> a\n> b\n> c\n";
-        let mut p = tree_sitter_md::MarkdownParser::default();
-        let tree = p.parse(src.as_bytes(), None).unwrap();
-        println!("\n=== BLOCK ===");
-        walk(tree.block_tree().root_node(), src, 0);
-        println!("\n=== INLINE TREES ===");
-        for it in tree.inline_trees() {
-            walk(it.root_node(), src, 0);
-        }
-    }
-
     /// Vuelca el documento con una linea de codigos de estilo debajo de cada
     /// linea de texto. Correr con: `cargo test -- --nocapture dump`
     #[test]

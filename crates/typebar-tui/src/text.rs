@@ -43,6 +43,14 @@ pub fn grapheme_width(cluster: &str) -> usize {
     UnicodeWidthStr::width(cluster) + halfwidth_marks
 }
 
+/// Ancho en celdas de terminal de una cadena entera: suma el ancho de cada
+/// grafema (con `grapheme_width`, que replica a ratatui). Lo que se necesita
+/// para mapear texto a columnas visuales (ej hit-testing del mouse), donde
+/// contar chars desalinea con CJK/emoji de doble ancho.
+pub fn display_width(s: &str) -> usize {
+    s.graphemes(true).map(grapheme_width).sum()
+}
+
 /// Cuenta palabras segun los limites de palabra de Unicode (UAX #29): cuenta
 /// palabras reales, no espacios ni puntuacion, y anda en español, CJK, etc. sin
 /// reglas ad-hoc. Apoyado en `unicode-segmentation`, que ya es dependencia.

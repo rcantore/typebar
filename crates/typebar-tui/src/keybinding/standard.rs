@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, is_view_prefix,
-    resolve_format_second, resolve_view_second, view_hints,
+    resolve_format_second, resolve_view_second, view_hints, workspace_ctrl_command,
 };
 use crate::document::Mode;
 
@@ -38,6 +38,11 @@ impl StandardKeymap {
         }
         // Atajos con CONTROL primero (no deben tipearse como texto).
         if has_ctrl(key) {
+            // Comandos de workspace uniformes en los tres presets (^G/^A/^N,
+            // Ctrl-PageDown/Up): se resuelven en el helper compartido.
+            if let Some(action) = workspace_ctrl_command(key) {
+                return Resolve::Action(action);
+            }
             return match key.code {
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 KeyCode::Char('q') => Resolve::Action(Action::Quit),
@@ -59,16 +64,6 @@ impl StandardKeymap {
                 KeyCode::Char('p') => Resolve::Pending,
                 // Ctrl-O: prefijo del submenu "view" (zen, etc.).
                 KeyCode::Char('o') => Resolve::Pending,
-                // Ctrl-G: abrir el switcher de archivos ("Go to file").
-                KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
-                // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo:
-                // remapeable por el usuario.
-                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
-                // Ctrl-N: nuevo archivo (buffer vacio).
-                KeyCode::Char('n') => Resolve::Action(Action::NewBuffer),
-                // Ctrl-PageDown/Up: cambiar de buffer (estilo tabs de browser).
-                KeyCode::PageDown => Resolve::Action(Action::NextBuffer),
-                KeyCode::PageUp => Resolve::Action(Action::PrevBuffer),
                 _ => Resolve::None,
             };
         }
