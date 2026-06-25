@@ -61,6 +61,9 @@ impl StandardKeymap {
                 KeyCode::Char('o') => Resolve::Pending,
                 // Ctrl-G: abrir el switcher de archivos ("Go to file").
                 KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
+                // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo:
+                // remapeable por el usuario.
+                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
                 _ => Resolve::None,
             };
         }
@@ -111,6 +114,7 @@ impl Keymap for StandardKeymap {
         vec![
             Hint::new(Action::Save, "^S", t(Key::HintSave)),
             Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
+            Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),
             Hint::new(Action::Search, "^F", t(Key::HintSearch)),
             Hint::new(Action::Replace, "^R", t(Key::HintReplace)),
             Hint::new(Action::ToggleBold, "^B", t(Key::HintBold)),

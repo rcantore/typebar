@@ -46,6 +46,8 @@ impl VimKeymap {
                 KeyCode::Char('p') => Resolve::Pending,
                 // Ctrl-G: abrir el switcher de archivos ("Go to file").
                 KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
+                // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo.
+                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
                 _ => Resolve::None,
             };
         }
@@ -111,6 +113,8 @@ impl VimKeymap {
                 KeyCode::Char('p') => Resolve::Pending,
                 // Ctrl-G: abrir el switcher de archivos ("Go to file").
                 KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
+                // Ctrl-A: abrir la paleta de comandos ("Actions"). Tentativo.
+                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
                 _ => Resolve::None,
             };
         }
@@ -166,6 +170,7 @@ impl Keymap for VimKeymap {
                 Hint::new(Action::EnterInsert, "i", t(Key::HintInsert)),
                 Hint::new(Action::EnterVisual, "v", t(Key::HintVisual)),
                 Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
+                Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),
                 Hint::new(Action::Search, "/", t(Key::HintSearch)),
                 Hint::new(Action::Undo, "u", t(Key::HintUndo)),
                 Hint::new(Action::Paste, "p", t(Key::HintPaste)),

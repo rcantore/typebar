@@ -51,6 +51,9 @@ texto renderizado mientras escribís.
 - **Multi-archivo con switcher fuzzy**: `Ctrl-G` abre un fuzzy finder sobre los
   archivos del proyecto y los buffers abiertos — tipeás para filtrar, Enter para
   abrir o cambiar.
+- **Paleta de comandos**: `Ctrl-A` fuzzy-filtra cualquier comando por nombre
+  (mostrando su atajo actual) y lo ejecuta — también sirve para aprender los
+  keybindings.
 - **Contador de palabras en vivo** en la status bar (límites de palabra Unicode),
   con conteo de las palabras seleccionadas mientras hay selección.
 - **Modo zen / focus**: oculta todo el chrome (borde, toolbar, status bar) para

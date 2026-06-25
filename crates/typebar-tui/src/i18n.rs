@@ -64,6 +64,9 @@ pub enum Key {
     HintSearch,
     HintReplace,
     HintUndo,
+    /// Rehacer la ultima edicion deshecha (sobre todo para la paleta de
+    /// comandos: los presets no exponen un hint de redo en la toolbar).
+    HintRedo,
     HintYank,
     HintPaste,
     HintBold,
@@ -79,6 +82,10 @@ pub enum Key {
     HintLineEnd,
     HintDocStart,
     HintDocEnd,
+    /// Avanzar una pagina hacia arriba (para la paleta de comandos).
+    HintPageUp,
+    /// Avanzar una pagina hacia abajo (para la paleta de comandos).
+    HintPageDown,
     /// Prefijo de chord de formato ("Formato…" / "Format…").
     HintFormatPrefix,
     /// Prefijo del submenu "view" ("Vista…" / "View…").
@@ -89,6 +96,13 @@ pub enum Key {
     HintSwitcher,
     /// Prompt del box del switcher de archivos ("ir a archivo:" / "go to file:").
     SwitcherPrompt,
+    /// Estado vacio del switcher cuando nada matchea ("(sin resultados)" /
+    /// "(no matches)").
+    SwitcherEmpty,
+    /// Paleta de comandos ("Comandos…" / "Commands…").
+    HintPalette,
+    /// Prompt del box de la paleta de comandos ("comando:" / "command:").
+    PalettePrompt,
 
     // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
     ModeNormal,
@@ -141,6 +155,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintReplace) => "Replace",
         (Locale::Es, Key::HintUndo) => "Deshacer",
         (Locale::En, Key::HintUndo) => "Undo",
+        (Locale::Es, Key::HintRedo) => "Rehacer",
+        (Locale::En, Key::HintRedo) => "Redo",
         (Locale::Es, Key::HintYank) => "Copiar",
         (Locale::En, Key::HintYank) => "Copy",
         (Locale::Es, Key::HintPaste) => "Pegar",
@@ -171,6 +187,10 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintDocStart) => "Doc start",
         (Locale::Es, Key::HintDocEnd) => "Fin doc",
         (Locale::En, Key::HintDocEnd) => "Doc end",
+        (Locale::Es, Key::HintPageUp) => "Pagina arriba",
+        (Locale::En, Key::HintPageUp) => "Page up",
+        (Locale::Es, Key::HintPageDown) => "Pagina abajo",
+        (Locale::En, Key::HintPageDown) => "Page down",
         (Locale::Es, Key::HintFormatPrefix) => "Formato…",
         (Locale::En, Key::HintFormatPrefix) => "Format…",
         (Locale::Es, Key::HintViewPrefix) => "Vista…",
@@ -181,6 +201,12 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintSwitcher) => "Go to…",
         (Locale::Es, Key::SwitcherPrompt) => "ir a archivo:",
         (Locale::En, Key::SwitcherPrompt) => "go to file:",
+        (Locale::Es, Key::SwitcherEmpty) => "(sin resultados)",
+        (Locale::En, Key::SwitcherEmpty) => "(no matches)",
+        (Locale::Es, Key::HintPalette) => "Comandos…",
+        (Locale::En, Key::HintPalette) => "Commands…",
+        (Locale::Es, Key::PalettePrompt) => "comando:",
+        (Locale::En, Key::PalettePrompt) => "command:",
 
         // --- Status bar (nombres de modo) ---------------------------------
         (Locale::Es, Key::ModeNormal) => "NORMAL",

@@ -49,6 +49,8 @@ and your text rendered as you type.
   (line/doc start & end, Page Up/Down, Home/End).
 - **Multiple files with a fuzzy switcher**: `Ctrl-G` opens a fuzzy finder over
   the project files and open buffers — type to filter, Enter to open or switch.
+- **Command palette**: `Ctrl-A` fuzzy-finds any command by name (with its current
+  shortcut shown) and runs it — also a handy way to learn the keybindings.
 - **Live word count** in the status bar (Unicode word boundaries), with a
   selected-words count while text is selected.
 - **Zen / focus mode**: hide all chrome (border, toolbar, status bar) to write

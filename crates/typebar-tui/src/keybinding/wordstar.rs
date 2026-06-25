@@ -38,6 +38,9 @@ impl WordstarKeymap {
                 // Ctrl-G: abrir el switcher de archivos ("Go to file"), uniforme
                 // con los otros presets.
                 KeyCode::Char('g') => Resolve::Action(Action::OpenSwitcher),
+                // Ctrl-A: abrir la paleta de comandos ("Actions"), uniforme con
+                // los otros presets. Tentativo: remapeable por el usuario.
+                KeyCode::Char('a') => Resolve::Action(Action::OpenPalette),
                 // Prefijos de chord: esperan una segunda tecla. `Ctrl-P` es el
                 // prefijo de formato (negrita/italica/codigo) y `Ctrl-O` el
                 // submenu "view" (zen, etc., homenaje al Onscreen format del
@@ -139,6 +142,7 @@ impl Keymap for WordstarKeymap {
         vec![
             Hint::new(Action::Save, "^K S", t(Key::HintSave)),
             Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
+            Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),
             Hint::new(Action::Search, "^Q F", t(Key::HintSearch)),
             Hint::new(Action::Replace, "^Q A", t(Key::HintReplace)),
             Hint::new(Action::Undo, "^Z", t(Key::HintUndo)),

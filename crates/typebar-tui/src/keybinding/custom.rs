@@ -333,6 +333,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "replace" => Action::Replace,
         "toggle-zen" => Action::ToggleZen,
         "open-switcher" => Action::OpenSwitcher,
+        "open-palette" => Action::OpenPalette,
         other => return Err(format!("accion desconocida: {other:?}")),
     };
     Ok(action)
