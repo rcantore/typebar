@@ -270,6 +270,10 @@ fn run(
     // Al aceptar, despacha el Action elegido por el mismo camino que el keymap.
     // Tapa el editor mientras esta abierta, igual que el switcher.
     let mut palette: Option<Palette> = None;
+    // Mensaje transitorio en la status bar (ej "save failed: ..."): se muestra en
+    // el proximo frame y se limpia al apretar la siguiente tecla. Evita que un
+    // error de guardado tumbe el editor (writing-first: nunca perder el buffer).
+    let mut flash: Option<String> = None;
 
     loop {
         // Theme activo segun el toggle `^O L`: el claro (Latte) cuando `light_on`,
@@ -307,6 +311,7 @@ fn run(
                 switcher.as_ref(),
                 palette.as_ref(),
                 tab_line.clone(),
+                flash.as_deref(),
             );
             // Paperwhite: si el theme activo es claro, pinta fondo/texto sobre el
             // frame ya dibujado (editor, chrome y pickers de una). No-op en oscuros.
@@ -332,6 +337,8 @@ fn run(
         if key.kind != KeyEventKind::Press {
             continue;
         }
+        // Cualquier tecla limpia un mensaje flash previo (ej un error de guardado).
+        flash = None;
 
         // Con la paleta abierta, las teclas las consume la paleta (tipear filtra,
         // flechas/Ctrl-N/P navegan, Enter ejecuta el comando, Esc cancela). Al
@@ -343,7 +350,8 @@ fn run(
                 PaletteOutcome::Cancel => palette = None,
                 PaletteOutcome::Accept(action) => {
                     palette = None;
-                    if dispatch_action(
+                    let before = workspace.active_index();
+                    match dispatch_action(
                         action,
                         &mut workspace,
                         keymap,
@@ -353,8 +361,13 @@ fn run(
                         &mut light_on,
                         &mut switcher,
                         &mut palette,
-                    )? {
-                        return Ok(());
+                    ) {
+                        Ok(true) => return Ok(()),
+                        Ok(false) => {}
+                        Err(e) => flash = Some(format!("save failed: {e}")),
+                    }
+                    if workspace.active_index() != before {
+                        scroll = 0; // el buffer recien enfocado arranca arriba
                     }
                 }
             }
@@ -409,7 +422,10 @@ fn run(
                 // Despachamos por el mismo helper que usa la paleta, asi un action
                 // resuelto por el keymap y uno elegido en la paleta recorren un
                 // unico camino (sin duplicar la logica de overlays/zen/switcher).
-                if dispatch_action(
+                // Un error (de guardado) NO tumba el editor: se muestra en la status
+                // y se sigue editando. Si la accion cambio de buffer, reseteo scroll.
+                let before = workspace.active_index();
+                match dispatch_action(
                     action,
                     &mut workspace,
                     keymap,
@@ -419,8 +435,13 @@ fn run(
                     &mut light_on,
                     &mut switcher,
                     &mut palette,
-                )? {
-                    return Ok(());
+                ) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(e) => flash = Some(format!("save failed: {e}")),
+                }
+                if workspace.active_index() != before {
+                    scroll = 0;
                 }
             }
             // La secuencia es prefijo de un chord: esperar mas teclas.
@@ -531,6 +552,7 @@ fn draw(
     switcher: Option<&Switcher>,
     palette: Option<&Palette>,
     tabs: Option<Line<'static>>,
+    flash: Option<&str>,
 ) {
     // La paleta y el switcher (mutuamente excluyentes) tapan todo: cada uno se
     // dibuja via su modulo y corta el draw. El render vive en el modulo respectivo.
@@ -653,12 +675,20 @@ fn draw(
         frame.render_widget(hints_bar(keymap, doc.mode, pending, theme), hints_area);
     }
 
-    // Status bar (o, con overlay abierto, el minibuffer en su lugar). En zen sin
-    // overlay no hay area (status_area = None) y no se dibuja nada.
+    // Status bar (o, con overlay abierto, el minibuffer; o un mensaje flash
+    // transitorio, ej un error de guardado, que tiene prioridad sobre la status
+    // bar normal). En zen sin overlay/flash no hay area y no se dibuja nada.
     if let Some(status_area) = status_area {
-        match overlay {
-            Some(ov) => frame.render_widget(ov.minibuffer(), status_area),
-            None => frame.render_widget(status_bar(doc, keymap, pending), status_area),
+        if let Some(ov) = overlay {
+            frame.render_widget(ov.minibuffer(), status_area);
+        } else if let Some(msg) = flash {
+            let style = Style::default().add_modifier(Modifier::REVERSED);
+            frame.render_widget(
+                Line::from(Span::styled(format!(" {msg} "), style)),
+                status_area,
+            );
+        } else {
+            frame.render_widget(status_bar(doc, keymap, pending), status_area);
         }
     }
 
@@ -1090,6 +1120,7 @@ mod tests {
                     switcher,
                     palette,
                     None,
+                    None,
                 )
             })
             .unwrap();
@@ -1196,6 +1227,7 @@ mod tests {
                     None,
                     2,
                     false,
+                    None,
                     None,
                     None,
                     None,
