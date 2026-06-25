@@ -26,7 +26,10 @@ How to maintain this file:
   command prefix). In the modeless presets `Esc` also exits. Remappable via the
   `toggle-zen` action.
 - Catppuccin Latte light theme, selectable with `theme = "latte"` in the config
-  (joins the dark `frappe` and `mocha` palettes).
+  (joins the dark `frappe` and `mocha` palettes), and toggleable at runtime from
+  the *view* submenu — `Ctrl-O L` (standard / wordstar) or `z l` (vim) flips
+  between the configured dark theme and Latte. Remappable via the `toggle-light`
+  action.
 - HTML export: `typebar <file> --export-html` converts the Markdown to a
   standalone HTML document (CommonMark via pulldown-cmark, with tables,
   strikethrough, footnotes and task lists) and exits without opening the editor.
@@ -35,6 +38,13 @@ How to maintain this file:
   `.git`/`target`/`node_modules`/hidden) and the open buffers; type to filter,
   arrows or `Ctrl-N`/`Ctrl-P` to move, Enter to open or switch, Esc to cancel.
   Bound in all three presets; remappable via the `open-switcher` action.
+- New file: `Ctrl-N` opens a fresh empty buffer (`untitled.md`), focused, over the
+  multi-buffer workspace. Remappable via the `new-buffer` action.
+- Buffer tab bar across the top (shown with 2+ open buffers), with the active
+  buffer highlighted. Switch buffers with `Ctrl-PageDown`/`Ctrl-PageUp` (next /
+  previous, wrapping); remappable via `next-buffer`/`prev-buffer`. Optional mouse
+  support (`[ui] mouse = true` in the config, off by default) makes the tabs
+  clickable.
 - Command palette: `Ctrl-A` opens a fuzzy finder over the editor's commands,
   showing each command's name and its current shortcut, and runs the chosen one
   on Enter (also a way to discover the keybindings). Remappable via the

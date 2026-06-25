@@ -22,6 +22,7 @@ mod palette;
 mod render;
 mod search;
 mod switcher;
+mod tabs;
 mod text;
 mod theme;
 
@@ -34,7 +35,9 @@ use palette::{Palette, PaletteOutcome};
 use switcher::{Switcher, SwitcherOutcome};
 use theme::Theme;
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -185,22 +188,48 @@ fn main() -> std::io::Result<()> {
     // Preset base + overrides del usuario encima (si los hay).
     let keymap = apply_overrides(keymap_from_name(&preset), &config.keybindings.bind);
 
-    // Theme desde el config. `by_name` cae a `frappe` ante un nombre
-    // desconocido, asi que no hace falta validarlo aca (a diferencia del preset).
-    let theme = Theme::by_name(&config.ui.theme);
+    // Themes para el toggle `^O L` (claro <-> oscuro en runtime). El claro es
+    // siempre Latte; el oscuro es el configurado, salvo que el config YA sea Latte
+    // (ahi el oscuro cae a frappe, para que el toggle tenga a donde ir). El editor
+    // arranca mostrando el theme que el usuario eligio: si configuro Latte, arranca
+    // en claro. `by_name` cae a `frappe` ante un nombre desconocido.
+    let configured_is_light = config.ui.theme.eq_ignore_ascii_case("latte");
+    let light_theme = Theme::latte();
+    let dark_theme = if configured_is_light {
+        Theme::frappe()
+    } else {
+        Theme::by_name(&config.ui.theme)
+    };
     let wysiwyg_level = config.ui.resolved_wysiwyg_level();
 
     let mut document = Document::open(&args.path)?;
     document.mode = keymap.initial_mode();
 
     let mut terminal = ratatui::init();
+    // Captura del mouse (opt-in por config): habilita el click en las tabs. Por
+    // default off, para no robarle al terminal su seleccion nativa. Si falla, se
+    // ignora (el editor anda igual, solo sin mouse).
+    if config.ui.mouse {
+        let _ = ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::EnableMouseCapture
+        );
+    }
     let result = run(
         &mut terminal,
         document,
         keymap.as_ref(),
-        &theme,
+        dark_theme,
+        light_theme,
+        configured_is_light,
         wysiwyg_level,
     );
+    if config.ui.mouse {
+        let _ = ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::DisableMouseCapture
+        );
+    }
     ratatui::restore();
     result
 }
@@ -209,7 +238,9 @@ fn run(
     terminal: &mut ratatui::DefaultTerminal,
     doc: Document,
     keymap: &dyn Keymap,
-    theme: &Theme,
+    dark: Theme,
+    light: Theme,
+    mut light_on: bool,
     wysiwyg_level: u8,
 ) -> std::io::Result<()> {
     // Los buffers abiertos. El editor siempre opera sobre el activo
@@ -241,6 +272,26 @@ fn run(
     let mut palette: Option<Palette> = None;
 
     loop {
+        // Theme activo segun el toggle `^O L`: el claro (Latte) cuando `light_on`,
+        // si no el configurado (oscuro). Se recalcula cada frame.
+        let theme = if light_on { &light } else { &dark };
+        // Barra de tabs de los buffers abiertos (solo con >=2 y fuera de zen).
+        // `tab_line` es lo que dibuja `draw`; `tab_hits` mapea columna->buffer para
+        // el click del mouse (queda en `run`).
+        let (tab_line, tab_hits) = if !zen && workspace.count() >= 2 {
+            let titles: Vec<String> = workspace
+                .paths()
+                .map(|p| {
+                    p.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| p.to_string_lossy().into_owned())
+                })
+                .collect();
+            let (line, hits) = tabs::build(&titles, workspace.active_index(), theme);
+            (Some(line), hits)
+        } else {
+            (None, Vec::new())
+        };
         terminal.draw(|frame| {
             draw(
                 frame,
@@ -255,10 +306,27 @@ fn run(
                 zen,
                 switcher.as_ref(),
                 palette.as_ref(),
-            )
+                tab_line.clone(),
+            );
+            // Paperwhite: si el theme activo es claro, pinta fondo/texto sobre el
+            // frame ya dibujado (editor, chrome y pickers de una). No-op en oscuros.
+            apply_theme_fill(frame, theme);
         })?;
 
-        let Event::Key(key) = event::read()? else {
+        let ev = event::read()?;
+        // Click izquierdo en la fila de tabs (y=0): cambia de buffer. Si la captura
+        // del mouse esta off (el default), estos eventos no llegan nunca.
+        if let Event::Mouse(me) = ev {
+            if me.kind == MouseEventKind::Down(MouseButton::Left)
+                && me.row == 0
+                && let Some(hit) = tab_hits.iter().find(|t| t.cols.contains(&me.column))
+            {
+                workspace.switch_to(hit.index);
+                scroll = 0;
+            }
+            continue;
+        }
+        let Event::Key(key) = ev else {
             continue;
         };
         if key.kind != KeyEventKind::Press {
@@ -282,6 +350,7 @@ fn run(
                         viewport_height,
                         &mut overlay,
                         &mut zen,
+                        &mut light_on,
                         &mut switcher,
                         &mut palette,
                     )? {
@@ -347,6 +416,7 @@ fn run(
                     viewport_height,
                     &mut overlay,
                     &mut zen,
+                    &mut light_on,
                     &mut switcher,
                     &mut palette,
                 )? {
@@ -379,6 +449,7 @@ fn dispatch_action(
     viewport_height: usize,
     overlay: &mut Option<Overlay>,
     zen: &mut bool,
+    light_on: &mut bool,
     switcher: &mut Option<Switcher>,
     palette: &mut Option<Palette>,
 ) -> std::io::Result<bool> {
@@ -387,6 +458,14 @@ fn dispatch_action(
         Action::Search => *overlay = Some(Overlay::new_search(workspace.active())),
         Action::Replace => *overlay = Some(Overlay::new_replace()),
         Action::ToggleZen => *zen = !*zen,
+        // Togglear el theme claro (Latte) <-> oscuro en runtime (submenu view).
+        Action::ToggleLightTheme => *light_on = !*light_on,
+        // Nuevo archivo: crea un buffer vacio y lo enfoca. El draw reclampa el
+        // scroll solo (el cursor del buffer nuevo arranca arriba).
+        Action::NewBuffer => workspace.new_buffer(keymap.initial_mode()),
+        // Cambiar de buffer (cycle). El draw reclampa el scroll al nuevo buffer.
+        Action::NextBuffer => workspace.next_buffer(),
+        Action::PrevBuffer => workspace.prev_buffer(),
         Action::OpenSwitcher => {
             // Candidatos: archivos del proyecto (cwd recursivo) mas los buffers
             // abiertos que no esten ya en la lista (p.ej. fuera del cwd), para
@@ -407,6 +486,34 @@ fn dispatch_action(
     Ok(false)
 }
 
+/// Post-pass de "paperwhite": en un theme con `background` y `text` definidos
+/// (los claros, ej Latte), recorre el frame YA dibujado y pinta el fondo en cada
+/// celda sin fondo propio y el color de texto en cada celda sin fg propio. Asi un
+/// solo lugar deja el editor, el chrome y los pickers sobre un fondo claro, sin
+/// tener que threadear el color por cada widget. En los themes oscuros
+/// (`background`/`text` en `None`) es no-op: no toca el render y siguen
+/// transparentes (dejan pasar el fondo del terminal).
+fn apply_theme_fill(frame: &mut ratatui::Frame, theme: &Theme) {
+    let (Some(bg), Some(fg)) = (theme.background, theme.text) else {
+        return;
+    };
+    let buf = frame.buffer_mut();
+    let area = buf.area;
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let cell = &mut buf[(x, y)];
+            // `Reset` es "sin color propio": ahi va el fondo/texto del theme; las
+            // celdas con color explicito (headings, code, botones, resaltes) quedan.
+            if cell.bg == ratatui::style::Color::Reset {
+                cell.set_bg(bg);
+            }
+            if cell.fg == ratatui::style::Color::Reset {
+                cell.set_fg(fg);
+            }
+        }
+    }
+}
+
 /// Dibuja el editor. Devuelve via `scroll` (mut) el offset usado, ajustado para
 /// mantener el cursor visible.
 #[allow(clippy::too_many_arguments)] // todos los args son contexto de un draw frame
@@ -423,6 +530,7 @@ fn draw(
     zen: bool,
     switcher: Option<&Switcher>,
     palette: Option<&Palette>,
+    tabs: Option<Line<'static>>,
 ) {
     // La paleta y el switcher (mutuamente excluyentes) tapan todo: cada uno se
     // dibuja via su modulo y corta el draw. El render vive en el modulo respectivo.
@@ -440,14 +548,25 @@ fn draw(
     // la ultima linea para el minibuffer (si no, no se veria que se esta
     // buscando). Fuera de zen: editor (resto) + toolbar + gap + status bar; el
     // gap de 1 linea separa visualmente el chrome de comandos del de estado.
-    let (editor_area, hints_area, status_area) = if zen {
+    let (tabs_area, editor_area, hints_area, status_area) = if zen {
         if overlay.is_some() {
             let [editor, mini] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
-            (editor, None, Some(mini))
+            (None, editor, None, Some(mini))
         } else {
-            (frame.area(), None, None)
+            (None, frame.area(), None, None)
         }
+    } else if tabs.is_some() {
+        // Con tabs (>=2 buffers) reservamos una fila ARRIBA de todo para la barra.
+        let [tabs_a, editor, hints, _gap, status] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(frame.area());
+        (Some(tabs_a), editor, Some(hints), Some(status))
     } else {
         let [editor, hints, _gap, status] = Layout::vertical([
             Constraint::Min(1),
@@ -456,15 +575,21 @@ fn draw(
             Constraint::Length(1),
         ])
         .areas(frame.area());
-        (editor, Some(hints), Some(status))
+        (None, editor, Some(hints), Some(status))
     };
+
+    // Barra de tabs (si la hay): la fila reservada arriba.
+    if let (Some(area), Some(line)) = (tabs_area, tabs) {
+        frame.render_widget(Paragraph::new(line), area);
+    }
 
     // En zen no hay borde (el editor ocupa todo); fuera de zen, el Block bordered
     // come 1 linea arriba y 1 abajo. Este offset alinea el alto util y el cursor.
     let border: u16 = if zen { 0 } else { 1 };
-    // Margen izquierdo dentro del borde, para que el texto no quede pegado al
-    // marco. En zen (sin marco) no aplica. Suma al offset horizontal del cursor.
-    let pad_left: u16 = if zen { 0 } else { 1 };
+    // Margen izquierdo, para que el texto no quede pegado al borde. En zen (sin
+    // marco) le damos un poco mas de aire (2) ya que no hay borde que separe;
+    // fuera de zen alcanza con 1 (el borde ya separa). Suma al offset del cursor.
+    let pad_left: u16 = if zen { 2 } else { 1 };
     // Alto util dentro del borde del Block.
     let viewport_height = editor_area.height.saturating_sub(2 * border) as usize;
     // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
@@ -494,10 +619,11 @@ fn draw(
         matches.iter().position(|m| m.start == doc.cursor_byte())
     };
 
-    // En zen el Block va sin borde ni titulo (solo texto); fuera de zen, bordered
-    // con el path en el titulo.
+    // En zen el Block va sin borde ni titulo (solo texto), pero con el mismo
+    // margen izquierdo; fuera de zen, bordered con el path en el titulo. El
+    // padding tiene que coincidir con `pad_left` (que ya usa el cursor).
     let block = if zen {
-        Block::default()
+        Block::default().padding(Padding::new(pad_left, 0, 0, 0))
     } else {
         Block::bordered()
             .title(format!(" typebar · {} ", doc.path.display()))
@@ -901,6 +1027,10 @@ fn apply_action(
         Action::Search
         | Action::Replace
         | Action::ToggleZen
+        | Action::ToggleLightTheme
+        | Action::NewBuffer
+        | Action::NextBuffer
+        | Action::PrevBuffer
         | Action::OpenSwitcher
         | Action::OpenPalette => {}
     }
@@ -959,6 +1089,7 @@ mod tests {
                     zen,
                     switcher,
                     palette,
+                    None,
                 )
             })
             .unwrap();
@@ -1036,6 +1167,81 @@ mod tests {
             !screen.contains("hola mundo"),
             "el editor de fondo no deberia verse con la paleta abierta"
         );
+    }
+
+    /// Renderiza el editor con `theme`, corre `apply_theme_fill`, y devuelve por
+    /// cada celda del buffer: si hubo alguna con el fondo del theme, alguna con su
+    /// texto, y si quedo ALGUNA celda con fondo `Reset` (sin pintar).
+    fn fill_report(theme: &Theme) -> (bool, bool, bool) {
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::style::Color;
+
+        let doc = doc_with("hola");
+        let km = StandardKeymap;
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        let mut scroll = 0usize;
+        let mut vp = 0usize;
+        terminal
+            .draw(|f| {
+                draw(
+                    f,
+                    &doc,
+                    &km,
+                    &[],
+                    &mut scroll,
+                    &mut vp,
+                    theme,
+                    None,
+                    2,
+                    false,
+                    None,
+                    None,
+                    None,
+                );
+                apply_theme_fill(f, theme);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        let (mut has_bg, mut has_fg, mut has_reset_bg) = (false, false, false);
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                if Some(cell.bg) == theme.background {
+                    has_bg = true;
+                }
+                if Some(cell.fg) == theme.text {
+                    has_fg = true;
+                }
+                if cell.bg == Color::Reset {
+                    has_reset_bg = true;
+                }
+            }
+        }
+        (has_bg, has_fg, has_reset_bg)
+    }
+
+    #[test]
+    fn paperwhite_pinta_fondo_y_texto_en_theme_claro() {
+        // Latte (claro) tiene background/text: el post-pass pinta cada celda, asi
+        // queda fondo claro y texto oscuro, y NINGUNA celda en Reset.
+        let (has_bg, has_fg, has_reset_bg) = fill_report(&Theme::latte());
+        assert!(has_bg, "el theme claro deberia pintar el fondo");
+        assert!(has_fg, "el theme claro deberia pintar el texto");
+        assert!(
+            !has_reset_bg,
+            "no deberia quedar fondo sin pintar en el claro"
+        );
+    }
+
+    #[test]
+    fn paperwhite_no_op_en_theme_oscuro() {
+        // frappe no tiene background/text (None): el fill es no-op, asi que quedan
+        // celdas con fondo Reset (deja pasar el del terminal).
+        let (.., has_reset_bg) = fill_report(&Theme::frappe());
+        assert!(has_reset_bg, "el theme oscuro no deberia pintar el fondo");
     }
 
     /// Tipea una cadena en el overlay, tecla por tecla.

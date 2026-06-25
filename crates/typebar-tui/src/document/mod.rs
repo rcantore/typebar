@@ -91,7 +91,21 @@ impl Document {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Rope::new(),
             Err(e) => return Err(e),
         };
-        Ok(Self {
+        Ok(Self::with_buffer(path, buffer))
+    }
+
+    /// Crea un documento NUEVO y vacio con el `path` dado, SIN tocar el disco (a
+    /// diferencia de `open`, que leeria el archivo si existe). Para el comando
+    /// "new file": un buffer en blanco que recien se escribe al guardar.
+    pub fn empty(path: impl AsRef<Path>) -> Self {
+        Self::with_buffer(path.as_ref().to_path_buf(), Rope::new())
+    }
+
+    /// Constructor comun de `open`/`empty`: arma el `Document` con un `buffer`
+    /// dado y el resto del estado inicial (cursor arriba, sin dirty/seleccion/
+    /// undo, clipboard del SO si se puede abrir).
+    fn with_buffer(path: std::path::PathBuf, buffer: Rope) -> Self {
+        Self {
             buffer,
             line: 0,
             col: 0,
@@ -108,7 +122,7 @@ impl Document {
             // sin X11, etc.) queda en `None` y se usa el buffer interno. Nunca
             // paniquea: `.ok()` se traga el error a proposito.
             sys_clipboard: arboard::Clipboard::new().ok(),
-        })
+        }
     }
 
     /// Texto completo del documento, para pasarselo al render (reparseo full

@@ -110,6 +110,17 @@ pub enum Action {
     /// opera a nivel del loop (`run`): al aceptar, despacha el `Action` elegido
     /// por el mismo camino que el keymap.
     OpenPalette,
+    /// Togglear el theme claro (Catppuccin Latte) en runtime, desde el submenu
+    /// "view" (`^O L` / `z l`). Es estado de la vista del loop, no del documento;
+    /// alterna entre el theme configurado (oscuro) y Latte (claro).
+    ToggleLightTheme,
+    /// Crear un buffer nuevo y vacio ("new file") y enfocarlo. Opera a nivel
+    /// workspace, no del documento; lo maneja `run`.
+    NewBuffer,
+    /// Enfocar el buffer siguiente / anterior (cycle con wraparound). Nivel
+    /// workspace; lo maneja `run`.
+    NextBuffer,
+    PrevBuffer,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
@@ -248,6 +259,7 @@ fn resolve_view_second(second: KeyEvent) -> Resolve {
     };
     match letter {
         'z' => Resolve::Action(Action::ToggleZen),
+        'l' => Resolve::Action(Action::ToggleLightTheme),
         _ => Resolve::None,
     }
 }
@@ -256,7 +268,10 @@ fn resolve_view_second(second: KeyEvent) -> Resolve {
 /// (igual que `format_hints`). La `keys` es solo la segunda tecla.
 fn view_hints() -> Vec<Hint> {
     use crate::i18n::{Key, t};
-    vec![Hint::new(Action::ToggleZen, "Z", t(Key::HintZen))]
+    vec![
+        Hint::new(Action::ToggleZen, "Z", t(Key::HintZen)),
+        Hint::new(Action::ToggleLightTheme, "L", t(Key::HintLight)),
+    ]
 }
 
 /// Construye el preset segun su nombre. Si no matchea ninguno conocido, cae al

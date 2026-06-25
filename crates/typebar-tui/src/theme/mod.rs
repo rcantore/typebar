@@ -42,6 +42,16 @@ pub struct Theme {
     /// Background de cada boton de la barra de atajos (toolbar). Un surface algo
     /// mas claro que el fondo del editor, para que los atajos lean como chrome.
     pub toolbar_button_bg: Color,
+    /// Fondo de toda la superficie del editor. `None` en los themes oscuros: NO
+    /// pintan fondo y dejan pasar el del terminal (lindo para transparencia/
+    /// ricing). Los themes claros (Latte) lo setean para tener un paperwhite real;
+    /// sin un fondo propio, sus colores quedarian sobre el fondo oscuro del
+    /// terminal. Lo pinta el post-pass `apply_theme_fill` en `main`.
+    pub background: Option<Color>,
+    /// Color del texto del cuerpo (lo que no es heading/code/marker). `None` en
+    /// los oscuros: el texto usa el foreground default del terminal (claro). Los
+    /// claros lo setean (texto oscuro) para que se lea sobre su `background`.
+    pub text: Option<Color>,
 }
 
 impl Theme {
@@ -60,6 +70,8 @@ impl Theme {
             search_match_bg: Color::Rgb(0x8c, 0x73, 0x4a),   // yellow apagado (match)
             search_current_bg: Color::Rgb(0xe5, 0xc8, 0x90), // yellow vivo (actual)
             toolbar_button_bg: Color::Rgb(0x51, 0x57, 0x6d), // surface1 (boton)
+            background: None, // oscuro: deja pasar el fondo del terminal
+            text: None,       // oscuro: usa el fg del terminal
         }
     }
 
@@ -77,6 +89,8 @@ impl Theme {
             search_match_bg: Color::Rgb(0x9a, 0x7e, 0x4e),   // yellow apagado (match)
             search_current_bg: Color::Rgb(0xf9, 0xe2, 0xaf), // yellow vivo (actual)
             toolbar_button_bg: Color::Rgb(0x45, 0x47, 0x5a), // surface1 (boton)
+            background: None, // oscuro: deja pasar el fondo del terminal
+            text: None,       // oscuro: usa el fg del terminal
         }
     }
 
@@ -100,6 +114,8 @@ impl Theme {
             search_match_bg: Color::Rgb(0xdf, 0x8e, 0x1d),   // yellow (match)
             search_current_bg: Color::Rgb(0xfe, 0x64, 0x0b), // peach (actual, mas vivo)
             toolbar_button_bg: Color::Rgb(0xbc, 0xc0, 0xcc), // surface1 (boton)
+            background: Some(Color::Rgb(0xdc, 0xe0, 0xe8)), // crust (off-white suave, menos blanco que base)
+            text: Some(Color::Rgb(0x4c, 0x4f, 0x69)),       // text (oscuro, legible sobre el fondo)
         }
     }
 
@@ -156,6 +172,11 @@ mod tests {
         assert_ne!(latte, Theme::frappe());
         assert_eq!(latte.code_bg, Color::Rgb(0xcc, 0xd0, 0xda));
         assert_eq!(latte.heading_1, Color::Rgb(0x88, 0x39, 0xef)); // mauve Latte
+        // El claro pinta fondo y texto (paperwhite); los oscuros no (transparentes).
+        assert_eq!(latte.background, Some(Color::Rgb(0xdc, 0xe0, 0xe8)));
+        assert_eq!(latte.text, Some(Color::Rgb(0x4c, 0x4f, 0x69)));
+        assert_eq!(Theme::frappe().background, None);
+        assert_eq!(Theme::frappe().text, None);
     }
 
     #[test]
