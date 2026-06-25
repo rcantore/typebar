@@ -90,7 +90,12 @@ impl ListPrefix {
     pub fn continuation(&self) -> String {
         match self.marker {
             ListMarker::Bullet(c) => format!("{}{} ", self.indent, c),
-            ListMarker::Ordered(n, delim) => format!("{}{}{} ", self.indent, n + 1, delim),
+            // `saturating_add` blinda el incremento: con `n == u64::MAX` no hay
+            // overflow (paniquearia en debug); satura y la continuacion reusa el
+            // mismo numero en vez de romper el editor.
+            ListMarker::Ordered(n, delim) => {
+                format!("{}{}{} ", self.indent, n.saturating_add(1), delim)
+            }
         }
     }
 }
@@ -326,6 +331,18 @@ mod tests {
         let p = list_prefix("10) diez").expect("deberia ser item");
         assert_eq!(p.marker, ListMarker::Ordered(10, ')'));
         assert_eq!(p.continuation(), "11) ");
+    }
+
+    #[test]
+    fn continuation_ordenada_en_u64_max_no_paniquea() {
+        // Con el numero maximo, `saturating_add` evita el overflow (que en debug
+        // paniquearia): satura en u64::MAX y devuelve algo razonable.
+        let p = ListPrefix {
+            indent: String::new(),
+            marker: ListMarker::Ordered(u64::MAX, '.'),
+            content_col: 0,
+        };
+        assert_eq!(p.continuation(), format!("{}. ", u64::MAX));
     }
 
     #[test]
