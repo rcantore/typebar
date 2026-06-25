@@ -18,6 +18,7 @@ mod fuzzy;
 mod i18n;
 mod keybinding;
 mod markdown;
+mod overlay;
 mod palette;
 mod render;
 mod search;
@@ -26,11 +27,10 @@ mod tabs;
 mod text;
 mod theme;
 
-use std::ops::Range;
-
 use document::{Document, Mode};
 use keybinding::{Action, Binding, CustomKeymap, Keymap, Resolve, keymap_from_name, parse_binding};
 use markdown::InlineKind;
+use overlay::Overlay;
 use palette::{Palette, PaletteOutcome};
 use switcher::{Switcher, SwitcherOutcome};
 use theme::Theme;
@@ -234,55 +234,86 @@ fn main() -> std::io::Result<()> {
     result
 }
 
+/// Estado de VISTA del run loop: todo lo que vive entre frames y que `draw` lee y
+/// las acciones tocan, pero que NO es ni el documento, ni el keymap, ni los themes,
+/// ni el nivel de wysiwyg (ese contexto es aparte, fijo durante el run). Agrupar
+/// estos campos en un struct evita threadear 8-9 params sueltos por `draw` y
+/// `dispatch_action`. Lo posee `run`.
+struct AppState {
+    /// Offset vertical de scroll: primera linea visible del documento. `draw` lo
+    /// ajusta para mantener el cursor dentro del viewport.
+    scroll: usize,
+    /// Alto del area de edicion (en lineas) tras el ultimo draw. Lo escribe
+    /// `draw`; lo leen las acciones que dependen del viewport (PageUp/PageDown).
+    /// Antes del primer draw queda en 1, fallback razonable para no entregar 0 a
+    /// un calculo de pagina.
+    viewport_height: usize,
+    /// Zen/focus mode: oculta el chrome (borde, toolbar, status) para dejar solo
+    /// el texto. Estado de la vista, no del documento. Se togglea con el submenu
+    /// "view" y, en presets modeless, sale tambien con Esc.
+    zen: bool,
+    /// Toggle del theme claro (Latte) en runtime (`^O L`). Estado de la vista; el
+    /// theme activo se calcula en `run` a partir de este flag.
+    light_on: bool,
+    /// Buffer de teclas de un chord en curso (vacio si no hay nada pendiente).
+    pending: Vec<KeyEvent>,
+    /// Overlay de busqueda/reemplazo activo (None = edicion normal).
+    overlay: Option<Overlay>,
+    /// Switcher de archivos (fuzzy finder) activo (None = edicion normal). Opera a
+    /// nivel workspace: al aceptar, abre/cambia de buffer. Tapa el editor.
+    switcher: Option<Switcher>,
+    /// Paleta de comandos (fuzzy sobre los Action) activa (None = edicion normal).
+    /// Al aceptar, despacha el Action por el mismo camino que el keymap.
+    palette: Option<Palette>,
+    /// Mensaje transitorio en la status bar (ej "save failed: ..."): se muestra en
+    /// el proximo frame y se limpia al apretar la siguiente tecla. Evita que un
+    /// error de guardado tumbe el editor (writing-first: nunca perder el buffer).
+    flash: Option<String>,
+}
+
+impl AppState {
+    /// Estado inicial del run loop: sin scroll, viewport en 1 (fallback antes del
+    /// primer draw), sin chord pendiente ni overlays/pickers. `light_on` arranca
+    /// segun el theme configurado (claro o no).
+    fn new(light_on: bool) -> Self {
+        AppState {
+            scroll: 0,
+            viewport_height: 1,
+            zen: false,
+            light_on,
+            pending: Vec::new(),
+            overlay: None,
+            switcher: None,
+            palette: None,
+            flash: None,
+        }
+    }
+}
+
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
     doc: Document,
     keymap: &dyn Keymap,
     dark: Theme,
     light: Theme,
-    mut light_on: bool,
+    light_on: bool,
     wysiwyg_level: u8,
 ) -> std::io::Result<()> {
     // Los buffers abiertos. El editor siempre opera sobre el activo
     // (`workspace.active*`); el multi-archivo es transparente para draw/acciones/
     // overlays. Arranca con el documento que abrio `main`.
     let mut workspace = buffers::Workspace::new(doc);
-    // Offset vertical de scroll: primera linea visible del documento.
-    let mut scroll: usize = 0;
-    // Alto del area de edicion (en lineas) tras el ultimo draw. Lo escribe
-    // `draw`; lo lee `apply_action` para las acciones que dependen del
-    // viewport (PageUp/PageDown). Antes del primer draw queda en 1, que es
-    // un fallback razonable para no entregar 0 a un calculo de pagina.
-    let mut viewport_height: usize = 1;
-    // Buffer de teclas de un chord en curso (vacio si no hay nada pendiente).
-    let mut pending: Vec<KeyEvent> = Vec::new();
-    // Overlay de busqueda/reemplazo activo (None = edicion normal).
-    let mut overlay: Option<Overlay> = None;
-    // Zen/focus mode: oculta el chrome (borde, toolbar, status) para dejar solo
-    // el texto. Estado de la vista, no del documento. Se togglea con el submenu
-    // "view" (ver keybindings) y, en presets modeless, sale tambien con Esc.
-    let mut zen = false;
-    // Switcher de archivos (fuzzy finder) activo (None = edicion normal). Opera a
-    // nivel workspace: al aceptar, abre/cambia de buffer. Tapa el editor mientras
-    // esta abierto.
-    let mut switcher: Option<Switcher> = None;
-    // Paleta de comandos (fuzzy sobre los Action) activa (None = edicion normal).
-    // Al aceptar, despacha el Action elegido por el mismo camino que el keymap.
-    // Tapa el editor mientras esta abierta, igual que el switcher.
-    let mut palette: Option<Palette> = None;
-    // Mensaje transitorio en la status bar (ej "save failed: ..."): se muestra en
-    // el proximo frame y se limpia al apretar la siguiente tecla. Evita que un
-    // error de guardado tumbe el editor (writing-first: nunca perder el buffer).
-    let mut flash: Option<String> = None;
+    // Estado de vista del loop (scroll, zen, overlay, pickers, etc.) agrupado.
+    let mut state = AppState::new(light_on);
 
     loop {
         // Theme activo segun el toggle `^O L`: el claro (Latte) cuando `light_on`,
         // si no el configurado (oscuro). Se recalcula cada frame.
-        let theme = if light_on { &light } else { &dark };
+        let theme = if state.light_on { &light } else { &dark };
         // Barra de tabs de los buffers abiertos (solo con >=2 y fuera de zen).
         // `tab_line` es lo que dibuja `draw`; `tab_hits` mapea columna->buffer para
         // el click del mouse (queda en `run`).
-        let (tab_line, tab_hits) = if !zen && workspace.count() >= 2 {
+        let (tab_line, tab_hits) = if !state.zen && workspace.count() >= 2 {
             let titles: Vec<String> = workspace
                 .paths()
                 .map(|p| {
@@ -301,17 +332,10 @@ fn run(
                 frame,
                 workspace.active(),
                 keymap,
-                &pending,
-                &mut scroll,
-                &mut viewport_height,
                 theme,
-                overlay.as_ref(),
                 wysiwyg_level,
-                zen,
-                switcher.as_ref(),
-                palette.as_ref(),
+                &mut state,
                 tab_line.clone(),
-                flash.as_deref(),
             );
             // Paperwhite: si el theme activo es claro, pinta fondo/texto sobre el
             // frame ya dibujado (editor, chrome y pickers de una). No-op en oscuros.
@@ -327,7 +351,7 @@ fn run(
                 && let Some(hit) = tab_hits.iter().find(|t| t.cols.contains(&me.column))
             {
                 workspace.switch_to(hit.index);
-                scroll = 0;
+                state.scroll = 0;
             }
             continue;
         }
@@ -338,36 +362,27 @@ fn run(
             continue;
         }
         // Cualquier tecla limpia un mensaje flash previo (ej un error de guardado).
-        flash = None;
+        state.flash = None;
 
         // Con la paleta abierta, las teclas las consume la paleta (tipear filtra,
         // flechas/Ctrl-N/P navegan, Enter ejecuta el comando, Esc cancela). Al
         // aceptar, despachamos el Action por el MISMO camino que un action del
         // keymap (ver `dispatch_action`), asi no se duplica logica.
-        if let Some(pal) = palette.as_mut() {
+        if let Some(pal) = state.palette.as_mut() {
             match pal.handle_key(key) {
                 PaletteOutcome::Stay => {}
-                PaletteOutcome::Cancel => palette = None,
+                PaletteOutcome::Cancel => state.palette = None,
                 PaletteOutcome::Accept(action) => {
-                    palette = None;
+                    state.palette = None;
                     let before = workspace.active_index();
-                    match dispatch_action(
-                        action,
-                        &mut workspace,
-                        keymap,
-                        viewport_height,
-                        &mut overlay,
-                        &mut zen,
-                        &mut light_on,
-                        &mut switcher,
-                        &mut palette,
-                    ) {
+                    match dispatch_action(action, &mut workspace, keymap, &mut state) {
                         Ok(true) => return Ok(()),
                         Ok(false) => {}
-                        Err(e) => flash = Some(format!("save failed: {e}")),
+                        // Un error (de guardado) NO tumba el editor: se muestra y sigue.
+                        Err(e) => state.flash = Some(format!("save failed: {e}")),
                     }
                     if workspace.active_index() != before {
-                        scroll = 0; // el buffer recien enfocado arranca arriba
+                        state.scroll = 0; // el buffer recien enfocado arranca arriba
                     }
                 }
             }
@@ -376,19 +391,19 @@ fn run(
 
         // Con el switcher abierto, las teclas las consume el switcher (tipear
         // filtra, flechas/Ctrl-N/P navegan, Enter abre el elegido, Esc cancela).
-        if let Some(sw) = switcher.as_mut() {
+        if let Some(sw) = state.switcher.as_mut() {
             match sw.handle_key(key) {
                 SwitcherOutcome::Stay => {}
-                SwitcherOutcome::Cancel => switcher = None,
+                SwitcherOutcome::Cancel => state.switcher = None,
                 SwitcherOutcome::Accept(path) => {
-                    switcher = None;
+                    state.switcher = None;
                     // Abrir o cambiar al buffer. Si el archivo no se puede abrir,
                     // lo ignoramos y seguimos en el buffer actual.
                     if workspace
                         .open_or_switch(&path, keymap.initial_mode())
                         .is_ok()
                     {
-                        scroll = 0; // el buffer recien enfocado arranca arriba
+                        state.scroll = 0; // el buffer recien enfocado arranca arriba
                     }
                 }
             }
@@ -397,9 +412,9 @@ fn run(
 
         // Con un overlay abierto, las teclas las consume el overlay (escribir el
         // termino, navegar, confirmar o cancelar), no el documento.
-        if let Some(ov) = overlay.as_mut() {
+        if let Some(ov) = state.overlay.as_mut() {
             if ov.handle_key(workspace.active_mut(), key) {
-                overlay = None;
+                state.overlay = None;
             }
             continue;
         }
@@ -409,46 +424,36 @@ fn run(
         // del modo focus (en zen el chrome esta oculto y el toggle no se ve). En Vim
         // NO lo interceptamos: `Esc` tiene semantica (volver a Normal); ahi se sale
         // con el mismo `z z` que entro.
-        if zen && key.code == KeyCode::Esc && !keymap.is_modal() {
-            zen = false;
-            pending.clear();
+        if state.zen && key.code == KeyCode::Esc && !keymap.is_modal() {
+            state.zen = false;
+            state.pending.clear();
             continue;
         }
 
-        pending.push(key);
-        match keymap.resolve(workspace.active().mode, &pending) {
+        state.pending.push(key);
+        match keymap.resolve(workspace.active().mode, &state.pending) {
             Resolve::Action(action) => {
-                pending.clear();
+                state.pending.clear();
                 // Despachamos por el mismo helper que usa la paleta, asi un action
                 // resuelto por el keymap y uno elegido en la paleta recorren un
                 // unico camino (sin duplicar la logica de overlays/zen/switcher).
-                // Un error (de guardado) NO tumba el editor: se muestra en la status
-                // y se sigue editando. Si la accion cambio de buffer, reseteo scroll.
+                // Un error (de guardado) NO tumba el editor: se muestra y sigue. Si
+                // la accion cambio de buffer, se resetea el scroll compartido.
                 let before = workspace.active_index();
-                match dispatch_action(
-                    action,
-                    &mut workspace,
-                    keymap,
-                    viewport_height,
-                    &mut overlay,
-                    &mut zen,
-                    &mut light_on,
-                    &mut switcher,
-                    &mut palette,
-                ) {
+                match dispatch_action(action, &mut workspace, keymap, &mut state) {
                     Ok(true) => return Ok(()),
                     Ok(false) => {}
-                    Err(e) => flash = Some(format!("save failed: {e}")),
+                    Err(e) => state.flash = Some(format!("save failed: {e}")),
                 }
                 if workspace.active_index() != before {
-                    scroll = 0;
+                    state.scroll = 0;
                 }
             }
             // La secuencia es prefijo de un chord: esperar mas teclas.
             Resolve::Pending => {}
             // Secuencia no bindeada: cancela el chord (o un Esc tras un
             // prefijo) limpiando el buffer pendiente.
-            Resolve::None => pending.clear(),
+            Resolve::None => state.pending.clear(),
         }
     }
 }
@@ -462,25 +467,19 @@ fn run(
 /// Centralizar esto en un solo lugar evita duplicar la logica entre el match del
 /// keymap y el `Accept` de la paleta, y garantiza que ambos caminos se comporten
 /// igual (incluido salir del `run` ante Quit/SaveAndQuit).
-#[allow(clippy::too_many_arguments)] // todo es estado del loop; un struct seria mas ruido que senal
 fn dispatch_action(
     action: Action,
     workspace: &mut buffers::Workspace,
     keymap: &dyn Keymap,
-    viewport_height: usize,
-    overlay: &mut Option<Overlay>,
-    zen: &mut bool,
-    light_on: &mut bool,
-    switcher: &mut Option<Switcher>,
-    palette: &mut Option<Palette>,
+    state: &mut AppState,
 ) -> std::io::Result<bool> {
     match action {
         // Estas acciones tocan estado de la vista del loop, no el doc.
-        Action::Search => *overlay = Some(Overlay::new_search(workspace.active())),
-        Action::Replace => *overlay = Some(Overlay::new_replace()),
-        Action::ToggleZen => *zen = !*zen,
+        Action::Search => state.overlay = Some(Overlay::new_search(workspace.active())),
+        Action::Replace => state.overlay = Some(Overlay::new_replace()),
+        Action::ToggleZen => state.zen = !state.zen,
         // Togglear el theme claro (Latte) <-> oscuro en runtime (submenu view).
-        Action::ToggleLightTheme => *light_on = !*light_on,
+        Action::ToggleLightTheme => state.light_on = !state.light_on,
         // Nuevo archivo: crea un buffer vacio y lo enfoca. El draw reclampa el
         // scroll solo (el cursor del buffer nuevo arranca arriba).
         Action::NewBuffer => workspace.new_buffer(keymap.initial_mode()),
@@ -497,12 +496,12 @@ fn dispatch_action(
                     candidates.push(p.to_path_buf());
                 }
             }
-            *switcher = Some(Switcher::new(candidates));
+            state.switcher = Some(Switcher::new(candidates));
         }
         // Abrir la paleta de comandos. Como `OpenPalette` se excluye del catalogo
         // de comandos, no hay forma de recursar desde la propia paleta.
-        Action::OpenPalette => *palette = Some(Palette::new(keymap)),
-        _ => return apply_action(workspace.active_mut(), action, viewport_height),
+        Action::OpenPalette => state.palette = Some(Palette::new(keymap)),
+        _ => return apply_action(workspace.active_mut(), action, state.viewport_height),
     }
     Ok(false)
 }
@@ -535,35 +534,31 @@ fn apply_theme_fill(frame: &mut ratatui::Frame, theme: &Theme) {
     }
 }
 
-/// Dibuja el editor. Devuelve via `scroll` (mut) el offset usado, ajustado para
-/// mantener el cursor visible.
-#[allow(clippy::too_many_arguments)] // todos los args son contexto de un draw frame
+/// Dibuja el editor. Lee/escribe el estado de vista via `state` (scroll y
+/// viewport_height se ajustan in situ para mantener el cursor visible).
 fn draw(
     frame: &mut ratatui::Frame,
     doc: &Document,
     keymap: &dyn Keymap,
-    pending: &[KeyEvent],
-    scroll: &mut usize,
-    viewport_height_out: &mut usize,
     theme: &Theme,
-    overlay: Option<&Overlay>,
     wysiwyg_level: u8,
-    zen: bool,
-    switcher: Option<&Switcher>,
-    palette: Option<&Palette>,
+    state: &mut AppState,
     tabs: Option<Line<'static>>,
-    flash: Option<&str>,
 ) {
     // La paleta y el switcher (mutuamente excluyentes) tapan todo: cada uno se
     // dibuja via su modulo y corta el draw. El render vive en el modulo respectivo.
-    if let Some(pal) = palette {
+    if let Some(pal) = state.palette.as_ref() {
         pal.render(frame, theme);
         return;
     }
-    if let Some(sw) = switcher {
+    if let Some(sw) = state.switcher.as_ref() {
         sw.render(frame, theme);
         return;
     }
+
+    // Snapshot de los flags de vista que se leen varias veces aca; evita tener
+    // `&state` vivo mientras mas abajo se mutan `state.scroll`/`viewport_height`.
+    let zen = state.zen;
 
     // Zen/focus: ocultamos todo el chrome (borde, toolbar, status) para dejar
     // solo el texto. Excepcion: si hay un overlay de busqueda activo reservamos
@@ -571,7 +566,7 @@ fn draw(
     // buscando). Fuera de zen: editor (resto) + toolbar + gap + status bar; el
     // gap de 1 linea separa visualmente el chrome de comandos del de estado.
     let (tabs_area, editor_area, hints_area, status_area) = if zen {
-        if overlay.is_some() {
+        if state.overlay.is_some() {
             let [editor, mini] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
             (None, editor, None, Some(mini))
@@ -615,23 +610,26 @@ fn draw(
     // Alto util dentro del borde del Block.
     let viewport_height = editor_area.height.saturating_sub(2 * border) as usize;
     // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
-    *viewport_height_out = viewport_height.max(1);
+    state.viewport_height = viewport_height.max(1);
 
     // Ajustar scroll para que el cursor quede dentro del viewport.
     if viewport_height > 0 {
-        if doc.line < *scroll {
-            *scroll = doc.line;
-        } else if doc.line >= *scroll + viewport_height {
-            *scroll = doc.line + 1 - viewport_height;
+        if doc.line < state.scroll {
+            state.scroll = doc.line;
+        } else if doc.line >= state.scroll + viewport_height {
+            state.scroll = doc.line + 1 - viewport_height;
         }
     }
+    // Tras reclampar, lo leemos en un local: simplifica los usos de abajo y
+    // evita re-tomar `&state` mientras se sigue dibujando.
+    let scroll = state.scroll;
 
     // Coincidencias a resaltar segun el overlay (busqueda incremental o el
     // termino de busqueda del reemplazo). Sin overlay, no hay resaltado. La
     // coincidencia "actual" es la que arranca bajo el cursor (en busqueda el
     // cursor salto justo ahi); en reemplazo normalmente no hay y queda sin marcar.
     let text = doc.text();
-    let matches = match overlay {
+    let matches = match state.overlay.as_ref() {
         Some(ov) => ov.highlights(&text),
         None => Vec::new(),
     };
@@ -665,39 +663,42 @@ fn draw(
     );
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .scroll((*scroll as u16, 0));
+        .scroll((scroll as u16, 0));
     frame.render_widget(paragraph, editor_area);
 
     // Barra de atajos (toolbar estilo WordStar/Norton Commander): los atajos del
     // preset para el modo actual, reflejando los remapeos del usuario. En zen se
     // oculta (hints_area = None).
     if let Some(hints_area) = hints_area {
-        frame.render_widget(hints_bar(keymap, doc.mode, pending, theme), hints_area);
+        frame.render_widget(
+            hints_bar(keymap, doc.mode, &state.pending, theme),
+            hints_area,
+        );
     }
 
     // Status bar (o, con overlay abierto, el minibuffer; o un mensaje flash
     // transitorio, ej un error de guardado, que tiene prioridad sobre la status
     // bar normal). En zen sin overlay/flash no hay area y no se dibuja nada.
     if let Some(status_area) = status_area {
-        if let Some(ov) = overlay {
+        if let Some(ov) = state.overlay.as_ref() {
             frame.render_widget(ov.minibuffer(), status_area);
-        } else if let Some(msg) = flash {
+        } else if let Some(msg) = state.flash.as_deref() {
             let style = Style::default().add_modifier(Modifier::REVERSED);
             frame.render_widget(
                 Line::from(Span::styled(format!(" {msg} "), style)),
                 status_area,
             );
         } else {
-            frame.render_widget(status_bar(doc, keymap, pending), status_area);
+            frame.render_widget(status_bar(doc, keymap, &state.pending), status_area);
         }
     }
 
     // Cursor real de terminal: +1,+1 por el borde del Block, y restando scroll.
     // La X es la columna *visual* (celdas), no el indice de char: asi cae sobre
     // el glifo que dibujo el render aunque haya CJK/emoji de doble ancho.
-    if doc.line >= *scroll {
+    if doc.line >= scroll {
         let cursor_x = editor_area.x + border + pad_left + doc.display_col() as u16;
-        let cursor_y = editor_area.y + border + (doc.line - *scroll) as u16;
+        let cursor_y = editor_area.y + border + (doc.line - scroll) as u16;
         frame.set_cursor_position(Position::new(cursor_x, cursor_y));
     }
 }
@@ -814,172 +815,6 @@ fn chord_indicator(pending: &[KeyEvent]) -> Option<String> {
     }
 }
 
-// --- Overlay de busqueda / reemplazo ---------------------------------------
-
-/// Estado de un overlay activo sobre el editor. Mientras vive, las teclas las
-/// consume el overlay (no el documento): se tipea el termino, se navega entre
-/// coincidencias y se confirma o cancela.
-enum Overlay {
-    /// Busqueda incremental: el cursor salta a la coincidencia a medida que se
-    /// tipea; Enter avanza a la siguiente; Esc cierra dejando el cursor ahi.
-    Search { query: String },
-    /// Buscar y reemplazar: dos campos (buscar / reemplazar) que se alternan con
-    /// Tab; Enter reemplaza TODAS las ocurrencias; Esc cancela.
-    Replace {
-        find: String,
-        replacement: String,
-        /// Campo con foco (a cual van las teclas tipeadas).
-        editing_replacement: bool,
-    },
-}
-
-impl Overlay {
-    /// Crea el overlay de busqueda vacio. Arranca sin termino: el resaltado
-    /// aparece al primer caracter tipeado.
-    fn new_search(_doc: &Document) -> Self {
-        Overlay::Search {
-            query: String::new(),
-        }
-    }
-
-    /// Crea el overlay de reemplazo vacio, con el foco en el campo "buscar".
-    fn new_replace() -> Self {
-        Overlay::Replace {
-            find: String::new(),
-            replacement: String::new(),
-            editing_replacement: false,
-        }
-    }
-
-    /// Procesa una tecla. Devuelve `true` si el overlay debe cerrarse.
-    fn handle_key(&mut self, doc: &mut Document, key: KeyEvent) -> bool {
-        match self {
-            Overlay::Search { query } => Self::handle_search_key(query, doc, key),
-            Overlay::Replace {
-                find,
-                replacement,
-                editing_replacement,
-            } => Self::handle_replace_key(find, replacement, editing_replacement, doc, key),
-        }
-    }
-
-    /// Teclas del overlay de busqueda. Tipear/borrar recomputa y salta a la
-    /// coincidencia mas cercana; Enter avanza; Esc cierra.
-    fn handle_search_key(query: &mut String, doc: &mut Document, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Esc => return true,
-            KeyCode::Enter => {
-                // Avanzar a la coincidencia siguiente a la posicion actual + 1,
-                // para no quedar clavado en la misma.
-                let matches = search::find_all(&doc.text(), query);
-                if !matches.is_empty()
-                    && let Some(idx) = search::next_match_from(&matches, doc.cursor_byte() + 1)
-                {
-                    doc.move_cursor_to_byte(matches[idx].start);
-                }
-                return false;
-            }
-            KeyCode::Backspace => {
-                query.pop();
-            }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                query.push(c);
-            }
-            _ => return false,
-        }
-        // Tras editar el termino, saltar a la primer coincidencia desde el cursor.
-        let matches = search::find_all(&doc.text(), query);
-        if !matches.is_empty()
-            && let Some(idx) = search::next_match_from(&matches, doc.cursor_byte())
-        {
-            doc.move_cursor_to_byte(matches[idx].start);
-        }
-        false
-    }
-
-    /// Teclas del overlay de reemplazo. Tab alterna campo, Enter reemplaza todo,
-    /// Esc cancela.
-    fn handle_replace_key(
-        find: &mut String,
-        replacement: &mut String,
-        editing_replacement: &mut bool,
-        doc: &mut Document,
-        key: KeyEvent,
-    ) -> bool {
-        match key.code {
-            KeyCode::Esc => true,
-            KeyCode::Tab => {
-                *editing_replacement = !*editing_replacement;
-                false
-            }
-            KeyCode::Enter => {
-                if !find.is_empty() {
-                    doc.replace_all(find, replacement);
-                }
-                true
-            }
-            KeyCode::Backspace => {
-                if *editing_replacement {
-                    replacement.pop();
-                } else {
-                    find.pop();
-                }
-                false
-            }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if *editing_replacement {
-                    replacement.push(c);
-                } else {
-                    find.push(c);
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-
-    /// Rangos (en bytes) a resaltar segun el overlay: las coincidencias del
-    /// termino de busqueda, o del campo "buscar" en reemplazo. Cual es la
-    /// coincidencia "actual" lo decide `draw` segun la posicion del cursor.
-    fn highlights(&self, text: &str) -> Vec<Range<usize>> {
-        match self {
-            Overlay::Search { query } => search::find_all(text, query),
-            Overlay::Replace { find, .. } => search::find_all(text, find),
-        }
-    }
-
-    /// Linea del minibuffer mostrada en lugar de la status bar.
-    fn minibuffer(&self) -> Line<'static> {
-        let style = Style::default().add_modifier(Modifier::REVERSED);
-        match self {
-            Overlay::Search { query } => Line::from(Span::styled(
-                format!(" {} {query}_ ", i18n::t(i18n::Key::MinibufferSearchPrompt)),
-                style,
-            )),
-            Overlay::Replace {
-                find,
-                replacement,
-                editing_replacement,
-            } => {
-                // Un marcador `_` en el campo con foco indica donde se tipea.
-                let (f, r) = if *editing_replacement {
-                    (find.clone(), format!("{replacement}_"))
-                } else {
-                    (format!("{find}_"), replacement.clone())
-                };
-                Line::from(Span::styled(
-                    format!(
-                        " {} {f} → {r}  ({}) ",
-                        i18n::t(i18n::Key::MinibufferReplacePrompt),
-                        i18n::t(i18n::Key::MinibufferReplaceHelp),
-                    ),
-                    style,
-                ))
-            }
-        }
-    }
-}
-
 /// Aplica una accion semantica sobre el documento. Devuelve `Ok(true)` si hay
 /// que salir del editor (Quit). `viewport_height` se usa para acciones que
 /// dependen del alto visible (Page Up/Down); el resto de las acciones lo
@@ -1081,19 +916,10 @@ mod tests {
     use super::*;
     use document::test_support::doc_with;
 
-    /// KeyEvent simple para los tests del overlay.
-    fn k(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
     /// Renderiza un frame con `draw` sobre un backend de prueba y devuelve todo el
     /// buffer como texto plano (filas separadas por `\n`). Sirve para verificar
     /// que cierto chrome aparece o no en pantalla.
-    fn render_to_string(
-        zen: bool,
-        switcher: Option<&Switcher>,
-        palette: Option<&Palette>,
-    ) -> String {
+    fn render_to_string(zen: bool, switcher: Option<Switcher>, palette: Option<Palette>) -> String {
         use keybinding::StandardKeymap;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -1102,27 +928,12 @@ mod tests {
         let km = StandardKeymap;
         let theme = Theme::frappe();
         let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
-        let mut scroll = 0usize;
-        let mut vp = 0usize;
+        let mut state = AppState::new(false);
+        state.zen = zen;
+        state.switcher = switcher;
+        state.palette = palette;
         terminal
-            .draw(|f| {
-                draw(
-                    f,
-                    &doc,
-                    &km,
-                    &[],
-                    &mut scroll,
-                    &mut vp,
-                    &theme,
-                    None,
-                    2,
-                    zen,
-                    switcher,
-                    palette,
-                    None,
-                    None,
-                )
-            })
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
             .unwrap();
         let buf = terminal.backend().buffer().clone();
         let area = *buf.area();
@@ -1172,7 +983,7 @@ mod tests {
             std::path::PathBuf::from("src/main.rs"),
             std::path::PathBuf::from("README.md"),
         ]);
-        let screen = render_to_string(false, Some(&sw), None);
+        let screen = render_to_string(false, Some(sw), None);
         assert!(
             screen.contains("go to file:"),
             "falta el prompt del switcher"
@@ -1191,7 +1002,7 @@ mod tests {
         // comando, y NO el texto del editor de fondo.
         let km = keybinding::StandardKeymap;
         let pal = Palette::new(&km);
-        let screen = render_to_string(false, None, Some(&pal));
+        let screen = render_to_string(false, None, Some(pal));
         assert!(screen.contains("command:"), "falta el prompt de la paleta");
         assert!(screen.contains("Save"), "falta algun comando");
         assert!(
@@ -1212,26 +1023,10 @@ mod tests {
         let doc = doc_with("hola");
         let km = StandardKeymap;
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
-        let mut scroll = 0usize;
-        let mut vp = 0usize;
+        let mut state = AppState::new(false);
         terminal
             .draw(|f| {
-                draw(
-                    f,
-                    &doc,
-                    &km,
-                    &[],
-                    &mut scroll,
-                    &mut vp,
-                    theme,
-                    None,
-                    2,
-                    false,
-                    None,
-                    None,
-                    None,
-                    None,
-                );
+                draw(f, &doc, &km, theme, 2, &mut state, None);
                 apply_theme_fill(f, theme);
             })
             .unwrap();
@@ -1276,66 +1071,111 @@ mod tests {
         assert!(has_reset_bg, "el theme oscuro no deberia pintar el fondo");
     }
 
-    /// Tipea una cadena en el overlay, tecla por tecla.
-    fn type_str(ov: &mut Overlay, doc: &mut Document, s: &str) {
-        for c in s.chars() {
-            ov.handle_key(doc, k(KeyCode::Char(c)));
-        }
+    /// Concatena el texto de todos los spans de una `Line` en un solo String,
+    /// para poder hacer assertions sobre lo que muestra (igual que los tests de
+    /// tabs/switcher inspeccionan sus lineas).
+    fn line_to_string(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
     #[test]
-    fn overlay_busqueda_salta_a_la_coincidencia() {
-        let mut doc = doc_with("x foo y foo");
-        let mut ov = Overlay::new_search(&doc);
-        type_str(&mut ov, &mut doc, "foo");
-        // El cursor salta al primer "foo" (byte 2).
-        assert_eq!(doc.cursor_byte(), 2);
+    fn apply_action_movimiento_no_pide_salir() {
+        // Una accion normal de movimiento devuelve Ok(false): no hay que salir.
+        let mut doc = doc_with("hola");
+        let salir = apply_action(&mut doc, Action::CursorRight, 10).unwrap();
+        assert!(!salir, "CursorRight no deberia pedir salir");
+        assert_eq!(
+            doc.cursor_byte(),
+            1,
+            "CursorRight deberia avanzar un grafema"
+        );
     }
 
     #[test]
-    fn overlay_busqueda_enter_avanza_y_esc_cierra() {
-        let mut doc = doc_with("x foo y foo");
-        let mut ov = Overlay::new_search(&doc);
-        type_str(&mut ov, &mut doc, "foo");
-        assert_eq!(doc.cursor_byte(), 2);
-        // Enter avanza a la coincidencia siguiente (byte 8).
-        assert!(!ov.handle_key(&mut doc, k(KeyCode::Enter)));
-        assert_eq!(doc.cursor_byte(), 8);
-        // Esc cierra el overlay.
-        assert!(ov.handle_key(&mut doc, k(KeyCode::Esc)));
+    fn apply_action_edicion_modifica_el_doc() {
+        // Insertar un caracter modifica el buffer y no pide salir.
+        let mut doc = doc_with("");
+        assert!(!apply_action(&mut doc, Action::InsertChar('x'), 10).unwrap());
+        assert_eq!(doc.text(), "x");
+        // InsertNewline parte la linea.
+        assert!(!apply_action(&mut doc, Action::InsertNewline, 10).unwrap());
+        assert_eq!(doc.text(), "x\n");
+        // Backspace borra hacia atras.
+        assert!(!apply_action(&mut doc, Action::Backspace, 10).unwrap());
+        assert_eq!(doc.text(), "x");
     }
 
     #[test]
-    fn overlay_busqueda_backspace_recomputa() {
-        let mut doc = doc_with("abc abx");
-        let mut ov = Overlay::new_search(&doc);
-        type_str(&mut ov, &mut doc, "abx"); // matchea solo "abx" (1 coincidencia)
-        assert_eq!(ov.highlights(&doc.text()).len(), 1);
-        // Borrar la 'x' ensancha el termino a "ab": ahora matchea en ambas
-        // palabras (2 coincidencias), probando que backspace recomputa.
-        ov.handle_key(&mut doc, k(KeyCode::Backspace));
-        assert_eq!(ov.highlights(&doc.text()).len(), 2);
+    fn apply_action_quit_pide_salir() {
+        // Quit devuelve Ok(true) sin tocar el documento.
+        let mut doc = doc_with("hola");
+        assert!(apply_action(&mut doc, Action::Quit, 10).unwrap());
+        assert_eq!(doc.text(), "hola");
     }
 
     #[test]
-    fn overlay_reemplazo_tab_y_enter_reemplaza_todo() {
-        let mut doc = doc_with("a a a");
-        let mut ov = Overlay::new_replace();
-        type_str(&mut ov, &mut doc, "a"); // campo "buscar"
-        ov.handle_key(&mut doc, k(KeyCode::Tab)); // foco -> "reemplazar"
-        type_str(&mut ov, &mut doc, "bb");
-        // Enter reemplaza todo y cierra.
-        assert!(ov.handle_key(&mut doc, k(KeyCode::Enter)));
-        assert_eq!(doc.text(), "bb bb bb");
+    fn apply_action_save_and_quit_pide_salir() {
+        // SaveAndQuit guarda y devuelve Ok(true). Usamos un path temporal para
+        // que el save no escriba en el cwd del repo.
+        let dir = std::env::temp_dir().join(format!("typebar-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("saq.md");
+        let mut doc = doc_with("contenido");
+        doc.path = path.clone();
+        assert!(apply_action(&mut doc, Action::SaveAndQuit, 10).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "contenido");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn overlay_reemplazo_esc_cancela_sin_tocar_el_texto() {
-        let mut doc = doc_with("a a a");
-        let mut ov = Overlay::new_replace();
-        type_str(&mut ov, &mut doc, "a");
-        assert!(ov.handle_key(&mut doc, k(KeyCode::Esc)));
-        assert_eq!(doc.text(), "a a a"); // intacto
+    fn status_bar_sin_seleccion_muestra_total_de_palabras() {
+        // Sin seleccion: la status bar muestra el total de palabras del doc.
+        use keybinding::StandardKeymap;
+        let doc = doc_with("uno dos tres");
+        let km = StandardKeymap;
+        let line = status_bar(&doc, &km, &[]);
+        let text = line_to_string(&line);
+        assert!(text.contains("3 words"), "deberia mostrar el total: {text}");
+        // Sin seleccion no aparece el formato "N/M".
+        assert!(
+            !text.contains("/3 words"),
+            "no deberia haber seleccion: {text}"
+        );
+    }
+
+    #[test]
+    fn status_bar_con_seleccion_muestra_seleccionadas_sobre_total() {
+        // Con seleccion activa: muestra "N/M" (palabras seleccionadas / total).
+        use keybinding::StandardKeymap;
+        let mut doc = doc_with("uno dos tres");
+        // Seleccionar las primeras 3 letras ("uno" = 1 palabra) extendiendo a la
+        // derecha desde el inicio.
+        doc.extend_right();
+        doc.extend_right();
+        doc.extend_right();
+        let km = StandardKeymap;
+        let line = status_bar(&doc, &km, &[]);
+        let text = line_to_string(&line);
+        assert!(
+            text.contains("1/3 words"),
+            "deberia mostrar sel/total: {text}"
+        );
+    }
+
+    #[test]
+    fn status_bar_doc_dirty_muestra_el_marcador() {
+        // Un doc con cambios sin guardar muestra "[+]" en la status bar.
+        use keybinding::StandardKeymap;
+        let mut doc = doc_with("hola");
+        doc.insert_char('!'); // ensucia el doc
+        assert!(doc.dirty, "el doc deberia quedar dirty tras editar");
+        let km = StandardKeymap;
+        let line = status_bar(&doc, &km, &[]);
+        let text = line_to_string(&line);
+        assert!(
+            text.contains("[+]"),
+            "deberia mostrar el marcador dirty: {text}"
+        );
     }
 
     #[test]
