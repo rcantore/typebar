@@ -9,6 +9,7 @@
 //! (modeless con chords tipo `Ctrl-K S`) opt-in via el flag `--keys`. El loop
 //! acumula teclas en un buffer `pending` para resolver secuencias multi-tecla.
 
+mod buffers;
 mod config;
 mod document;
 mod export;
@@ -201,11 +202,15 @@ fn main() -> std::io::Result<()> {
 
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
-    mut doc: Document,
+    doc: Document,
     keymap: &dyn Keymap,
     theme: &Theme,
     wysiwyg_level: u8,
 ) -> std::io::Result<()> {
+    // Los buffers abiertos. El editor siempre opera sobre el activo
+    // (`workspace.active*`); el multi-archivo es transparente para draw/acciones/
+    // overlays. Arranca con el documento que abrio `main`.
+    let mut workspace = buffers::Workspace::new(doc);
     // Offset vertical de scroll: primera linea visible del documento.
     let mut scroll: usize = 0;
     // Alto del area de edicion (en lineas) tras el ultimo draw. Lo escribe
@@ -226,7 +231,7 @@ fn run(
         terminal.draw(|frame| {
             draw(
                 frame,
-                &doc,
+                workspace.active(),
                 keymap,
                 &pending,
                 &mut scroll,
@@ -248,7 +253,7 @@ fn run(
         // Con un overlay abierto, las teclas las consume el overlay (escribir el
         // termino, navegar, confirmar o cancelar), no el documento.
         if let Some(ov) = overlay.as_mut() {
-            if ov.handle_key(&mut doc, key) {
+            if ov.handle_key(workspace.active_mut(), key) {
                 overlay = None;
             }
             continue;
@@ -266,16 +271,16 @@ fn run(
         }
 
         pending.push(key);
-        match keymap.resolve(doc.mode, &pending) {
+        match keymap.resolve(workspace.active().mode, &pending) {
             Resolve::Action(action) => {
                 pending.clear();
                 match action {
                     // Estas acciones tocan estado de la vista del loop, no el doc.
-                    Action::Search => overlay = Some(Overlay::new_search(&doc)),
+                    Action::Search => overlay = Some(Overlay::new_search(workspace.active())),
                     Action::Replace => overlay = Some(Overlay::new_replace()),
                     Action::ToggleZen => zen = !zen,
                     _ => {
-                        if apply_action(&mut doc, action, viewport_height)? {
+                        if apply_action(workspace.active_mut(), action, viewport_height)? {
                             return Ok(());
                         }
                     }
