@@ -47,6 +47,8 @@ and your text rendered as you type.
 - **Editing essentials**: undo/redo, visual selection, system clipboard
   copy/paste/cut, find & replace, bold/italic/code toggles, and full motions
   (line/doc start & end, Page Up/Down, Home/End).
+- **Multiple files with a fuzzy switcher**: `Ctrl-G` opens a fuzzy finder over
+  the project files and open buffers — type to filter, Enter to open or switch.
 - **Live word count** in the status bar (Unicode word boundaries), with a
   selected-words count while text is selected.
 - **Zen / focus mode**: hide all chrome (border, toolbar, status bar) to write
