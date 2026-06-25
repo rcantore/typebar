@@ -250,6 +250,30 @@ pub fn error_invalid_keybinding(keys: &str, action: &str, err: impl std::fmt::Di
     }
 }
 
+// --- Contador de palabras (status bar) --------------------------------------
+
+/// Label "word(s)" / "palabra(s)" segun locale y singular/plural. Privado: el
+/// formateo completo va por `words_count` / `words_count_selection`.
+fn words_label_for(locale: Locale, n: usize) -> &'static str {
+    match (locale, n) {
+        (Locale::Es, 1) => "palabra",
+        (Locale::Es, _) => "palabras",
+        (Locale::En, 1) => "word",
+        (Locale::En, _) => "words",
+    }
+}
+
+/// "342 words" / "1 palabra": cantidad de palabras del documento.
+pub fn words_count(n: usize) -> String {
+    format!("{n} {}", words_label_for(locale(), n))
+}
+
+/// "12/342 words": palabras seleccionadas sobre el total. El plural lo decide el
+/// total (es el numero que nombra el label).
+pub fn words_count_selection(selected: usize, total: usize) -> String {
+    format!("{selected}/{total} {}", words_label_for(locale(), total))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +316,16 @@ mod tests {
             t_for(Locale::En, Key::MinibufferReplaceHelp),
             "Tab switches field · Enter replaces all"
         );
+    }
+
+    #[test]
+    fn words_label_singular_y_plural() {
+        assert_eq!(words_label_for(Locale::En, 0), "words");
+        assert_eq!(words_label_for(Locale::En, 1), "word");
+        assert_eq!(words_label_for(Locale::En, 2), "words");
+        assert_eq!(words_label_for(Locale::Es, 0), "palabras");
+        assert_eq!(words_label_for(Locale::Es, 1), "palabra");
+        assert_eq!(words_label_for(Locale::Es, 42), "palabras");
     }
 
     #[test]

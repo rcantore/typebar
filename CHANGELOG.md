@@ -16,6 +16,11 @@ How to maintain this file:
 
 ## [Unreleased]
 
+### Added
+
+- Word count in the status bar (Unicode-aware), showing the document total and
+  the selected count while a selection is active.
+
 ## [0.1.0] - 2026-06-24
 
 ### Added

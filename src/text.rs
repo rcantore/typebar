@@ -43,6 +43,13 @@ pub fn grapheme_width(cluster: &str) -> usize {
     UnicodeWidthStr::width(cluster) + halfwidth_marks
 }
 
+/// Cuenta palabras segun los limites de palabra de Unicode (UAX #29): cuenta
+/// palabras reales, no espacios ni puntuacion, y anda en español, CJK, etc. sin
+/// reglas ad-hoc. Apoyado en `unicode-segmentation`, que ya es dependencia.
+pub fn count_words(s: &str) -> usize {
+    s.unicode_words().count()
+}
+
 /// Analisis de una linea (sin el `\n` final): donde empieza cada grafema, en
 /// indice de *char*, y el ancho en celdas de cada uno.
 pub struct LineGraphemes {
@@ -192,5 +199,21 @@ mod tests {
         assert_eq!(g.col_for_display(2), 1); // inicio del 2do glifo
         assert_eq!(g.col_for_display(3), 1);
         assert_eq!(g.col_for_display(99), 2); // mas alla -> fin de linea
+    }
+
+    #[test]
+    fn cuenta_palabras_unicode() {
+        assert_eq!(count_words(""), 0);
+        assert_eq!(count_words("   \n\t  "), 0);
+        assert_eq!(count_words("hola"), 1);
+        assert_eq!(count_words("hola mundo"), 2);
+        // Puntuacion y markdown no cuentan como palabras sueltas.
+        assert_eq!(count_words("**hola**, _mundo_!"), 2);
+        // Multiples espacios / saltos de linea colapsan.
+        assert_eq!(count_words("uno  dos\ntres"), 3);
+        // Acentos y ñ: una palabra cada uno.
+        assert_eq!(count_words("año señor"), 2);
+        // Contracciones cuentan como una palabra (UAX #29).
+        assert_eq!(count_words("don't"), 1);
     }
 }

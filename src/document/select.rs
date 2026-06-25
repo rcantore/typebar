@@ -35,6 +35,18 @@ impl Document {
         Some(start..end)
     }
 
+    /// Texto actualmente seleccionado, o `None` si no hay seleccion. No expone
+    /// el buffer: extrae el slice aca.
+    pub fn selection_text(&self) -> Option<String> {
+        let r = self.selection_range()?;
+        Some(self.buffer.slice(r).to_string())
+    }
+
+    /// Cantidad de palabras de la seleccion, o `None` si no hay seleccion.
+    pub fn selection_word_count(&self) -> Option<usize> {
+        self.selection_text().map(|s| crate::text::count_words(&s))
+    }
+
     /// Fija el ancla en la posicion actual del cursor si todavia no hay una. Si
     /// ya hay ancla no la toca (para que extender no la reinicie en cada paso).
     pub fn start_selection(&mut self) {
@@ -169,5 +181,17 @@ mod tests {
         d.col = 3;
         d.clear_selection();
         assert_eq!(d.selection_range(), None);
+    }
+
+    #[test]
+    fn selection_word_count_cuenta_solo_la_seleccion() {
+        let mut d = doc_with("hola mundo cruel");
+        assert_eq!(d.word_count(), 3); // documento completo
+        assert_eq!(d.selection_word_count(), None); // sin seleccion
+        d.col = 5; // ancla al inicio de "mundo"
+        d.start_selection();
+        d.col = 16; // seleccion "mundo cruel"
+        assert_eq!(d.selection_text().as_deref(), Some("mundo cruel"));
+        assert_eq!(d.selection_word_count(), Some(2));
     }
 }
