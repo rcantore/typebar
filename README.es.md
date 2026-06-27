@@ -62,10 +62,17 @@ texto renderizado mientras escribís.
   escribir sin distracciones. Se togglea desde el submenú *view* — `Ctrl-O Z`
   (standard / wordstar, homenaje al prefijo de onscreen-format de WordStar) o
   `z z` (vim); en los presets modeless `Esc` también sale.
+- **Modo whitepaper**: una *hoja de papel* estilo máquina de escribir — zen más
+  un theme monocromo de tinta sobre papel (la jerarquía la da el peso, no el
+  color) y una columna de ancho fijo centrada. Se togglea desde el submenú
+  *view* — `Ctrl-O W` (standard / wordstar) o `z w` (vim); en los presets
+  modeless `Esc` también sale.
 - **Consciente de Unicode**: movimiento del cursor por clusters de grafemas y
   ancho de display correcto para CJK, emoji y caracteres combinantes.
 - **Export a HTML**: `typebar notas.md --export-html` escribe un `notas.html`
-  standalone (CommonMark vía pulldown-cmark) sin abrir el editor.
+  standalone (CommonMark vía pulldown-cmark) sin abrir el editor — o exportá el
+  buffer actual desde adentro del editor con el comando *Export HTML* (paleta de
+  comandos), que muestra el resultado en la status bar.
 - **Themeable** para ricing: paletas Catppuccin `frappe` (default), `mocha` y la
   clara `latte`, con un toggle claro/oscuro en runtime (`Ctrl-O L`, o `z l` en
   vim).
@@ -100,11 +107,13 @@ typebar [PATH] [--keys <preset>]
   Tiene prioridad sobre el archivo de config.
 - `--export-html`: convierte `PATH` a un archivo `.html` standalone y sale, sin
   abrir el editor.
+- `-h`, `--help`: imprime la ayuda y sale.
 
 ```bash
 typebar README.md --keys vim
 typebar              # abre scratch.md con el preset standard
 typebar notas.md --export-html   # escribe notas.html y sale
+typebar --help                   # imprime la ayuda y sale
 ```
 
 ## Configuración
