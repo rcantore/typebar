@@ -726,8 +726,13 @@ fn draw(
     // marco) le damos un poco mas de aire (2) ya que no hay borde que separe;
     // fuera de zen alcanza con 1 (el borde ya separa). Suma al offset del cursor.
     let pad_left: u16 = if zen { 2 } else { 1 };
-    // Alto util dentro del borde del Block.
-    let viewport_height = editor_area.height.saturating_sub(2 * border) as usize;
+    // Margen superior: solo en papel, para que el texto no arranque pegado al
+    // borde de arriba y se sienta mas una "hoja". Suma al offset del cursor y
+    // resta del alto util (igual que `pad_left` con la columna). Fuera de papel
+    // es 0 (sin cambios respecto al layout previo).
+    let pad_top: u16 = if whitepaper { 2 } else { 0 };
+    // Alto util dentro del borde del Block y del margen superior.
+    let viewport_height = editor_area.height.saturating_sub(2 * border + pad_top) as usize;
     // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
     state.viewport_height = viewport_height.max(1);
 
@@ -762,11 +767,11 @@ fn draw(
     // margen izquierdo; fuera de zen, bordered con el path en el titulo. El
     // padding tiene que coincidir con `pad_left` (que ya usa el cursor).
     let block = if zen {
-        Block::default().padding(Padding::new(pad_left, 0, 0, 0))
+        Block::default().padding(Padding::new(pad_left, 0, pad_top, 0))
     } else {
         Block::bordered()
             .title(format!(" typebar · {} ", doc.path.display()))
-            .padding(Padding::new(pad_left, 0, 0, 0))
+            .padding(Padding::new(pad_left, 0, pad_top, 0))
     };
     // En Nivel 2 la linea con el cursor se renderiza como Nivel 1 (markers
     // visibles) para preservar el mapeo cursor->columna 1:1. Las demas lineas
@@ -817,7 +822,7 @@ fn draw(
     // render aunque haya CJK/emoji de doble ancho.
     if doc.line >= scroll {
         let cursor_x = editor_area.x + border + pad_left + doc.display_col() as u16;
-        let cursor_y = editor_area.y + border + (doc.line - scroll) as u16;
+        let cursor_y = editor_area.y + border + pad_top + (doc.line - scroll) as u16;
         if whitepaper {
             // En papel el cursor real del terminal usa un color fijo que sobre el
             // fondo claro suele quedar invisible. En vez de depender de el,
@@ -1143,6 +1148,15 @@ mod tests {
         let screen = rows.join("\n");
         assert!(!screen.contains("typebar"), "no deberia verse el titulo");
         assert!(!screen.contains("Save"), "no deberia verse la toolbar");
+        // Margen superior: el texto no arranca en la fila 0 (hay aire arriba).
+        let fila_texto = rows
+            .iter()
+            .position(|r| r.contains("hola mundo"))
+            .expect("el texto deberia seguir visible");
+        assert!(
+            fila_texto >= 2,
+            "el texto deberia tener margen arriba (fila {fila_texto})"
+        );
         let texto = rows
             .iter()
             .find(|r| r.contains("hola mundo"))
