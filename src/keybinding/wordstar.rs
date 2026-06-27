@@ -416,13 +416,18 @@ mod tests {
             km.resolve(Mode::Insert, &[o, key(KeyCode::Char('z'))]),
             Resolve::Action(Action::ToggleZen)
         );
-        // Case-insensitive; letra invalida cancela.
+        // Case-insensitive.
         assert_eq!(
             km.resolve(Mode::Insert, &[o, key(KeyCode::Char('Z'))]),
             Resolve::Action(Action::ToggleZen)
         );
+        // `^O W` togglea el modo whitepaper; una letra invalida cancela.
         assert_eq!(
             km.resolve(Mode::Insert, &[o, key(KeyCode::Char('w'))]),
+            Resolve::Action(Action::ToggleWhitepaper)
+        );
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('q'))]),
             Resolve::None
         );
     }

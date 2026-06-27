@@ -94,6 +94,10 @@ pub enum Key {
     HintZen,
     /// Toggle del theme claro (Latte) dentro del submenu "view".
     HintLight,
+    /// Toggle del modo whitepaper dentro del submenu "view".
+    HintWhitepaper,
+    /// Exportar el buffer actual a HTML (paleta de comandos).
+    HintExportHtml,
     /// Nuevo archivo / buffer vacio ("Nuevo" / "New").
     HintNew,
     /// Switcher de archivos ("Ir a…" / "Go to…").
@@ -203,6 +207,10 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintZen) => "Zen",
         (Locale::Es, Key::HintLight) => "Claro",
         (Locale::En, Key::HintLight) => "Light",
+        (Locale::Es, Key::HintWhitepaper) => "Papel",
+        (Locale::En, Key::HintWhitepaper) => "Paper",
+        (Locale::Es, Key::HintExportHtml) => "Exportar HTML",
+        (Locale::En, Key::HintExportHtml) => "Export HTML",
         (Locale::Es, Key::HintNew) => "Nuevo",
         (Locale::En, Key::HintNew) => "New",
         (Locale::Es, Key::HintSwitcher) => "Ir a…",
@@ -297,6 +305,24 @@ pub fn error_invalid_keybinding(keys: &str, action: &str, err: impl std::fmt::Di
             "typebar: invalid keybinding {keys:?} -> {action:?}: {err}; {}",
             t(Key::Ignored),
         ),
+    }
+}
+
+/// "exported to {path}" / "exportado a {path}": confirmacion (en la status bar y
+/// en el stderr del export por CLI) de que el HTML se escribio.
+pub fn exported_to(path: &Path) -> String {
+    match locale() {
+        Locale::Es => format!("exportado a {}", path.display()),
+        Locale::En => format!("exported to {}", path.display()),
+    }
+}
+
+/// "export failed: {err}" / "fallo el export: {err}": el export in-editor no
+/// pudo escribir el archivo (permisos/disco). No tumba el editor: va al flash.
+pub fn export_failed(err: impl std::fmt::Display) -> String {
+    match locale() {
+        Locale::Es => format!("fallo el export: {err}"),
+        Locale::En => format!("export failed: {err}"),
     }
 }
 

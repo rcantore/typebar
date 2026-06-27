@@ -350,9 +350,14 @@ mod tests {
             km.resolve(Mode::Insert, &[o, key(KeyCode::Char('l'))]),
             Resolve::Action(Action::ToggleLightTheme)
         );
-        // Segunda tecla no bindeada cancela.
+        // `^O W` togglea el modo whitepaper.
         assert_eq!(
             km.resolve(Mode::Insert, &[o, key(KeyCode::Char('w'))]),
+            Resolve::Action(Action::ToggleWhitepaper)
+        );
+        // Segunda tecla no bindeada cancela.
+        assert_eq!(
+            km.resolve(Mode::Insert, &[o, key(KeyCode::Char('q'))]),
             Resolve::None
         );
     }

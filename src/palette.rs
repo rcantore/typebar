@@ -52,6 +52,8 @@ const COMMANDS: &[(Action, Key)] = &[
     (Action::ToggleItalic, Key::HintItalic),
     (Action::ToggleCode, Key::HintCode),
     (Action::ToggleZen, Key::HintZen),
+    (Action::ToggleWhitepaper, Key::HintWhitepaper),
+    (Action::ExportHtml, Key::HintExportHtml),
     (Action::OpenSwitcher, Key::HintSwitcher),
     (Action::LineStart, Key::HintLineStart),
     (Action::LineEnd, Key::HintLineEnd),
