@@ -121,6 +121,16 @@ pub enum Action {
     /// workspace; lo maneja `run`.
     NextBuffer,
     PrevBuffer,
+    /// Togglear el modo whitepaper desde el submenu "view" (`^O W` / `z w`):
+    /// orquesta zen + theme claro + columna de ancho fijo centrada, para la
+    /// sensacion "hoja de papel"/typewriter. Estado de la vista del loop, no del
+    /// documento; lo maneja `run`. Construido sobre zen + el theme Latte.
+    ToggleWhitepaper,
+    /// Exportar el buffer ACTUAL a HTML standalone sin salir del editor,
+    /// mostrando el resultado en la status (flash). A diferencia del flag CLI
+    /// `--export-html`, exporta el contenido en memoria (cambios sin guardar
+    /// incluidos). Lo maneja `run` (escribe el archivo y setea el flash).
+    ExportHtml,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
@@ -269,7 +279,7 @@ fn format_hints() -> Vec<Hint> {
 /// preset (homenaje a cada idioma: `Ctrl-O` —el *Onscreen format* de WordStar—
 /// en standard/wordstar, `z` —el prefijo de comandos de vista de Vim— en vim),
 /// pero la SEGUNDA tecla y los hints son compartidos para que la familia crezca
-/// uniforme (hoy `Z` -> zen; manana `L` -> theme light, `W` -> whitepaper, etc.).
+/// uniforme (`Z` -> zen, `L` -> theme light, `W` -> whitepaper).
 ///
 /// Resuelve la segunda tecla del submenu (case-insensitive). Cualquier otra
 /// cancela (`None`).
@@ -281,6 +291,7 @@ fn resolve_view_second(second: KeyEvent) -> Resolve {
     match letter {
         'z' => Resolve::Action(Action::ToggleZen),
         'l' => Resolve::Action(Action::ToggleLightTheme),
+        'w' => Resolve::Action(Action::ToggleWhitepaper),
         _ => Resolve::None,
     }
 }
@@ -292,6 +303,7 @@ fn view_hints() -> Vec<Hint> {
     vec![
         Hint::new(Action::ToggleZen, "Z", t(Key::HintZen)),
         Hint::new(Action::ToggleLightTheme, "L", t(Key::HintLight)),
+        Hint::new(Action::ToggleWhitepaper, "W", t(Key::HintWhitepaper)),
     ]
 }
 

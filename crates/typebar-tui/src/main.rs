@@ -38,13 +38,17 @@ use theme::Theme;
 use ratatui::crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
-use ratatui::layout::{Constraint, Layout, Position};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Padding, Paragraph};
 
 const DEFAULT_PATH: &str = "scratch.md";
 const DEFAULT_PRESET: &str = "standard";
+/// Ancho (en columnas, incluido el margen izquierdo) de la "hoja" del modo
+/// whitepaper: el texto se centra en una columna de a lo sumo este ancho para la
+/// sensacion typewriter/papel. Si la terminal es mas angosta, se usa todo el ancho.
+const WHITEPAPER_WIDTH: u16 = 72;
 
 /// Args parseados de la linea de comandos. `preset` es `None` cuando el usuario
 /// no paso `--keys`: distinguir "no especificado" de un valor concreto es lo que
@@ -55,6 +59,9 @@ struct Args {
     /// Si esta en `true` (flag `--export-html`), el programa convierte el
     /// archivo a HTML standalone y sale sin abrir la TUI.
     export_html: bool,
+    /// Si esta en `true` (flag `--help`/`-h`), el programa imprime la ayuda por
+    /// stdout y sale sin abrir la TUI. Tiene prioridad sobre el resto.
+    help: bool,
 }
 
 /// Parsea los argumentos a mano (sin clap). Soporta `--keys <nombre>` y
@@ -65,6 +72,7 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
     let mut path: Option<String> = None;
     let mut preset: Option<String> = None;
     let mut export_html = false;
+    let mut help = false;
     let mut args = raw.peekable();
 
     while let Some(arg) = args.next() {
@@ -76,6 +84,9 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
         } else if arg == "--export-html" {
             // Flag booleano (sin valor): exportar a HTML y salir.
             export_html = true;
+        } else if arg == "--help" || arg == "-h" {
+            // Imprimir la ayuda y salir (lo resuelve `main`, antes que todo).
+            help = true;
         } else if !arg.starts_with('-') && path.is_none() {
             path = Some(arg);
         }
@@ -86,7 +97,28 @@ fn parse_args(raw: impl Iterator<Item = String>) -> Args {
         path: path.unwrap_or_else(|| DEFAULT_PATH.to_string()),
         preset,
         export_html,
+        help,
     }
+}
+
+/// Imprime la ayuda de la linea de comandos por stdout: uso, el argumento
+/// posicional (archivo) y los flags soportados. En ingles (convencion CLI); el
+/// resto de la UI interactiva si esta i18n-izada.
+fn print_help() {
+    println!(
+        "typebar - a WYSIWYG Markdown editor for the terminal\n\
+\n\
+USAGE:\n    \
+    typebar [OPTIONS] [FILE]\n\
+\n\
+ARGS:\n    \
+    [FILE]    Markdown file to open (default: {DEFAULT_PATH})\n\
+\n\
+OPTIONS:\n    \
+    --keys <PRESET>    Keybinding preset: standard | vim | wordstar\n    \
+    --export-html      Export FILE to standalone HTML and exit\n    \
+    -h, --help         Print this help and exit"
+    );
 }
 
 /// Resuelve el preset final aplicando la precedencia: flag CLI `--keys` > preset
@@ -152,14 +184,33 @@ fn export_to_html(path: &str) -> std::io::Result<()> {
     let html = export::to_html(&content, path);
     let out = html_output_path(path);
     std::fs::write(&out, html)?;
-    // Mensaje simple en ingles por stderr (se puede i18n-izar mas adelante).
-    eprintln!("exported to {}", out.display());
+    eprintln!("{}", i18n::exported_to(&out));
     Ok(())
+}
+
+/// Exporta el buffer activo (su texto en memoria, con cambios sin guardar) a un
+/// HTML standalone junto al archivo (misma ruta, extension `.html`) y devuelve el
+/// path de salida. A diferencia de `export_to_html`, NO lee del disco: usa el
+/// contenido actual del documento, asi exporta lo que se ve aunque no se haya
+/// guardado todavia. El titulo de la pagina es el path del archivo.
+fn export_doc_to_html(doc: &Document) -> std::io::Result<std::path::PathBuf> {
+    let title = doc.path.to_string_lossy();
+    let html = export::to_html(&doc.text(), &title);
+    let out = doc.path.with_extension("html");
+    std::fs::write(&out, html)?;
+    Ok(out)
 }
 
 fn main() -> std::io::Result<()> {
     // Saltar argv[0] (nombre del binario).
     let args = parse_args(std::env::args().skip(1));
+
+    // Ayuda: imprimir y salir, antes que cualquier otra cosa (no abre la TUI ni
+    // toca el config).
+    if args.help {
+        print_help();
+        return Ok(());
+    }
 
     // Export a HTML: convertir y salir ANTES de inicializar la terminal.
     if args.export_html {
@@ -252,6 +303,11 @@ struct AppState {
     /// el texto. Estado de la vista, no del documento. Se togglea con el submenu
     /// "view" y, en presets modeless, sale tambien con Esc.
     zen: bool,
+    /// Modo whitepaper: orquesta zen (chrome oculto) + theme claro (Latte) + una
+    /// columna de ancho fijo centrada, para la sensacion "hoja de papel". Estado
+    /// de la vista; cuando esta activo, `run` fuerza el theme claro y `draw`
+    /// centra el editor en una columna de `WHITEPAPER_WIDTH`.
+    whitepaper: bool,
     /// Toggle del theme claro (Latte) en runtime (`^O L`). Estado de la vista; el
     /// theme activo se calcula en `run` a partir de este flag.
     light_on: bool,
@@ -280,6 +336,7 @@ impl AppState {
             scroll: 0,
             viewport_height: 1,
             zen: false,
+            whitepaper: false,
             light_on,
             pending: Vec::new(),
             overlay: None,
@@ -307,13 +364,18 @@ fn run(
     let mut state = AppState::new(light_on);
 
     loop {
-        // Theme activo segun el toggle `^O L`: el claro (Latte) cuando `light_on`,
-        // si no el configurado (oscuro). Se recalcula cada frame.
-        let theme = if state.light_on { &light } else { &dark };
-        // Barra de tabs de los buffers abiertos (solo con >=2 y fuera de zen).
-        // `tab_line` es lo que dibuja `draw`; `tab_hits` mapea columna->buffer para
-        // el click del mouse (queda en `run`).
-        let (tab_line, tab_hits) = if !state.zen && workspace.count() >= 2 {
+        // Theme activo: el claro (Latte) cuando el toggle `^O L` esta on O cuando
+        // el modo whitepaper esta activo (que siempre va sobre papel); si no, el
+        // configurado (oscuro). Se recalcula cada frame.
+        let theme = if state.light_on || state.whitepaper {
+            &light
+        } else {
+            &dark
+        };
+        // Barra de tabs de los buffers abiertos (solo con >=2 y con el chrome
+        // visible, es decir fuera de zen y de whitepaper). `tab_line` es lo que
+        // dibuja `draw`; `tab_hits` mapea columna->buffer para el click del mouse.
+        let (tab_line, tab_hits) = if !state.zen && !state.whitepaper && workspace.count() >= 2 {
             let titles: Vec<String> = workspace
                 .paths()
                 .map(|p| {
@@ -419,13 +481,14 @@ fn run(
             continue;
         }
 
-        // Red de seguridad para salir de zen: en presets modeless (standard/
-        // wordstar) `Esc` no esta bindeado, asi que lo usamos como escape garantizado
-        // del modo focus (en zen el chrome esta oculto y el toggle no se ve). En Vim
-        // NO lo interceptamos: `Esc` tiene semantica (volver a Normal); ahi se sale
-        // con el mismo `z z` que entro.
-        if state.zen && key.code == KeyCode::Esc && !keymap.is_modal() {
+        // Red de seguridad para salir de zen o whitepaper: en presets modeless
+        // (standard/wordstar) `Esc` no esta bindeado, asi que lo usamos como escape
+        // garantizado de los modos focus (con el chrome oculto el toggle no se ve).
+        // Limpia ambos flags. En Vim NO lo interceptamos: `Esc` tiene semantica
+        // (volver a Normal); ahi se sale con el mismo `z z`/`z w` que entro.
+        if (state.zen || state.whitepaper) && key.code == KeyCode::Esc && !keymap.is_modal() {
             state.zen = false;
+            state.whitepaper = false;
             state.pending.clear();
             continue;
         }
@@ -478,8 +541,20 @@ fn dispatch_action(
         Action::Search => state.overlay = Some(Overlay::new_search(workspace.active())),
         Action::Replace => state.overlay = Some(Overlay::new_replace()),
         Action::ToggleZen => state.zen = !state.zen,
+        // Togglear el modo whitepaper (submenu view): zen + claro + columna
+        // centrada. El theme claro y el centrado los aplican `run`/`draw` segun el
+        // flag; aca solo se togglea.
+        Action::ToggleWhitepaper => state.whitepaper = !state.whitepaper,
         // Togglear el theme claro (Latte) <-> oscuro en runtime (submenu view).
         Action::ToggleLightTheme => state.light_on = !state.light_on,
+        // Exportar el buffer actual a HTML sin salir; el resultado (path o error)
+        // va al flash, no tumba el editor. Escribe a `<archivo>.html` al lado.
+        Action::ExportHtml => {
+            state.flash = Some(match export_doc_to_html(workspace.active()) {
+                Ok(out) => i18n::exported_to(&out),
+                Err(e) => i18n::export_failed(e),
+            });
+        }
         // Nuevo archivo: crea un buffer vacio y lo enfoca. El draw reclampa el
         // scroll solo (el cursor del buffer nuevo arranca arriba).
         Action::NewBuffer => workspace.new_buffer(keymap.initial_mode()),
@@ -534,6 +609,22 @@ fn apply_theme_fill(frame: &mut ratatui::Frame, theme: &Theme) {
     }
 }
 
+/// Reduce `area` a una columna centrada horizontalmente de ancho `max_width` (o
+/// el ancho disponible si la terminal es mas angosta). Es la "hoja" del modo
+/// whitepaper: deja el texto en una columna legible y centrada en vez de pegado
+/// al borde izquierdo ocupando todo el ancho. Solo toca x/width; alto y posicion
+/// vertical quedan igual.
+fn centered_column(area: Rect, max_width: u16) -> Rect {
+    if area.width <= max_width {
+        return area;
+    }
+    Rect {
+        x: area.x + (area.width - max_width) / 2,
+        width: max_width,
+        ..area
+    }
+}
+
 /// Dibuja el editor. Lee/escribe el estado de vista via `state` (scroll y
 /// viewport_height se ajustan in situ para mantener el cursor visible).
 fn draw(
@@ -558,7 +649,10 @@ fn draw(
 
     // Snapshot de los flags de vista que se leen varias veces aca; evita tener
     // `&state` vivo mientras mas abajo se mutan `state.scroll`/`viewport_height`.
-    let zen = state.zen;
+    // Whitepaper es un superset de zen para el chrome (oculta borde/toolbar/status
+    // igual); ademas centra el editor en una columna fija (mas abajo).
+    let whitepaper = state.whitepaper;
+    let zen = state.zen || whitepaper;
 
     // Zen/focus: ocultamos todo el chrome (borde, toolbar, status) para dejar
     // solo el texto. Excepcion: si hay un overlay de busqueda activo reservamos
@@ -593,6 +687,16 @@ fn draw(
         ])
         .areas(frame.area());
         (None, editor, Some(hints), Some(status))
+    };
+
+    // Whitepaper: el editor no ocupa todo el ancho sino una columna centrada de
+    // ancho fijo (la "hoja"). Como el cursor se calcula a partir de
+    // `editor_area.x`, al correr el area a la derecha el cursor la sigue solo. En
+    // terminales mas angostas que `WHITEPAPER_WIDTH` queda el ancho completo.
+    let editor_area = if whitepaper {
+        centered_column(editor_area, WHITEPAPER_WIDTH)
+    } else {
+        editor_area
     };
 
     // Barra de tabs (si la hay): la fila reservada arriba.
@@ -892,7 +996,9 @@ fn apply_action(
         Action::Search
         | Action::Replace
         | Action::ToggleZen
+        | Action::ToggleWhitepaper
         | Action::ToggleLightTheme
+        | Action::ExportHtml
         | Action::NewBuffer
         | Action::NextBuffer
         | Action::PrevBuffer
@@ -972,6 +1078,51 @@ mod tests {
         assert!(
             screen.contains("hola mundo"),
             "el texto deberia seguir visible"
+        );
+    }
+
+    /// Como `render_to_string` pero con whitepaper activo y un ancho de terminal
+    /// dado, devuelve cada fila del buffer (para inspeccionar el centrado). El
+    /// ancho lo controla el test porque el centrado depende de el.
+    fn render_whitepaper(term_width: u16) -> Vec<String> {
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let doc = doc_with("hola mundo");
+        let km = StandardKeymap;
+        let theme = Theme::latte();
+        let mut terminal = Terminal::new(TestBackend::new(term_width, 8)).unwrap();
+        let mut state = AppState::new(false);
+        state.whitepaper = true;
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn draw_whitepaper_oculta_chrome_y_centra_el_texto() {
+        // Whitepaper es superset de zen: sin titulo ni toolbar. Y en una terminal
+        // ancha (120 > WHITEPAPER_WIDTH) el texto queda centrado, es decir con
+        // varios espacios de sangria a la izquierda (no pegado al borde).
+        let rows = render_whitepaper(120);
+        let screen = rows.join("\n");
+        assert!(!screen.contains("typebar"), "no deberia verse el titulo");
+        assert!(!screen.contains("Save"), "no deberia verse la toolbar");
+        let texto = rows
+            .iter()
+            .find(|r| r.contains("hola mundo"))
+            .expect("el texto deberia seguir visible");
+        let sangria = texto.len() - texto.trim_start().len();
+        // Centro esperado: (120 - 72)/2 = 24, mas el margen izquierdo del bloque.
+        assert!(
+            sangria > 20,
+            "el texto deberia estar centrado (sangria {sangria}): {texto:?}"
         );
     }
 
@@ -1193,6 +1344,54 @@ mod tests {
         let a = parse_args(vec!["notas.md".to_string(), "--export-html".to_string()].into_iter());
         assert!(a.export_html);
         assert_eq!(a.path, "notas.md");
+    }
+
+    #[test]
+    fn parse_args_help_setea_el_flag() {
+        // Tanto `--help` como `-h` prenden el flag de ayuda.
+        assert!(parse_args(vec!["--help".to_string()].into_iter()).help);
+        assert!(parse_args(vec!["-h".to_string()].into_iter()).help);
+        // Sin el flag, queda apagado.
+        assert!(!parse_args(vec!["notas.md".to_string()].into_iter()).help);
+    }
+
+    #[test]
+    fn centered_column_centra_y_respeta_terminales_angostas() {
+        // Ancho mayor al maximo: se centra en una columna de WHITEPAPER_WIDTH.
+        let full = Rect {
+            x: 0,
+            y: 3,
+            width: 120,
+            height: 10,
+        };
+        let col = centered_column(full, WHITEPAPER_WIDTH);
+        assert_eq!(col.width, WHITEPAPER_WIDTH);
+        assert_eq!(col.x, (120 - WHITEPAPER_WIDTH) / 2);
+        // Alto y posicion vertical intactos.
+        assert_eq!(col.y, 3);
+        assert_eq!(col.height, 10);
+        // Terminal mas angosta que el maximo: se usa todo el ancho (sin tocar).
+        let narrow = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 5,
+        };
+        assert_eq!(centered_column(narrow, WHITEPAPER_WIDTH), narrow);
+    }
+
+    #[test]
+    fn export_doc_to_html_escribe_el_html_del_buffer() {
+        // Exporta el contenido EN MEMORIA (no del disco) a `<archivo>.html`.
+        let dir = std::env::temp_dir().join(format!("typebar-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut doc = doc_with("# Hola");
+        doc.path = dir.join("nota.md");
+        let out = export_doc_to_html(&doc).unwrap();
+        assert_eq!(out, dir.join("nota.html"));
+        let html = std::fs::read_to_string(&out).unwrap();
+        assert!(html.contains("<h1>Hola</h1>"), "html: {html}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
