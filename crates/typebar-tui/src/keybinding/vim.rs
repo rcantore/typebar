@@ -168,16 +168,16 @@ impl Keymap for VimKeymap {
     fn hints(&self, mode: Mode) -> Vec<Hint> {
         use crate::i18n::{Key, t};
         match mode {
+            // Toolbar "lean" (ver standard): se conservan los hints MODALES (`i`/`v`,
+            // que son esenciales para usar vim) mas Save, paleta, Search, los dos
+            // submenus y Quit. El resto (nuevo, ir a archivo, undo, pegar) se
+            // descubre por la paleta (`^A`) y por las teclas vim de siempre.
             Mode::Normal => vec![
-                Hint::new(Action::NewBuffer, "^N", t(Key::HintNew)),
                 Hint::new(Action::EnterInsert, "i", t(Key::HintInsert)),
                 Hint::new(Action::EnterVisual, "v", t(Key::HintVisual)),
-                Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
+                Hint::new(Action::Save, "^S", t(Key::HintSave)),
                 Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),
                 Hint::new(Action::Search, "/", t(Key::HintSearch)),
-                Hint::new(Action::Undo, "u", t(Key::HintUndo)),
-                Hint::new(Action::Paste, "p", t(Key::HintPaste)),
-                Hint::new(Action::Save, "^S", t(Key::HintSave)),
                 Hint::prefix("^P", t(Key::HintFormatPrefix)),
                 Hint::prefix("z", t(Key::HintViewPrefix)),
                 Hint::new(Action::Quit, "q", t(Key::HintQuit)),

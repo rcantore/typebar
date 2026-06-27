@@ -139,16 +139,13 @@ impl Keymap for WordstarKeymap {
 
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
         use crate::i18n::{Key, t};
+        // Toolbar "lean" (ver standard): esencial + submenus. El resto (nuevo, ir
+        // a archivo, undo, copiar/pegar, reemplazar) se descubre por la paleta
+        // (`^A`) y sus chords. Antes la barra se desbordaba y cortaba el Quit.
         vec![
-            Hint::new(Action::NewBuffer, "^N", t(Key::HintNew)),
             Hint::new(Action::Save, "^K S", t(Key::HintSave)),
-            Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
             Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),
             Hint::new(Action::Search, "^Q F", t(Key::HintSearch)),
-            Hint::new(Action::Replace, "^Q A", t(Key::HintReplace)),
-            Hint::new(Action::Undo, "^Z", t(Key::HintUndo)),
-            Hint::new(Action::Yank, "^K C", t(Key::HintYank)),
-            Hint::new(Action::Paste, "^K V", t(Key::HintPaste)),
             Hint::prefix("^P", t(Key::HintFormatPrefix)),
             Hint::prefix("^O", t(Key::HintViewPrefix)),
             Hint::new(Action::SaveAndQuit, "^K X", t(Key::HintQuit)),

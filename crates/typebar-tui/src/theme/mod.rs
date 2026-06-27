@@ -119,6 +119,31 @@ impl Theme {
         }
     }
 
+    /// Theme del modo whitepaper: tinta negra sobre papel. A diferencia de Latte
+    /// (claro pero con colores), este es MONOCROMO: headings, codigo y cuerpo van
+    /// todos en el color de tinta (la jerarquia se mantiene por peso, porque el
+    /// renderer aplica BOLD/ITALIC como modificadores, no como color). El codigo
+    /// inline no lleva caja (su `code_bg` es el propio papel) y los markers quedan
+    /// tenues. Pensado para escribir sin distraccion visual, no para leer sintaxis.
+    pub fn paper() -> Self {
+        let ink = Color::Rgb(0x4c, 0x4f, 0x69); // text Latte (tinta)
+        let sheet = Color::Rgb(0xdc, 0xe0, 0xe8); // crust Latte (papel, off-white suave)
+        Theme {
+            heading_1: ink,
+            heading_2: ink,
+            heading_n: ink,
+            code_fg: ink,
+            code_bg: sheet, // sin caja: el codigo es tinta plana sobre el papel
+            marker: Color::Rgb(0x9c, 0xa0, 0xb0), // overlay0: markers apenas visibles
+            selection_bg: Color::Rgb(0xac, 0xb0, 0xbe), // surface2: resalte gris claro
+            search_match_bg: Color::Rgb(0xdf, 0x8e, 0x1d), // yellow (la busqueda si destaca)
+            search_current_bg: Color::Rgb(0xfe, 0x64, 0x0b), // peach
+            toolbar_button_bg: Color::Rgb(0xbc, 0xc0, 0xcc), // (el chrome esta oculto en papel)
+            background: Some(sheet),
+            text: Some(ink),
+        }
+    }
+
     /// Resuelve un theme built-in por nombre. Cae a `frappe` ante un nombre
     /// desconocido: el config nunca debe poder romper el arranque del editor.
     pub fn by_name(name: &str) -> Theme {
@@ -177,6 +202,27 @@ mod tests {
         assert_eq!(latte.text, Some(Color::Rgb(0x4c, 0x4f, 0x69)));
         assert_eq!(Theme::frappe().background, None);
         assert_eq!(Theme::frappe().text, None);
+    }
+
+    #[test]
+    fn paper_es_monocromo_tinta_sobre_papel() {
+        // En el theme de papel headings, codigo y cuerpo van todos en el mismo
+        // color de tinta (la jerarquia la da el peso/modificador, no el color), el
+        // codigo no lleva caja (code_bg == fondo) y hay fondo y texto seteados.
+        let p = Theme::paper();
+        let ink = p.text.expect("el papel deberia tener color de tinta");
+        assert_eq!(p.heading_1, ink);
+        assert_eq!(p.heading_2, ink);
+        assert_eq!(p.heading_n, ink);
+        assert_eq!(p.code_fg, ink);
+        assert_eq!(
+            Some(p.code_bg),
+            p.background,
+            "el codigo no deberia tener caja: su bg es el papel"
+        );
+        assert!(p.background.is_some(), "el papel deberia pintar fondo");
+        // Y los markers NO son tinta plena: quedan mas tenues que el cuerpo.
+        assert_ne!(p.marker, ink, "los markers deberian quedar atenuados");
     }
 
     #[test]
