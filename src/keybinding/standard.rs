@@ -111,19 +111,16 @@ impl Keymap for StandardKeymap {
 
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
         use crate::i18n::{Key, t};
+        // Toolbar "lean": solo lo esencial mas los dos submenus. El resto de los
+        // comandos (nuevo, ir a archivo, undo, copiar/pegar, reemplazar, negrita)
+        // se descubre por la paleta (`^A`) y por sus teclas; antes la barra se
+        // desbordaba y cortaba el Quit. La negrita vive bajo Formato (`^P`).
         vec![
-            Hint::new(Action::NewBuffer, "^N", t(Key::HintNew)),
             Hint::new(Action::Save, "^S", t(Key::HintSave)),
-            Hint::new(Action::OpenSwitcher, "^G", t(Key::HintSwitcher)),
             Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),
             Hint::new(Action::Search, "^F", t(Key::HintSearch)),
-            Hint::new(Action::Replace, "^R", t(Key::HintReplace)),
-            Hint::new(Action::ToggleBold, "^B", t(Key::HintBold)),
-            Hint::new(Action::Undo, "^Z", t(Key::HintUndo)),
-            Hint::new(Action::Yank, "^C", t(Key::HintYank)),
-            Hint::new(Action::Paste, "^V", t(Key::HintPaste)),
-            // Prefijo de chord de formato: avisa al usuario que `^P` abre un
-            // submenu (negrita/italica/codigo). No es una accion: no se remapea.
+            // Prefijos de chord de formato y vista: avisan que `^P`/`^O` abren un
+            // submenu. No son acciones: no se remapean.
             Hint::prefix("^P", t(Key::HintFormatPrefix)),
             Hint::prefix("^O", t(Key::HintViewPrefix)),
             Hint::new(Action::Quit, "^Q", t(Key::HintQuit)),
