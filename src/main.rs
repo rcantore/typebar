@@ -243,7 +243,8 @@ fn main() -> std::io::Result<()> {
     // siempre Latte; el oscuro es el configurado, salvo que el config YA sea Latte
     // (ahi el oscuro cae a frappe, para que el toggle tenga a donde ir). El editor
     // arranca mostrando el theme que el usuario eligio: si configuro Latte, arranca
-    // en claro. `by_name` cae a `frappe` ante un nombre desconocido.
+    // en claro. `by_name` cae a `frappe` ante un nombre desconocido. El modo
+    // whitepaper usa aparte un theme propio (`Theme::paper()`, monocromo).
     let configured_is_light = config.ui.theme.eq_ignore_ascii_case("latte");
     let light_theme = Theme::latte();
     let dark_theme = if configured_is_light {
@@ -270,8 +271,11 @@ fn main() -> std::io::Result<()> {
         &mut terminal,
         document,
         keymap.as_ref(),
-        dark_theme,
-        light_theme,
+        Themes {
+            dark: dark_theme,
+            light: light_theme,
+            paper: Theme::paper(),
+        },
         configured_is_light,
         wysiwyg_level,
     );
@@ -303,10 +307,11 @@ struct AppState {
     /// el texto. Estado de la vista, no del documento. Se togglea con el submenu
     /// "view" y, en presets modeless, sale tambien con Esc.
     zen: bool,
-    /// Modo whitepaper: orquesta zen (chrome oculto) + theme claro (Latte) + una
-    /// columna de ancho fijo centrada, para la sensacion "hoja de papel". Estado
-    /// de la vista; cuando esta activo, `run` fuerza el theme claro y `draw`
-    /// centra el editor en una columna de `WHITEPAPER_WIDTH`.
+    /// Modo whitepaper: orquesta zen (chrome oculto) + theme monocromo de papel
+    /// (tinta sobre papel, `Theme::paper()`) + una columna de ancho fijo centrada,
+    /// para la sensacion "hoja de papel". Estado de la vista; cuando esta activo,
+    /// `run` fuerza el theme de papel y `draw` centra el editor en una columna de
+    /// `WHITEPAPER_WIDTH` y dibuja un cursor sintetico visible sobre el fondo claro.
     whitepaper: bool,
     /// Toggle del theme claro (Latte) en runtime (`^O L`). Estado de la vista; el
     /// theme activo se calcula en `run` a partir de este flag.
@@ -347,12 +352,20 @@ impl AppState {
     }
 }
 
+/// Los tres themes disponibles en runtime: el oscuro (el configurado), el claro
+/// (Latte, toggle `^O L`) y el de papel (modo whitepaper, `^O W`). Se arman una
+/// vez en `main`; `run` elige cual usar cada frame segun el estado de la vista.
+struct Themes {
+    dark: Theme,
+    light: Theme,
+    paper: Theme,
+}
+
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
     doc: Document,
     keymap: &dyn Keymap,
-    dark: Theme,
-    light: Theme,
+    themes: Themes,
     light_on: bool,
     wysiwyg_level: u8,
 ) -> std::io::Result<()> {
@@ -364,13 +377,15 @@ fn run(
     let mut state = AppState::new(light_on);
 
     loop {
-        // Theme activo: el claro (Latte) cuando el toggle `^O L` esta on O cuando
-        // el modo whitepaper esta activo (que siempre va sobre papel); si no, el
-        // configurado (oscuro). Se recalcula cada frame.
-        let theme = if state.light_on || state.whitepaper {
-            &light
+        // Theme activo: el modo whitepaper usa su theme monocromo (tinta sobre
+        // papel) y gana sobre todo; si no, el claro (Latte) cuando el toggle `^O L`
+        // esta on; si no, el configurado (oscuro). Se recalcula cada frame.
+        let theme = if state.whitepaper {
+            &themes.paper
+        } else if state.light_on {
+            &themes.light
         } else {
-            &dark
+            &themes.dark
         };
         // Barra de tabs de los buffers abiertos (solo con >=2 y con el chrome
         // visible, es decir fuera de zen y de whitepaper). `tab_line` es lo que
@@ -797,13 +812,27 @@ fn draw(
         }
     }
 
-    // Cursor real de terminal: +1,+1 por el borde del Block, y restando scroll.
-    // La X es la columna *visual* (celdas), no el indice de char: asi cae sobre
-    // el glifo que dibujo el render aunque haya CJK/emoji de doble ancho.
+    // Cursor: +1,+1 por el borde del Block, y restando scroll. La X es la columna
+    // *visual* (celdas), no el indice de char: asi cae sobre el glifo que dibujo el
+    // render aunque haya CJK/emoji de doble ancho.
     if doc.line >= scroll {
         let cursor_x = editor_area.x + border + pad_left + doc.display_col() as u16;
         let cursor_y = editor_area.y + border + (doc.line - scroll) as u16;
-        frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+        if whitepaper {
+            // En papel el cursor real del terminal usa un color fijo que sobre el
+            // fondo claro suele quedar invisible. En vez de depender de el,
+            // dibujamos un cursor sintetico: marcamos la celda bajo el cursor como
+            // REVERSED. El post-pass `apply_theme_fill` le pone tinta/papel en sus
+            // canales Reset y el REVERSED los intercambia, dejando un bloque de
+            // tinta sobre el papel. No posicionamos el cursor del terminal (queda
+            // oculto al no llamar a `set_cursor_position`) para no duplicarlo.
+            if editor_area.contains(Position::new(cursor_x, cursor_y)) {
+                frame.buffer_mut()[(cursor_x, cursor_y)]
+                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+            }
+        } else {
+            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+        }
     }
 }
 
@@ -1124,6 +1153,50 @@ mod tests {
             sangria > 20,
             "el texto deberia estar centrado (sangria {sangria}): {texto:?}"
         );
+    }
+
+    #[test]
+    fn draw_whitepaper_dibuja_cursor_sintetico_visible() {
+        // En papel no usamos el cursor del terminal (invisible sobre fondo claro):
+        // la celda bajo el cursor queda marcada REVERSED, y tras apply_theme_fill
+        // termina como un bloque de tinta sobre papel. Ademas NO se posiciona el
+        // cursor real del terminal.
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let doc = doc_with("hola mundo"); // cursor en 0:0 -> primera celda de texto
+        let km = StandardKeymap;
+        let theme = Theme::paper();
+        let mut terminal = Terminal::new(TestBackend::new(120, 8)).unwrap();
+        let mut state = AppState::new(false);
+        state.whitepaper = true;
+        terminal
+            .draw(|f| {
+                draw(f, &doc, &km, &theme, 2, &mut state, None);
+                apply_theme_fill(f, &theme);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        // Buscar la celda con la 'h' de "hola" (la primera del texto): debe estar
+        // en REVERSED y con colores concretos (tinta/papel), nunca Reset.
+        let area = *buf.area();
+        let mut found = false;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == "h" {
+                    assert!(
+                        cell.modifier.contains(Modifier::REVERSED),
+                        "la celda del cursor deberia estar REVERSED"
+                    );
+                    assert_eq!(cell.bg, theme.background.unwrap());
+                    assert_eq!(cell.fg, theme.text.unwrap());
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "deberia encontrarse la celda del cursor (la 'h')");
     }
 
     #[test]
