@@ -49,6 +49,24 @@ How to maintain this file:
   showing each command's name and its current shortcut, and runs the chosen one
   on Enter (also a way to discover the keybindings). Remappable via the
   `open-palette` action.
+- Whitepaper mode: a typewriter-like "sheet of paper" that orchestrates zen, a
+  monochrome ink-on-paper theme (hierarchy from weight, not color), and a
+  centered fixed-width column. Toggle from the *view* submenu — `Ctrl-O W`
+  (standard / wordstar) or `z w` (vim); `Esc` exits in the modeless presets.
+  Remappable via the `toggle-whitepaper` action. Draws a synthetic cursor so it
+  stays visible on the light background.
+- In-editor HTML export: the *Export HTML* command (command palette) exports the
+  current buffer to `<file>.html` without leaving the editor, reporting the
+  result in the status bar. Remappable via the `export-html` action.
+- `-h` / `--help` command-line flag: prints usage and the available options, then
+  exits. Previously unknown flags were silently ignored.
+
+### Changed
+
+- Leaner toolbar: trimmed to the essentials plus the two submenus (Save,
+  Commands…, Search, Format…, View…, Quit) so it no longer overflows and clips
+  the Quit hint; the rest of the commands are discoverable via the command
+  palette (`Ctrl-A`) and their keys.
 
 ## [0.1.0] - 2026-06-24
 
