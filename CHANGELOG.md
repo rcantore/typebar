@@ -16,6 +16,8 @@ How to maintain this file:
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-28
+
 ### Added
 
 - Word count in the status bar (Unicode-aware), showing the document total and
@@ -83,5 +85,6 @@ How to maintain this file:
 - System clipboard integration.
 - Bilingual README (English / Español).
 
-[Unreleased]: https://github.com/rcantore/typebar/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rcantore/typebar/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/rcantore/typebar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rcantore/typebar/releases/tag/v0.1.0
