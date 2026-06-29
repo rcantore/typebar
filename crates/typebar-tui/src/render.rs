@@ -104,6 +104,20 @@ fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Ve
             "strong_emphasis" => Some(Style::default().add_modifier(Modifier::BOLD)),
             "emphasis" => Some(Style::default().add_modifier(Modifier::ITALIC)),
             "code_span" => Some(Style::default().fg(theme.code_fg).bg(theme.code_bg)),
+            // Bloques de codigo (fenced e indentado): pintamos TODO el rango
+            // del bloque con el estilo de codigo (fg+bg) para que se lea como
+            // una "caja", no como prosa. Es un nodo de bloque (poca
+            // profundidad), asi que los hijos mas profundos pueden refinar (ver
+            // la cerca abajo). El contenido (`code_fence_content`, `info_string`
+            // y los tokens internos) no tiene brazo propio, asi que hereda este
+            // estilo.
+            "fenced_code_block" | "indented_code_block" => {
+                Some(Style::default().fg(theme.code_fg).bg(theme.code_bg))
+            }
+            // La cerca ``` de apertura/cierre: dimmeada como marcador pero sobre
+            // el fondo de codigo, asi la linea forma parte de la caja. Debe ir
+            // antes del brazo generico `_delimiter` (que no lleva fondo).
+            "fenced_code_block_delimiter" => Some(marker_style(theme).bg(theme.code_bg)),
             // Todos los marcadores y delimitadores: dimmeados.
             k if k.ends_with("_marker") || k.ends_with("_delimiter") => Some(marker_style(theme)),
             _ => None,
@@ -512,6 +526,60 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect()
+    }
+
+    // --- Bloques de codigo (fenced e indentado) ---------------------------
+
+    #[test]
+    fn fenced_code_block_pinta_el_cuerpo_con_estilo_de_codigo() {
+        // El contenido de un ``` block debe leer con fg/bg de codigo (caja), no
+        // como prosa. Cursor afuera (linea 0) y Nivel 2.
+        let theme = test_theme();
+        let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        assert_eq!(line_text(&lines, 2), "let x = 1;");
+        let mut chars = 0;
+        for span in &lines[2].spans {
+            for _ in span.content.chars() {
+                assert_eq!(span.style.fg, Some(theme.code_fg), "fg de codigo");
+                assert_eq!(span.style.bg, Some(theme.code_bg), "bg de codigo");
+                chars += 1;
+            }
+        }
+        assert_eq!(chars, "let x = 1;".chars().count());
+    }
+
+    #[test]
+    fn fenced_code_block_mantiene_la_cerca_visible_sobre_fondo_de_codigo() {
+        // A diferencia de los backticks inline, la cerca NO se oculta en Nivel
+        // 2: queda como borde de la caja, dimmeada y con el fondo de codigo.
+        let theme = test_theme();
+        let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        assert_eq!(line_text(&lines, 1), "```rust");
+        assert_eq!(line_text(&lines, 3), "```");
+        // Los backticks de la cerca de cierre llevan el bg de codigo.
+        for span in &lines[3].spans {
+            assert_eq!(span.style.bg, Some(theme.code_bg));
+            assert_eq!(span.style.fg, Some(theme.marker));
+        }
+    }
+
+    #[test]
+    fn indented_code_block_se_pinta_como_codigo() {
+        // Un bloque indentado (4 espacios) tambien recibe el fondo de codigo.
+        let theme = test_theme();
+        let source = "antes\n\n    let y = 2;\n\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        assert_eq!(line_text(&lines, 2), "    let y = 2;");
+        let mut any = false;
+        for span in &lines[2].spans {
+            for _ in span.content.chars() {
+                assert_eq!(span.style.bg, Some(theme.code_bg));
+                any = true;
+            }
+        }
+        assert!(any, "el bloque indentado deberia tener celdas con fondo");
     }
 
     #[test]

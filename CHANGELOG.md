@@ -16,6 +16,13 @@ How to maintain this file:
 
 ## [Unreleased]
 
+### Fixed
+
+- Code blocks now render as a distinct block. Fenced (` ``` `) and indented code
+  blocks get the code foreground/background across the whole block (including the
+  opening/closing fence, which stays visible and dimmed as the box border)
+  instead of looking like plain prose. Syntax highlighting is still pending.
+
 ## [0.2.0] - 2026-06-28
 
 ### Added
