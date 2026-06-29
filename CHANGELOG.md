@@ -18,9 +18,9 @@ How to maintain this file:
 
 ### Fixed
 
-- Zen mode now has a top margin so the text no longer hugs the top edge,
-  mirroring the extra left margin zen already had (both compensate for the
-  border that zen hides). Whitepaper keeps its larger sheet margin.
+- Top margin so the text no longer hugs the top edge, in both normal and zen
+  modes (a row of air, mirroring the existing left margin). Whitepaper keeps its
+  larger sheet margin.
 
 ## [0.2.0] - 2026-06-28
 
