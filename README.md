@@ -77,24 +77,44 @@ and your text rendered as you type.
 
 ## Install & run
 
-### Download a prebuilt binary (recommended)
+### Install a prebuilt binary (recommended)
 
-Grab the archive for your platform from the
-[latest release](https://github.com/rcantore/typebar/releases/latest):
+One command, no Gatekeeper/SmartScreen prompt (installers downloaded with
+`curl`/PowerShell are not quarantined). The binary lands in `~/.cargo/bin`
+(or `~/.local/bin`) and is added to your `PATH`.
 
-- **macOS** (Apple Silicon): `typebar-<version>-aarch64-apple-darwin.tar.gz`
-- **Linux** (x86_64): `typebar-<version>-x86_64-unknown-linux-gnu.tar.gz`
-- **Windows** (x86_64): `typebar-<version>-x86_64-pc-windows-msvc.zip`
-
-Each archive bundles the `typebar` binary with the README and licenses, plus a
-matching `.sha256` checksum. Extract it and run the binary:
+**macOS / Linux:**
 
 ```bash
-tar xzf typebar-*-x86_64-unknown-linux-gnu.tar.gz
-./typebar-*/typebar notes.md
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/rcantore/typebar/releases/latest/download/typebar-installer.sh | sh
 ```
 
-The binaries are **unsigned**, so the OS may warn on first launch:
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/rcantore/typebar/releases/latest/download/typebar-installer.ps1 | iex"
+```
+
+Then run `typebar notes.md`.
+
+#### Or download the archive manually
+
+From the [latest release](https://github.com/rcantore/typebar/releases/latest):
+
+- **macOS** (Apple Silicon): `typebar-aarch64-apple-darwin.tar.xz`
+- **Linux** (x86_64): `typebar-x86_64-unknown-linux-gnu.tar.xz`
+- **Windows** (x86_64): `typebar-x86_64-pc-windows-msvc.zip`
+
+Each archive bundles the `typebar` binary with the README and licenses, plus a
+matching `.sha256` checksum:
+
+```bash
+tar xf typebar-aarch64-apple-darwin.tar.xz
+./typebar-aarch64-apple-darwin/typebar notes.md
+```
+
+Because the browser flags manual downloads, the **unsigned** binary will warn on
+first launch (the installers above avoid this):
 
 - **macOS**: right-click the binary and choose *Open* the first time (or clear
   the quarantine flag with `xattr -d com.apple.quarantine ./typebar`);

@@ -81,25 +81,44 @@ texto renderizado mientras escribís.
 
 ## Instalación y ejecución
 
-### Descargar un binario precompilado (recomendado)
+### Instalar un binario precompilado (recomendado)
 
-Bajá el archivo de tu plataforma desde el
-[último release](https://github.com/rcantore/typebar/releases/latest):
+Un comando, sin prompt de Gatekeeper/SmartScreen (los instaladores bajados con
+`curl`/PowerShell no quedan en cuarentena). El binario va a `~/.cargo/bin`
+(o `~/.local/bin`) y se agrega a tu `PATH`.
 
-- **macOS** (Apple Silicon): `typebar-<versión>-aarch64-apple-darwin.tar.gz`
-- **Linux** (x86_64): `typebar-<versión>-x86_64-unknown-linux-gnu.tar.gz`
-- **Windows** (x86_64): `typebar-<versión>-x86_64-pc-windows-msvc.zip`
-
-Cada archivo trae el binario `typebar` junto al README y las licencias, más un
-checksum `.sha256`. Descomprimilo y corré el binario:
+**macOS / Linux:**
 
 ```bash
-tar xzf typebar-*-x86_64-unknown-linux-gnu.tar.gz
-./typebar-*/typebar notas.md
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/rcantore/typebar/releases/latest/download/typebar-installer.sh | sh
 ```
 
-Los binarios están **sin firmar**, así que el sistema puede avisar en el primer
-arranque:
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/rcantore/typebar/releases/latest/download/typebar-installer.ps1 | iex"
+```
+
+Después corré `typebar notas.md`.
+
+#### O descargar el archivo a mano
+
+Desde el [último release](https://github.com/rcantore/typebar/releases/latest):
+
+- **macOS** (Apple Silicon): `typebar-aarch64-apple-darwin.tar.xz`
+- **Linux** (x86_64): `typebar-x86_64-unknown-linux-gnu.tar.xz`
+- **Windows** (x86_64): `typebar-x86_64-pc-windows-msvc.zip`
+
+Cada archivo trae el binario `typebar` junto al README y las licencias, más un
+checksum `.sha256`:
+
+```bash
+tar xf typebar-aarch64-apple-darwin.tar.xz
+./typebar-aarch64-apple-darwin/typebar notas.md
+```
+
+Como el navegador marca las descargas manuales, el binario **sin firmar** avisa
+en el primer arranque (los instaladores de arriba evitan esto):
 
 - **macOS**: hacé click derecho sobre el binario y elegí *Abrir* la primera vez
   (o limpiá la marca de cuarentena con `xattr -d com.apple.quarantine ./typebar`);
