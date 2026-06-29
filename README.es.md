@@ -24,7 +24,7 @@ disfrutás *escribir*, no porque quieras un asistente que lo haga por vos.
 typebar no tiene IA, ni autocompletado, ni nube. Sólo vos, el teclado, y tu
 texto renderizado mientras escribís.
 
-> **Estado:** desarrollo temprano (`v0.1.0`). Sólo Markdown, un único buffer.
+> **Estado:** desarrollo temprano (`v0.2.0`). Sólo Markdown.
 
 ## Características
 
@@ -80,6 +80,34 @@ texto renderizado mientras escribís.
   `$LANG`, ambos configurables.
 
 ## Instalación y ejecución
+
+### Descargar un binario precompilado (recomendado)
+
+Bajá el archivo de tu plataforma desde el
+[último release](https://github.com/rcantore/typebar/releases/latest):
+
+- **macOS** (Apple Silicon): `typebar-<versión>-aarch64-apple-darwin.tar.gz`
+- **Linux** (x86_64): `typebar-<versión>-x86_64-unknown-linux-gnu.tar.gz`
+- **Windows** (x86_64): `typebar-<versión>-x86_64-pc-windows-msvc.zip`
+
+Cada archivo trae el binario `typebar` junto al README y las licencias, más un
+checksum `.sha256`. Descomprimilo y corré el binario:
+
+```bash
+tar xzf typebar-*-x86_64-unknown-linux-gnu.tar.gz
+./typebar-*/typebar notas.md
+```
+
+Los binarios están **sin firmar**, así que el sistema puede avisar en el primer
+arranque:
+
+- **macOS**: hacé click derecho sobre el binario y elegí *Abrir* la primera vez
+  (o limpiá la marca de cuarentena con `xattr -d com.apple.quarantine ./typebar`);
+  después corre normal.
+- **Windows**: si aparece SmartScreen, elegí *Más información -> Ejecutar de
+  todas formas*.
+
+### Compilar desde el código
 
 Requiere **Rust 1.85+** (edición 2024).
 
