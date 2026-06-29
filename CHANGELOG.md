@@ -18,10 +18,11 @@ How to maintain this file:
 
 ### Fixed
 
-- Code blocks now render as a distinct block. Fenced (` ``` `) and indented code
-  blocks get the code foreground/background across the whole block (including the
-  opening/closing fence, which stays visible and dimmed as the box border)
-  instead of looking like plain prose. Syntax highlighting is still pending.
+- Code blocks now render as a box. Fenced (` ``` `) and indented code blocks fill
+  with the code background as a rectangle sized to the widest line, instead of
+  looking like plain prose. In level 2 the opening/closing fences collapse into
+  the box (like inline backticks do) on inactive lines, and reappear when the
+  cursor is on them. Syntax highlighting is still pending.
 
 ## [0.2.0] - 2026-06-28
 
