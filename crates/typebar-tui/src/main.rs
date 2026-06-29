@@ -727,17 +727,10 @@ fn draw(
     // fuera de zen alcanza con 1 (el borde ya separa). Suma al offset del cursor.
     let pad_left: u16 = if zen { 2 } else { 1 };
     // Margen superior, para que el texto no arranque pegado al borde de arriba.
-    // En papel son 2 (se siente mas una "hoja"); en zen 1, para compensar que no
-    // hay borde que separe (misma logica que `pad_left`, que en zen sube a 2).
-    // Fuera de zen/papel es 0: el borde del Block ya da la separacion. Suma al
-    // offset del cursor y resta del alto util (igual que `pad_left` con la columna).
-    let pad_top: u16 = if whitepaper {
-        2
-    } else if zen {
-        1
-    } else {
-        0
-    };
+    // En papel son 2 (se siente mas una "hoja"); en el resto 1, una fila de aire
+    // (tanto en normal como en zen el texto quedaba pegado arriba). Suma al offset
+    // del cursor y resta del alto util (igual que `pad_left` con la columna).
+    let pad_top: u16 = if whitepaper { 2 } else { 1 };
     // Alto util dentro del borde del Block y del margen superior.
     let viewport_height = editor_area.height.saturating_sub(2 * border + pad_top) as usize;
     // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
