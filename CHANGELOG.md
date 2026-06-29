@@ -16,6 +16,12 @@ How to maintain this file:
 
 ## [Unreleased]
 
+### Fixed
+
+- Zen mode now has a top margin so the text no longer hugs the top edge,
+  mirroring the extra left margin zen already had (both compensate for the
+  border that zen hides). Whitepaper keeps its larger sheet margin.
+
 ## [0.2.0] - 2026-06-28
 
 ### Added
