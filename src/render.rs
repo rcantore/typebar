@@ -18,8 +18,14 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use tree_sitter_md::MarkdownParser;
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
+
+/// Margen a la derecha (en celdas) que se agrega al ancho del contenido al
+/// dibujar la "caja" de un bloque de codigo, para que el texto no quede pegado
+/// al borde derecho del fondo.
+const CODE_BOX_PAD: usize = 2;
 
 // La paleta ya no vive aca: la provee el Theme Engine (src/theme/). El renderer
 // recibe un `&Theme` y lee sus campos, sin conocer colores concretos.
@@ -62,7 +68,10 @@ struct StyleSpan {
 ///
 /// El render decide por linea si aplicar `hide_byte`/`replace_byte` (ver
 /// `render`). Los colores salen del `theme`.
-fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Vec<Option<char>>) {
+fn collect_styles(
+    source: &str,
+    theme: &Theme,
+) -> (Vec<StyleSpan>, Vec<bool>, Vec<Option<char>>, Vec<usize>) {
     let mut parser = MarkdownParser::default();
     let tree = parser
         .parse(source.as_bytes(), None)
@@ -71,6 +80,9 @@ fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Ve
     let mut spans: Vec<StyleSpan> = Vec::new();
     let mut hide_byte: Vec<bool> = vec![false; source.len()];
     let mut replace_byte: Vec<Option<char>> = vec![None; source.len()];
+    // Rangos (en bytes) de los bloques de codigo, para calcular el relleno de
+    // "caja" por linea una vez terminado el DFS.
+    let mut code_blocks: Vec<std::ops::Range<usize>> = Vec::new();
     let mut cursor = tree.walk();
 
     // DFS iterativo. `stack` guarda los kinds de los ancestros para saber, por
@@ -194,6 +206,21 @@ fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Ve
             }
         }
 
+        // (f) Bloques de codigo: registrar el rango para el relleno de "caja"
+        //     (ver el calculo de `code_pad` al final). Y en Nivel 2 ocultar la
+        //     cerca (``` + su info string) en lineas inactivas, igual que se
+        //     ocultan el `#` o los backticks inline: asi las lineas de apertura
+        //     y cierre quedan como bandas vacias de la caja. El contenido del
+        //     bloque NO se oculta.
+        if matches!(kind, "fenced_code_block" | "indented_code_block") {
+            code_blocks.push(range.clone());
+        }
+        if matches!(kind, "fenced_code_block_delimiter" | "info_string") {
+            for slot in &mut hide_byte[range.start..range.end] {
+                *slot = true;
+            }
+        }
+
         // Descender; si no hay hijos, avanzar a hermano o subir.
         if cursor.goto_first_child() {
             stack.push(kind);
@@ -209,6 +236,43 @@ fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Ve
                 None => break 'dfs, // volvimos a la raiz del walk principal: terminamos el DFS
             }
             cursor.goto_parent();
+        }
+    }
+
+    // Relleno de "caja" de los bloques de codigo: `code_pad[i]` es el ancho
+    // visual objetivo de la linea `i` si pertenece a un bloque de codigo (0 si
+    // no). El render rellena cada linea de codigo a la derecha hasta ese ancho
+    // con el fondo de codigo, formando un rectangulo en vez de pegar el fondo al
+    // texto. El ancho es la linea mas ancha del bloque + `CODE_BOX_PAD`.
+    let line_count = source.split('\n').count();
+    let mut code_pad: Vec<usize> = vec![0; line_count];
+    if !code_blocks.is_empty() {
+        // Offsets de inicio de cada linea, para mapear byte -> indice de linea.
+        let mut line_starts: Vec<usize> = vec![0];
+        for (i, b) in source.bytes().enumerate() {
+            if b == b'\n' {
+                line_starts.push(i + 1);
+            }
+        }
+        let lines: Vec<&str> = source.split('\n').collect();
+        let line_of = |byte: usize| match line_starts.binary_search(&byte) {
+            Ok(i) => i,
+            Err(i) => i - 1,
+        };
+        for r in &code_blocks {
+            if r.start >= r.end {
+                continue;
+            }
+            let first = line_of(r.start);
+            let last = line_of(r.end - 1).min(line_count - 1);
+            let width = (first..=last)
+                .map(|i| UnicodeWidthStr::width(lines[i]))
+                .max()
+                .unwrap_or(0)
+                + CODE_BOX_PAD;
+            for slot in &mut code_pad[first..=last] {
+                *slot = (*slot).max(width);
+            }
         }
     }
 
@@ -235,7 +299,7 @@ fn collect_styles(source: &str, theme: &Theme) -> (Vec<StyleSpan>, Vec<bool>, Ve
                 break;
             }
             if !block_cursor.goto_parent() {
-                return (spans, hide_byte, replace_byte);
+                return (spans, hide_byte, replace_byte, code_pad);
             }
         }
     }
@@ -275,7 +339,7 @@ pub fn render(
     active_line: Option<usize>,
     level: u8,
 ) -> Vec<Line<'static>> {
-    let (spans, hide_byte, replace_byte) = collect_styles(source, theme);
+    let (spans, hide_byte, replace_byte, code_pad) = collect_styles(source, theme);
 
     // Estilo por byte. Pintamos los tramos de menor a mayor profundidad, asi
     // el mas profundo (mas especifico) queda arriba.
@@ -361,6 +425,26 @@ pub fn render(
             line_spans.push(Span::styled(source[k..j].to_string(), style));
             k = j;
         }
+
+        // Relleno de "caja": si la linea pertenece a un bloque de codigo,
+        // extender el fondo de codigo a la derecha hasta el ancho objetivo del
+        // bloque. Asi todas las lineas del bloque (contenido y cercas) forman un
+        // rectangulo uniforme. Las cercas, ocultas en lineas inactivas, quedan
+        // como bandas vacias del mismo ancho.
+        let pad_to = code_pad.get(line_idx).copied().unwrap_or(0);
+        if pad_to > 0 {
+            let cur: usize = line_spans
+                .iter()
+                .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
+            if cur < pad_to {
+                line_spans.push(Span::styled(
+                    " ".repeat(pad_to - cur),
+                    Style::default().bg(theme.code_bg),
+                ));
+            }
+        }
+
         lines.push(Line::from(line_spans));
     }
     lines
@@ -528,56 +612,79 @@ mod tests {
 
     // --- Bloques de codigo (fenced e indentado) ---------------------------
 
-    #[test]
-    fn fenced_code_block_pinta_el_cuerpo_con_estilo_de_codigo() {
-        // El contenido de un ``` block debe leer con fg/bg de codigo (caja), no
-        // como prosa. Cursor afuera (linea 0) y Nivel 2.
-        let theme = test_theme();
-        let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
-        assert_eq!(line_text(&lines, 2), "let x = 1;");
-        let mut chars = 0;
-        for span in &lines[2].spans {
-            for _ in span.content.chars() {
-                assert_eq!(span.style.fg, Some(theme.code_fg), "fg de codigo");
-                assert_eq!(span.style.bg, Some(theme.code_bg), "bg de codigo");
-                chars += 1;
-            }
-        }
-        assert_eq!(chars, "let x = 1;".chars().count());
+    /// Ancho visual total de una linea (suma de los anchos de sus spans).
+    fn line_width(lines: &[Line<'static>], idx: usize) -> usize {
+        lines[idx]
+            .spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+            .sum()
     }
 
     #[test]
-    fn fenced_code_block_mantiene_la_cerca_visible_sobre_fondo_de_codigo() {
-        // A diferencia de los backticks inline, la cerca NO se oculta en Nivel
-        // 2: queda como borde de la caja, dimmeada y con el fondo de codigo.
+    fn fenced_code_block_pinta_el_cuerpo_como_caja() {
+        // El contenido lee con fg/bg de codigo y la linea se rellena a la
+        // derecha hasta el ancho de la caja. Cursor afuera (linea 0), Nivel 2.
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
         let lines = render(source, None, &[], None, &theme, Some(0), 2);
-        assert_eq!(line_text(&lines, 1), "```rust");
-        assert_eq!(line_text(&lines, 3), "```");
-        // Los backticks de la cerca de cierre llevan el bg de codigo.
-        for span in &lines[3].spans {
-            assert_eq!(span.style.bg, Some(theme.code_bg));
-            assert_eq!(span.style.fg, Some(theme.marker));
-        }
-    }
-
-    #[test]
-    fn indented_code_block_se_pinta_como_codigo() {
-        // Un bloque indentado (4 espacios) tambien recibe el fondo de codigo.
-        let theme = test_theme();
-        let source = "antes\n\n    let y = 2;\n\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
-        assert_eq!(line_text(&lines, 2), "    let y = 2;");
-        let mut any = false;
+        // El texto visible (sin contar el relleno) queda intacto.
+        assert_eq!(line_text(&lines, 2).trim_end(), "let x = 1;");
+        // Ancho de caja = max(7, 10, 3) + CODE_BOX_PAD.
+        let box_w = "let x = 1;".len() + CODE_BOX_PAD;
+        assert_eq!(line_width(&lines, 2), box_w);
+        // Todas las celdas (texto + relleno) llevan el fondo de codigo.
         for span in &lines[2].spans {
             for _ in span.content.chars() {
                 assert_eq!(span.style.bg, Some(theme.code_bg));
-                any = true;
             }
         }
-        assert!(any, "el bloque indentado deberia tener celdas con fondo");
+    }
+
+    #[test]
+    fn fenced_code_block_oculta_las_cercas_como_bandas() {
+        // En Nivel 2 con el cursor afuera, las cercas se ocultan (como los
+        // backticks inline) y quedan como bandas vacias del ancho de la caja.
+        let theme = test_theme();
+        let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let box_w = "let x = 1;".len() + CODE_BOX_PAD;
+        for idx in [1, 3] {
+            assert_eq!(line_text(&lines, idx).trim_end(), "");
+            assert_eq!(line_width(&lines, idx), box_w);
+            for span in &lines[idx].spans {
+                assert_eq!(span.style.bg, Some(theme.code_bg));
+            }
+        }
+    }
+
+    #[test]
+    fn fenced_code_block_muestra_la_cerca_en_la_linea_activa() {
+        // Con el cursor sobre la cerca de apertura (linea 1), se ve cruda para
+        // poder editarla, y la caja se mantiene (rellena al mismo ancho).
+        let theme = test_theme();
+        let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(1), 2);
+        assert_eq!(line_text(&lines, 1).trim_end(), "```rust");
+        let box_w = "let x = 1;".len() + CODE_BOX_PAD;
+        assert_eq!(line_width(&lines, 1), box_w);
+    }
+
+    #[test]
+    fn indented_code_block_se_pinta_como_caja() {
+        // Un bloque indentado (4 espacios) tambien recibe el fondo de codigo y
+        // el relleno de caja.
+        let theme = test_theme();
+        let source = "antes\n\n    let y = 2;\n\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        assert_eq!(line_text(&lines, 2).trim_end(), "    let y = 2;");
+        let box_w = "    let y = 2;".len() + CODE_BOX_PAD;
+        assert_eq!(line_width(&lines, 2), box_w);
+        for span in &lines[2].spans {
+            for _ in span.content.chars() {
+                assert_eq!(span.style.bg, Some(theme.code_bg));
+            }
+        }
     }
 
     #[test]
