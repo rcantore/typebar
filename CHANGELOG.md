@@ -16,12 +16,6 @@ How to maintain this file:
 
 ## [Unreleased]
 
-### Fixed
-
-- Top margin so the text no longer hugs the top edge, in both normal and zen
-  modes (a row of air, mirroring the existing left margin). Whitepaper keeps its
-  larger sheet margin.
-
 ## [0.2.0] - 2026-06-28
 
 ### Added
@@ -75,6 +69,12 @@ How to maintain this file:
   Commands…, Search, Format…, View…, Quit) so it no longer overflows and clips
   the Quit hint; the rest of the commands are discoverable via the command
   palette (`Ctrl-A`) and their keys.
+
+### Fixed
+
+- Top margin so the text no longer hugs the top edge, in both normal and zen
+  modes (a row of air, mirroring the existing left margin). Whitepaper keeps its
+  larger sheet margin.
 
 ## [0.1.0] - 2026-06-24
 
