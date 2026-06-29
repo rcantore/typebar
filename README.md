@@ -25,7 +25,7 @@ usually because you enjoy *writing*, not because you want an assistant doing it
 for you. typebar has no AI, no autocomplete, no cloud. Just you, the keyboard,
 and your text rendered as you type.
 
-> **Status:** early development (`v0.1.0`). Markdown-only, single buffer.
+> **Status:** early development (`v0.2.0`). Markdown-only.
 
 ## Features
 
@@ -76,6 +76,32 @@ and your text rendered as you type.
   `$LANG`, both overridable in config.
 
 ## Install & run
+
+### Download a prebuilt binary (recommended)
+
+Grab the archive for your platform from the
+[latest release](https://github.com/rcantore/typebar/releases/latest):
+
+- **macOS** (Apple Silicon): `typebar-<version>-aarch64-apple-darwin.tar.gz`
+- **Linux** (x86_64): `typebar-<version>-x86_64-unknown-linux-gnu.tar.gz`
+- **Windows** (x86_64): `typebar-<version>-x86_64-pc-windows-msvc.zip`
+
+Each archive bundles the `typebar` binary with the README and licenses, plus a
+matching `.sha256` checksum. Extract it and run the binary:
+
+```bash
+tar xzf typebar-*-x86_64-unknown-linux-gnu.tar.gz
+./typebar-*/typebar notes.md
+```
+
+The binaries are **unsigned**, so the OS may warn on first launch:
+
+- **macOS**: right-click the binary and choose *Open* the first time (or clear
+  the quarantine flag with `xattr -d com.apple.quarantine ./typebar`);
+  afterwards it runs normally.
+- **Windows**: if SmartScreen appears, choose *More info -> Run anyway*.
+
+### Build from source
 
 Requires **Rust 1.85+** (edition 2024).
 
