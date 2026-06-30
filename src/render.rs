@@ -27,6 +27,18 @@ use crate::theme::Theme;
 /// al borde derecho del fondo.
 const CODE_BOX_PAD: usize = 2;
 
+/// Margen a la izquierda (en celdas) dentro de la "caja" de codigo: el contenido
+/// se corre a la derecha esta cantidad para que no quede pegado al borde
+/// izquierdo del fondo. El cursor lo compensa en `main` (ver `code_line_flags`).
+pub const CODE_BOX_LEFT_PAD: usize = 1;
+
+/// Margen a la derecha (en celdas) que `main` deja libre entre la caja de codigo
+/// y el borde del area de texto: la caja se extiende casi de lado a lado pero se
+/// detiene esta cantidad antes del borde, para que "respire" dentro de un margen
+/// en vez de pegarse al filo. Lo usa `main` al calcular el `code_box_width` que
+/// le pasa a `render`.
+pub const CODE_BOX_RIGHT_MARGIN: usize = 4;
+
 // La paleta ya no vive aca: la provee el Theme Engine (src/theme/). El renderer
 // recibe un `&Theme` y lee sus campos, sin conocer colores concretos.
 
@@ -207,14 +219,17 @@ fn collect_styles(
         }
 
         // (f) Bloques de codigo: registrar el rango para el relleno de "caja"
-        //     (ver el calculo de `code_pad` al final). Y en Nivel 2 ocultar la
-        //     cerca (``` + su info string) en lineas inactivas, igual que se
-        //     ocultan el `#` o los backticks inline: asi las lineas de apertura
-        //     y cierre quedan como bandas vacias de la caja. El contenido del
-        //     bloque NO se oculta.
+        //     (ver el calculo de `code_pad` al final).
         if matches!(kind, "fenced_code_block" | "indented_code_block") {
             code_blocks.push(range.clone());
         }
+
+        // (g) Cercas de un bloque fenced (``` de apertura/cierre) y su info
+        //     string (el lenguaje tras ```): se ocultan en lineas inactivas, asi
+        //     la linea queda como banda limpia del fondo de codigo (sin los
+        //     backticks) formando el borde superior/inferior de la caja. En la
+        //     linea activa reaparecen (show_markers) para poder editarlas. El
+        //     relleno de "caja" mantiene el ancho aunque la linea quede vacia.
         if matches!(kind, "fenced_code_block_delimiter" | "info_string") {
             for slot in &mut hide_byte[range.start..range.end] {
                 *slot = true;
@@ -269,6 +284,7 @@ fn collect_styles(
                 .map(|i| UnicodeWidthStr::width(lines[i]))
                 .max()
                 .unwrap_or(0)
+                + CODE_BOX_LEFT_PAD
                 + CODE_BOX_PAD;
             for slot in &mut code_pad[first..=last] {
                 *slot = (*slot).max(width);
@@ -326,6 +342,13 @@ fn collect_styles(
 /// todas las lineas), `2` = markers inline ocultos fuera de la linea activa. Si
 /// `selection` esta presente o `matches` no esta vacio, forzamos Nivel 1 global
 /// para que el highlight siempre caiga sobre celdas visibles.
+///
+/// `code_box_width` es el ancho visual (en celdas) al que se extiende la "caja"
+/// de los bloques de codigo: `main` le pasa el ancho del area de texto menos
+/// `CODE_BOX_RIGHT_MARGIN`, asi la caja llega casi de lado a lado pero dentro de
+/// un margen. `0` desactiva el ensanchado y la caja se ajusta al contenido (lo
+/// usan los tests que no dependen del ancho del viewport). Si el contenido es mas
+/// ancho que `code_box_width`, gana el contenido (no se recorta).
 // Los argumentos son todos contexto de render (texto, theme, estado del
 // overlay/seleccion, modo WYSIWYG); agrupar en una struct intermedia anadiria
 // indireccion sin claridad.
@@ -338,6 +361,7 @@ pub fn render(
     theme: &Theme,
     active_line: Option<usize>,
     level: u8,
+    code_box_width: usize,
 ) -> Vec<Line<'static>> {
     let (spans, hide_byte, replace_byte, code_pad) = collect_styles(source, theme);
 
@@ -400,6 +424,17 @@ pub fn render(
         let show_markers = force_full || active_line == Some(line_idx);
 
         let mut line_spans: Vec<Span<'static>> = Vec::new();
+
+        // Margen izquierdo de la caja de codigo: corre el contenido a la
+        // derecha (el cursor lo compensa en `main`). Va antes del contenido.
+        let in_code = code_pad.get(line_idx).copied().unwrap_or(0) > 0;
+        if in_code && CODE_BOX_LEFT_PAD > 0 {
+            line_spans.push(Span::styled(
+                " ".repeat(CODE_BOX_LEFT_PAD),
+                Style::default().bg(theme.code_bg),
+            ));
+        }
+
         let mut k = line_start;
         while k < line_end {
             if !show_markers && hide_byte[k] {
@@ -433,13 +468,17 @@ pub fn render(
         // como bandas vacias del mismo ancho.
         let pad_to = code_pad.get(line_idx).copied().unwrap_or(0);
         if pad_to > 0 {
+            // Ancho objetivo de la caja: el que pide el caller (area de texto menos
+            // el margen derecho), o el ancho del contenido si es mas ancho o si el
+            // caller paso 0 (modo legacy / tests sin viewport).
+            let target = code_box_width.max(pad_to);
             let cur: usize = line_spans
                 .iter()
                 .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
                 .sum();
-            if cur < pad_to {
+            if cur < target {
                 line_spans.push(Span::styled(
-                    " ".repeat(pad_to - cur),
+                    " ".repeat(target - cur),
                     Style::default().bg(theme.code_bg),
                 ));
             }
@@ -448,6 +487,57 @@ pub fn render(
         lines.push(Line::from(line_spans));
     }
     lines
+}
+
+/// Marca, por linea (0-based, indexando como `source.split('\n')`), si pertenece
+/// a un bloque de codigo (fenced o indentado). `main` lo usa para correr el
+/// cursor `CODE_BOX_LEFT_PAD` celdas cuando esta sobre una linea de codigo, ya
+/// que el render aplica ese margen izquierdo a la caja.
+pub fn code_line_flags(source: &str) -> Vec<bool> {
+    let line_count = source.split('\n').count();
+    let mut flags = vec![false; line_count];
+
+    let mut parser = MarkdownParser::default();
+    let Some(tree) = parser.parse(source.as_bytes(), None) else {
+        return flags;
+    };
+
+    let mut line_starts: Vec<usize> = vec![0];
+    for (i, b) in source.bytes().enumerate() {
+        if b == b'\n' {
+            line_starts.push(i + 1);
+        }
+    }
+    let line_of = |byte: usize| match line_starts.binary_search(&byte) {
+        Ok(i) => i,
+        Err(i) => i - 1,
+    };
+
+    let mut cursor = tree.block_tree().walk();
+    loop {
+        let node = cursor.node();
+        if matches!(node.kind(), "fenced_code_block" | "indented_code_block") {
+            let r = node.byte_range();
+            if r.start < r.end {
+                let first = line_of(r.start);
+                let last = line_of(r.end - 1).min(line_count - 1);
+                for f in &mut flags[first..=last] {
+                    *f = true;
+                }
+            }
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return flags;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -489,7 +579,7 @@ mod tests {
         let source =
             std::fs::read_to_string("examples/sample.md").expect("falta examples/sample.md");
         // Nivel 1 (volcado simple, sin ocultar markers).
-        let lines = render(&source, None, &[], None, &theme, None, 1);
+        let lines = render(&source, None, &[], None, &theme, None, 1, 0);
         println!(
             "\n--- volcado de estilos (.=plano B=bold I=italic C=code H=heading m=marker) ---"
         );
@@ -519,7 +609,7 @@ mod tests {
         let source = "# T\n\nplano **negrita** fin\n";
         // Nivel 1 explicito: el test verifica que los `**` esten dimmeados pero
         // visibles (mapeo cursor 1:1 en todas las lineas).
-        let lines = render(source, None, &[], None, &theme, None, 1);
+        let lines = render(source, None, &[], None, &theme, None, 1, 0);
         // Linea 2 (indice 2): "plano **negrita** fin"
         let line = &lines[2];
         // Reconstruir el estilo por char y chequear que los '*' esten dimmeados
@@ -554,7 +644,7 @@ mod tests {
         // el bg de seleccion; el resto no.
         let theme = test_theme();
         let source = "hola mundo";
-        let lines = render(source, Some(0..4), &[], None, &theme, None, 1);
+        let lines = render(source, Some(0..4), &[], None, &theme, None, 1, 0);
         // Reconstruir el bg por char.
         let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
         for span in &lines[0].spans {
@@ -583,7 +673,7 @@ mod tests {
         let theme = test_theme();
         let source = "ab ab ab";
         let matches = vec![0..2, 3..5, 6..8];
-        let lines = render(source, None, &matches, Some(1), &theme, None, 1);
+        let lines = render(source, None, &matches, Some(1), &theme, None, 1, 0);
         let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
         for span in &lines[0].spans {
             for ch in span.content.chars() {
@@ -621,19 +711,24 @@ mod tests {
             .sum()
     }
 
+    /// Ancho de caja para un bloque cuya linea mas ancha mide `content`.
+    fn box_width(content: usize) -> usize {
+        CODE_BOX_LEFT_PAD + content + CODE_BOX_PAD
+    }
+
     #[test]
     fn fenced_code_block_pinta_el_cuerpo_como_caja() {
-        // El contenido lee con fg/bg de codigo y la linea se rellena a la
-        // derecha hasta el ancho de la caja. Cursor afuera (linea 0), Nivel 2.
+        // El contenido lee con fg/bg de codigo, con margen a izquierda y derecha
+        // hasta el ancho de la caja. Cursor afuera (linea 0), Nivel 2.
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
-        // El texto visible (sin contar el relleno) queda intacto.
-        assert_eq!(line_text(&lines, 2).trim_end(), "let x = 1;");
-        // Ancho de caja = max(7, 10, 3) + CODE_BOX_PAD.
-        let box_w = "let x = 1;".len() + CODE_BOX_PAD;
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        // El texto visible (sin contar los margenes) queda intacto.
+        assert_eq!(line_text(&lines, 2).trim(), "let x = 1;");
+        // Ancho de caja = margen_izq + max(7, 10, 3) + margen_der.
+        let box_w = box_width("let x = 1;".len());
         assert_eq!(line_width(&lines, 2), box_w);
-        // Todas las celdas (texto + relleno) llevan el fondo de codigo.
+        // Todas las celdas (margenes + texto) llevan el fondo de codigo.
         for span in &lines[2].spans {
             for _ in span.content.chars() {
                 assert_eq!(span.style.bg, Some(theme.code_bg));
@@ -642,15 +737,47 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_block_oculta_las_cercas_como_bandas() {
-        // En Nivel 2 con el cursor afuera, las cercas se ocultan (como los
-        // backticks inline) y quedan como bandas vacias del ancho de la caja.
+    fn code_box_width_extiende_la_caja_hasta_el_ancho_pedido() {
+        // Con un `code_box_width` mayor que el contenido, todas las lineas del
+        // bloque (cercas y cuerpo) se extienden a ese ancho, no al del contenido:
+        // la caja llega "dentro de un margen" en vez de pegarse al texto.
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
-        let box_w = "let x = 1;".len() + CODE_BOX_PAD;
-        for idx in [1, 3] {
-            assert_eq!(line_text(&lines, idx).trim_end(), "");
+        let wide = 60;
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, wide);
+        for idx in [1, 2, 3] {
+            assert_eq!(line_width(&lines, idx), wide);
+        }
+        // El texto sigue intacto; solo se agrego relleno de fondo a la derecha.
+        assert_eq!(line_text(&lines, 2).trim(), "let x = 1;");
+    }
+
+    #[test]
+    fn code_box_width_menor_que_el_contenido_no_recorta() {
+        // Si el contenido es mas ancho que `code_box_width`, gana el contenido:
+        // la caja nunca recorta el codigo.
+        let theme = test_theme();
+        let source = "antes\n```\nlet x = 1;\n```\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 3);
+        let box_w = box_width("let x = 1;".len());
+        assert_eq!(line_width(&lines, 2), box_w);
+    }
+
+    #[test]
+    fn fenced_code_block_oculta_las_cercas_como_banda() {
+        // Las cercas (apertura con info string y cierre) se ocultan en lineas
+        // inactivas: quedan como banda limpia (solo fondo de codigo, sin los
+        // backticks) formando el borde de la caja. El cursor esta en la linea 0,
+        // asi que las cercas (lineas 1 y 3) estan inactivas.
+        let theme = test_theme();
+        let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        assert_eq!(line_text(&lines, 1).trim(), "");
+        assert_eq!(line_text(&lines, 3).trim(), "");
+        // Aun ocultas, las lineas de cerca conservan el ancho de caja y el fondo
+        // de codigo (la banda se mantiene gracias al relleno).
+        let box_w = box_width("let x = 1;".len());
+        for idx in [1, 2, 3] {
             assert_eq!(line_width(&lines, idx), box_w);
             for span in &lines[idx].spans {
                 assert_eq!(span.style.bg, Some(theme.code_bg));
@@ -660,25 +787,25 @@ mod tests {
 
     #[test]
     fn fenced_code_block_muestra_la_cerca_en_la_linea_activa() {
-        // Con el cursor sobre la cerca de apertura (linea 1), se ve cruda para
-        // poder editarla, y la caja se mantiene (rellena al mismo ancho).
+        // En la linea activa las cercas reaparecen (con su info string) para
+        // poder editarlas: el cursor en la linea 1 (apertura ```rust).
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2);
-        assert_eq!(line_text(&lines, 1).trim_end(), "```rust");
-        let box_w = "let x = 1;".len() + CODE_BOX_PAD;
-        assert_eq!(line_width(&lines, 1), box_w);
+        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
+        assert_eq!(line_text(&lines, 1).trim(), "```rust");
+        // La cerca de cierre (linea 3) sigue inactiva => oculta.
+        assert_eq!(line_text(&lines, 3).trim(), "");
     }
 
     #[test]
     fn indented_code_block_se_pinta_como_caja() {
         // Un bloque indentado (4 espacios) tambien recibe el fondo de codigo y
-        // el relleno de caja.
+        // los margenes de caja.
         let theme = test_theme();
         let source = "antes\n\n    let y = 2;\n\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
-        assert_eq!(line_text(&lines, 2).trim_end(), "    let y = 2;");
-        let box_w = "    let y = 2;".len() + CODE_BOX_PAD;
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        assert_eq!(line_text(&lines, 2).trim(), "let y = 2;");
+        let box_w = box_width("    let y = 2;".len());
         assert_eq!(line_width(&lines, 2), box_w);
         for span in &lines[2].spans {
             for _ in span.content.chars() {
@@ -688,12 +815,25 @@ mod tests {
     }
 
     #[test]
+    fn code_line_flags_marca_solo_las_lineas_de_codigo() {
+        // `code_line_flags` debe marcar las lineas del bloque (incluidas las
+        // cercas) y nada mas; `main` lo usa para correr el cursor.
+        let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
+        let flags = code_line_flags(source);
+        assert!(!flags[0], "antes");
+        assert!(flags[1], "```rust");
+        assert!(flags[2], "let x = 1;");
+        assert!(flags[3], "```");
+        assert!(!flags[4], "despues");
+    }
+
+    #[test]
     fn nivel2_oculta_asteriscos_en_linea_inactiva() {
         // Dos lineas: la activa (0) y otra con negrita (1). En Nivel 2, los
         // `**` de la linea 1 no se renderean.
         let theme = test_theme();
         let source = "linea activa\nplano **negrita** fin\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 0), "linea activa");
         assert_eq!(line_text(&lines, 1), "plano negrita fin");
     }
@@ -704,7 +844,7 @@ mod tests {
         // no cambia respecto a Nivel 1.
         let theme = test_theme();
         let source = "linea activa\nplano **negrita** fin\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2);
+        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "plano **negrita** fin");
     }
 
@@ -714,7 +854,7 @@ mod tests {
         // inactivas.
         let theme = test_theme();
         let source = "cursor\nun *it* y `cod` aca\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "un it y cod aca");
     }
 
@@ -725,7 +865,7 @@ mod tests {
         // `inline` hijo del `atx_heading`).
         let theme = test_theme();
         let source = "# Titular\n\notra linea\n";
-        let lines = render(source, None, &[], None, &theme, Some(2), 2);
+        let lines = render(source, None, &[], None, &theme, Some(2), 2, 0);
         assert_eq!(line_text(&lines, 0), "Titular");
     }
 
@@ -735,7 +875,7 @@ mod tests {
         // posterior aunque tree-sitter no lo incluya en el rango del marker).
         let theme = test_theme();
         let source = "linea\n## H2\n### H3\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "H2");
         assert_eq!(line_text(&lines, 2), "H3");
     }
@@ -745,7 +885,7 @@ mod tests {
         // En la linea activa el `#` se ve, como en Nivel 1.
         let theme = test_theme();
         let source = "antes\n# Activa\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2);
+        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "# Activa");
     }
 
@@ -755,7 +895,7 @@ mod tests {
         // sustituye por bullet, el espacio se mantiene). Igual para `*` y `+`.
         let theme = test_theme();
         let source = "cursor\n- uno\n* dos\n+ tres\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "• uno");
         assert_eq!(line_text(&lines, 2), "• dos");
         assert_eq!(line_text(&lines, 3), "• tres");
@@ -766,7 +906,7 @@ mod tests {
         // `1. ordn` queda igual: el numero es informativo, no se reemplaza.
         let theme = test_theme();
         let source = "cursor\n1. ordn\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "1. ordn");
     }
 
@@ -776,7 +916,7 @@ mod tests {
         // sorprender al usuario que esta editando.
         let theme = test_theme();
         let source = "antes\n- activo\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2);
+        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "- activo");
     }
 
@@ -786,7 +926,7 @@ mod tests {
         // siguiente (`> linea 2`) tambien se sustituye.
         let theme = test_theme();
         let source = "antes\n> cita\n> linea 2\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "│ cita");
         assert_eq!(line_text(&lines, 2), "│ linea 2");
     }
@@ -796,7 +936,7 @@ mod tests {
         // `[texto](url)` queda como `texto` en linea inactiva.
         let theme = test_theme();
         let source = "cursor\nun [hola](https://x.com) link\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "un hola link");
     }
 
@@ -805,7 +945,7 @@ mod tests {
         // `![alt](pic.png)` queda como `alt` en linea inactiva.
         let theme = test_theme();
         let source = "cursor\nver ![logo](pic.png) abajo\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2);
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "ver logo abajo");
     }
 
@@ -814,7 +954,7 @@ mod tests {
         // En la linea activa el link se ve crudo (la activa renderiza Nivel 1).
         let theme = test_theme();
         let source = "antes\n[ver](https://x.com)\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2);
+        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "[ver](https://x.com)");
     }
 
@@ -824,7 +964,7 @@ mod tests {
         // `active_line`.
         let theme = test_theme();
         let source = "cursor\nplano **neg** fin\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 1);
+        let lines = render(source, None, &[], None, &theme, Some(0), 1, 0);
         assert_eq!(line_text(&lines, 1), "plano **neg** fin");
     }
 
@@ -836,7 +976,7 @@ mod tests {
         let theme = test_theme();
         let source = "cursor\nplano **neg** fin\n";
         // Seleccion sobre la linea 0 ("cur" => bytes 0..3).
-        let lines = render(source, Some(0..3), &[], None, &theme, Some(0), 2);
+        let lines = render(source, Some(0..3), &[], None, &theme, Some(0), 2, 0);
         // La linea 1, que seria inactiva, conserva los `**`.
         assert_eq!(line_text(&lines, 1), "plano **neg** fin");
     }
@@ -851,7 +991,7 @@ mod tests {
         // Un solo rango: pasamos el slice tipado para evitar la ambiguedad
         // de clippy sobre arrays de un elemento.
         let matches: Vec<std::ops::Range<usize>> = vec![0..3, 5..6];
-        let lines = render(source, None, &matches, Some(0), &theme, Some(0), 2);
+        let lines = render(source, None, &matches, Some(0), &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "plano **neg** fin");
     }
 
@@ -862,7 +1002,7 @@ mod tests {
         // o por un futuro modo preview.
         let theme = test_theme();
         let source = "uno **dos** tres\n";
-        let lines = render(source, None, &[], None, &theme, None, 2);
+        let lines = render(source, None, &[], None, &theme, None, 2, 0);
         assert_eq!(line_text(&lines, 0), "uno dos tres");
     }
 }

@@ -776,6 +776,12 @@ fn draw(
     // En Nivel 2 la linea con el cursor se renderiza como Nivel 1 (markers
     // visibles) para preservar el mapeo cursor->columna 1:1. Las demas lineas
     // ocultan los delimiters inline (ver `render::render`).
+    // Ancho de la caja de codigo: el area util de texto (descontando borde y
+    // margen izquierdo del Block) menos el margen derecho. Asi los bloques de
+    // codigo se extienden casi de lado a lado pero dentro de un margen, en vez de
+    // ajustarse al contenido. Padding derecho del Block es 0, por eso no se resta.
+    let text_width = editor_area.width.saturating_sub(2 * border + pad_left) as usize;
+    let code_box_width = text_width.saturating_sub(render::CODE_BOX_RIGHT_MARGIN);
     let lines = render::render(
         &text,
         doc.selection_byte_range(),
@@ -784,6 +790,7 @@ fn draw(
         theme,
         Some(doc.line),
         wysiwyg_level,
+        code_box_width,
     );
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -821,7 +828,20 @@ fn draw(
     // *visual* (celdas), no el indice de char: asi cae sobre el glifo que dibujo el
     // render aunque haya CJK/emoji de doble ancho.
     if doc.line >= scroll {
-        let cursor_x = editor_area.x + border + pad_left + doc.display_col() as u16;
+        // Si el cursor esta sobre una linea de bloque de codigo, el render le
+        // aplico un margen izquierdo (`CODE_BOX_LEFT_PAD`) que corre el texto a
+        // la derecha; sumamos lo mismo para que el cursor caiga sobre el glifo.
+        let code_indent = if render::code_line_flags(&text)
+            .get(doc.line)
+            .copied()
+            .unwrap_or(false)
+        {
+            render::CODE_BOX_LEFT_PAD as u16
+        } else {
+            0
+        };
+        let cursor_x =
+            editor_area.x + border + pad_left + code_indent + doc.display_col() as u16;
         let cursor_y = editor_area.y + border + pad_top + (doc.line - scroll) as u16;
         if whitepaper {
             // En papel el cursor real del terminal usa un color fijo que sobre el
