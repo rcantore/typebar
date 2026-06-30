@@ -142,6 +142,22 @@ fn collect_styles(
             // el fondo de codigo, asi la linea forma parte de la caja. Debe ir
             // antes del brazo generico `_delimiter` (que no lleva fondo).
             "fenced_code_block_delimiter" => Some(marker_style(theme).bg(theme.code_bg)),
+            // Tablas (estilo-only, sin re-alinear): NO se inserta padding, asi el
+            // mapeo 1:1 y el cursor quedan intactos; solo se da jerarquia visual.
+            // El header en negrita; los pipes `|` y la fila delimitadora (`|---|`)
+            // atenuados como estructura. Los `:` de alignment se acentuan aparte
+            // (ver el pase de bytes mas abajo).
+            "pipe_table_cell" if parent == Some("pipe_table_header") => {
+                Some(Style::default().add_modifier(Modifier::BOLD))
+            }
+            "pipe_table_delimiter_row" => Some(marker_style(theme)),
+            "|" if matches!(
+                parent,
+                Some("pipe_table_header" | "pipe_table_row" | "pipe_table_delimiter_row")
+            ) =>
+            {
+                Some(marker_style(theme))
+            }
             // Todos los marcadores y delimitadores: dimmeados.
             k if k.ends_with("_marker") || k.ends_with("_delimiter") => Some(marker_style(theme)),
             _ => None,
@@ -222,6 +238,25 @@ fn collect_styles(
         //     (ver el calculo de `code_pad` al final).
         if matches!(kind, "fenced_code_block" | "indented_code_block") {
             code_blocks.push(range.clone());
+        }
+
+        // (f.2) Tablas: en la fila delimitadora, acentuar los `:` de alignment
+        //       (`:--`, `--:`, `:-:`) con el color de heading, por encima del dim
+        //       de la fila. Se hace a nivel byte (robusto ante como tree-sitter-md
+        //       modele el alignment) con `depth + 1` para ganarle al span de la
+        //       fila (mismo o menor depth).
+        if kind == "pipe_table_delimiter_row" {
+            for (i, &b) in source.as_bytes()[range.start..range.end].iter().enumerate() {
+                if b == b':' {
+                    let at = range.start + i;
+                    spans.push(StyleSpan {
+                        start: at,
+                        end: at + 1,
+                        style: Style::default().fg(theme.heading_1),
+                        depth: depth + 1,
+                    });
+                }
+            }
         }
 
         // (g) Cercas de un bloque fenced (``` de apertura/cierre) y su info
@@ -825,6 +860,89 @@ mod tests {
         assert!(flags[2], "let x = 1;");
         assert!(flags[3], "```");
         assert!(!flags[4], "despues");
+    }
+
+    // --- Tablas (estilo-only, sin re-alinear) -----------------------------
+
+    /// Primer span de la linea `idx` cuyo contenido es exactamente `content`.
+    fn span_of<'a>(
+        lines: &'a [Line<'static>],
+        idx: usize,
+        content: &str,
+    ) -> Option<&'a Span<'static>> {
+        lines[idx]
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == content)
+    }
+
+    #[test]
+    fn tabla_no_realinea_el_texto_y_pone_el_header_en_negrita() {
+        // Invariante critico del editor: el texto visible de cada linea es
+        // identico al source (no se inserta padding), asi el cursor sigue mapeando
+        // a los bytes. Solo se agrega jerarquia visual: header en negrita, pipes
+        // atenuados, cuerpo plano.
+        let theme = test_theme();
+        let source = "| Name | Age |\n|------|-----|\n| Ada  | 36  |\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        assert_eq!(line_text(&lines, 0), "| Name | Age |");
+        assert_eq!(line_text(&lines, 1), "|------|-----|");
+        assert_eq!(line_text(&lines, 2), "| Ada  | 36  |");
+        // Celdas del header en negrita.
+        assert!(
+            span_of(&lines, 0, "Name ")
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            span_of(&lines, 0, "Age ")
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        // Pipes atenuados (color marker) en todas las filas.
+        for idx in [0, 2] {
+            for s in &lines[idx].spans {
+                if s.content.as_ref() == "|" {
+                    assert_eq!(s.style.fg, Some(theme.marker));
+                }
+            }
+        }
+        // El cuerpo NO va en negrita (solo el header): ninguna celda del cuerpo se
+        // estiliza, asi que su texto se fusiona con los espacios default de al lado
+        // y ningun span de la fila lleva BOLD.
+        assert!(
+            lines[2]
+                .spans
+                .iter()
+                .all(|s| !s.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
+
+    #[test]
+    fn tabla_fila_delimitadora_atenuada_y_colons_acentuados() {
+        // La fila delimitadora va atenuada como estructura; los `:` de alignment
+        // se acentuan con el color de heading por encima del dim.
+        let theme = test_theme();
+        let source = "| A | B |\n| :--- | ---: |\n| x | y |\n";
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        // 1:1 intacto.
+        assert_eq!(line_text(&lines, 1), "| :--- | ---: |");
+        // Los `:` de alignment van con el color de heading (acento).
+        assert_eq!(
+            span_of(&lines, 1, ":").unwrap().style.fg,
+            Some(theme.heading_1)
+        );
+        // Los guiones de la fila van atenuados (color marker), no acentuados.
+        let dash = lines[1]
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref().contains('-'))
+            .unwrap();
+        assert_eq!(dash.style.fg, Some(theme.marker));
     }
 
     #[test]
