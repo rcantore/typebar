@@ -133,6 +133,13 @@ impl Workspace {
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         self.docs.iter().map(|d| d.path.as_path())
     }
+
+    /// Itera los buffers abiertos como `(path, dirty)`, en orden de apertura. Lo
+    /// usa el switcher para listarlos primero y marcar los que tienen cambios sin
+    /// guardar con la misma marca `[+]` que la status bar.
+    pub fn buffers(&self) -> impl Iterator<Item = (&Path, bool)> {
+        self.docs.iter().map(|d| (d.path.as_path(), d.dirty))
+    }
 }
 
 #[cfg(test)]

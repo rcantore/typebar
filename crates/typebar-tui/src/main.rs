@@ -631,16 +631,22 @@ fn dispatch_action(
             }
         }
         Action::OpenSwitcher => {
-            // Candidatos: archivos del proyecto (cwd recursivo) mas los buffers
-            // abiertos que no esten ya en la lista (p.ej. fuera del cwd), para
-            // poder volver a cualquiera.
-            let mut candidates = files::discover(".");
-            for p in workspace.paths() {
-                if !candidates.iter().any(|c| c == p) {
-                    candidates.push(p.to_path_buf());
+            // Candidatos: PRIMERO los buffers abiertos (lo mas relevante de
+            // alcanzar va arriba), con su marca dirty real; DESPUES los archivos
+            // del proyecto (cwd recursivo) que no esten ya abiertos. Dedup por path.
+            let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+            let mut dirty: Vec<bool> = Vec::new();
+            for (path, is_dirty) in workspace.buffers() {
+                candidates.push(path.to_path_buf());
+                dirty.push(is_dirty);
+            }
+            for p in files::discover(".") {
+                if !candidates.iter().any(|c| c == &p) {
+                    candidates.push(p);
+                    dirty.push(false);
                 }
             }
-            state.switcher = Some(Switcher::new(candidates));
+            state.switcher = Some(Switcher::new(candidates, dirty));
         }
         // Abrir la paleta de comandos. Como `OpenPalette` se excluye del catalogo
         // de comandos, no hay forma de recursar desde la propia paleta.
@@ -1306,10 +1312,13 @@ mod tests {
     fn draw_switcher_tapa_el_editor_y_muestra_prompt_y_candidatos() {
         // Con el switcher abierto: se ve el prompt (locale En por default) y los
         // candidatos, y NO el texto del editor de fondo.
-        let sw = Switcher::new(vec![
-            std::path::PathBuf::from("src/main.rs"),
-            std::path::PathBuf::from("README.md"),
-        ]);
+        let sw = Switcher::new(
+            vec![
+                std::path::PathBuf::from("src/main.rs"),
+                std::path::PathBuf::from("README.md"),
+            ],
+            vec![false, false],
+        );
         let screen = render_to_string(false, Some(sw), None);
         assert!(
             screen.contains("go to file:"),

@@ -50,10 +50,14 @@ pub enum SwitcherOutcome {
 /// Estado del switcher: los candidatos, el texto tipeado, los resultados
 /// rankeados y cual esta seleccionado.
 pub struct Switcher {
-    /// Candidatos a filtrar (archivos del proyecto + buffers abiertos, dedup).
+    /// Candidatos a filtrar (buffers abiertos primero + archivos del proyecto, dedup).
     candidates: Vec<PathBuf>,
     /// Representacion string de cada candidato (cacheada para el fuzzy y el render).
     labels: Vec<String>,
+    /// Marca "sin guardar" por candidato, paralela a `candidates`: `true` si el
+    /// candidato es un buffer abierto con cambios sin guardar. Los archivos del
+    /// disco que no esten abiertos van en `false`.
+    dirty: Vec<bool>,
     /// Texto tipeado.
     query: String,
     /// Resultados rankeados: indices en `candidates` con su match (para resaltar).
@@ -63,8 +67,14 @@ pub struct Switcher {
 }
 
 impl Switcher {
-    /// Crea el switcher con sus candidatos y la query vacia (todos matchean).
-    pub fn new(candidates: Vec<PathBuf>) -> Self {
+    /// Crea el switcher con sus candidatos (y su marca dirty paralela) y la query
+    /// vacia (todos matchean). `dirty[i]` corresponde a `candidates[i]`.
+    pub fn new(candidates: Vec<PathBuf>, dirty: Vec<bool>) -> Self {
+        debug_assert_eq!(
+            candidates.len(),
+            dirty.len(),
+            "dirty debe ser paralelo a candidates"
+        );
         let labels = candidates
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -72,6 +82,7 @@ impl Switcher {
         let mut s = Switcher {
             candidates,
             labels,
+            dirty,
             query: String::new(),
             results: Vec::new(),
             selected: 0,
@@ -211,6 +222,18 @@ impl Switcher {
             }
             let mut spans: Vec<Span<'static>> = vec![Span::styled(marker.to_string(), row)];
 
+            // Marca "sin guardar": el mismo `[+]` que usa la status bar, en columna
+            // fija de 4 celdas para que los nombres queden alineados (dirty o no).
+            // Los candidatos limpios reservan el mismo ancho con espacios.
+            let dirty_mark = if self.dirty[*ci] { "[+] " } else { "    " };
+            let mut dirty_style = Style::default()
+                .fg(theme.heading_1)
+                .add_modifier(Modifier::BOLD);
+            if selected {
+                dirty_style = dirty_style.bg(theme.selection_bg);
+            }
+            spans.push(Span::styled(dirty_mark.to_string(), dirty_style));
+
             // Spans char a char. Base segun jerarquia (dir atenuado / archivo
             // brillante), acento si el char matcheo, y el fondo de la barra si la
             // fila esta seleccionada (preservando fg/modificadores).
@@ -231,7 +254,7 @@ impl Switcher {
             // Barra a todo el ancho: rellenar con espacios (con el fondo de la
             // seleccion) hasta `width`, contando el marker y el path ya dibujados.
             if selected {
-                let used = marker.chars().count() + total_chars;
+                let used = marker.chars().count() + dirty_mark.chars().count() + total_chars;
                 if width > used {
                     let pad = " ".repeat(width - used);
                     spans.push(Span::styled(pad, sel_bg));
@@ -296,15 +319,22 @@ mod tests {
         items.iter().map(PathBuf::from).collect()
     }
 
+    /// Switcher con todos los candidatos "limpios" (sin marca dirty): el caso de
+    /// los tests que no ejercitan la marca de sin-guardar.
+    fn sw_clean(candidates: Vec<PathBuf>) -> Switcher {
+        let dirty = vec![false; candidates.len()];
+        Switcher::new(candidates, dirty)
+    }
+
     #[test]
     fn arranca_con_todos_los_candidatos() {
-        let s = Switcher::new(paths(&["src/main.rs", "README.md", "src/fuzzy.rs"]));
+        let s = sw_clean(paths(&["src/main.rs", "README.md", "src/fuzzy.rs"]));
         assert_eq!(s.result_count(), 3);
     }
 
     #[test]
     fn tipear_filtra() {
-        let mut s = Switcher::new(paths(&["src/main.rs", "README.md", "src/fuzzy.rs"]));
+        let mut s = sw_clean(paths(&["src/main.rs", "README.md", "src/fuzzy.rs"]));
         s.handle_key(key(KeyCode::Char('f')));
         s.handle_key(key(KeyCode::Char('z')));
         // "fz" solo matchea fuzzy.rs.
@@ -313,7 +343,7 @@ mod tests {
 
     #[test]
     fn enter_acepta_el_seleccionado() {
-        let mut s = Switcher::new(paths(&["a.md", "b.md"]));
+        let mut s = sw_clean(paths(&["a.md", "b.md"]));
         // Bajar a "b.md" y aceptar.
         s.handle_key(key(KeyCode::Down));
         match s.handle_key(key(KeyCode::Enter)) {
@@ -324,7 +354,7 @@ mod tests {
 
     #[test]
     fn esc_cancela() {
-        let mut s = Switcher::new(paths(&["a.md"]));
+        let mut s = sw_clean(paths(&["a.md"]));
         assert!(matches!(
             s.handle_key(key(KeyCode::Esc)),
             SwitcherOutcome::Cancel
@@ -333,7 +363,7 @@ mod tests {
 
     #[test]
     fn enter_sin_resultados_cancela() {
-        let mut s = Switcher::new(paths(&["a.md"]));
+        let mut s = sw_clean(paths(&["a.md"]));
         for c in "zzz".chars() {
             s.handle_key(key(KeyCode::Char(c)));
         }
@@ -354,23 +384,23 @@ mod tests {
         // Con un path "src/main.rs" el directorio ("src/") debe ir atenuado y el
         // nombre ("main.rs") brillante. Chequeamos via los estilos de los spans:
         // los spans del directorio llevan el modificador DIM, los del archivo BOLD
-        // (y sin DIM). El marker inicial (2 spans/celdas) se saltea.
+        // (y sin DIM). spans[0] es el marker de seleccion y spans[1] la columna
+        // dirty; el path arranca en spans[2].
         let theme = Theme::frappe();
-        let s = Switcher::new(paths(&["src/main.rs"]));
+        let s = sw_clean(paths(&["src/main.rs"]));
         let lines = s.result_lines_padded(&theme, 10, 20);
         let line = &lines[0];
-        // spans[0] es el marker; los chars del path arrancan en spans[1].
-        // "src/" son 4 chars -> spans[1..=4] son el directorio.
-        for span in &line.spans[1..=4] {
+        // "src/" son 4 chars -> spans[2..=5] son el directorio.
+        for span in &line.spans[2..=5] {
             assert!(
                 span.style.add_modifier.contains(Modifier::DIM),
                 "el directorio deberia ir atenuado (DIM)"
             );
         }
-        // "main.rs" empieza en spans[5]; deberia ir en BOLD y sin DIM.
+        // "main.rs" empieza en spans[6]; deberia ir en BOLD y sin DIM.
         assert!(
-            line.spans[5].style.add_modifier.contains(Modifier::BOLD)
-                && !line.spans[5].style.add_modifier.contains(Modifier::DIM),
+            line.spans[6].style.add_modifier.contains(Modifier::BOLD)
+                && !line.spans[6].style.add_modifier.contains(Modifier::DIM),
             "el nombre del archivo deberia ir brillante (BOLD, sin DIM)"
         );
     }
@@ -379,10 +409,10 @@ mod tests {
     fn la_barra_de_seleccion_padea_al_ancho() {
         // La fila seleccionada se rellena con espacios hasta el ancho dado, asi el
         // fondo de la barra cubre toda la fila y no solo el texto. Con width=20 y
-        // "a.md" (marker 2 + 4 chars = 6 usados), el texto plano de la fila debe
-        // medir 20 celdas, y el padding final debe llevar el fondo de seleccion.
+        // "a.md" (marker 2 + columna dirty 4 + 4 chars = 10 usados), el texto plano
+        // de la fila debe medir 20 celdas, y el padding final lleva el fondo de seleccion.
         let theme = Theme::frappe();
-        let s = Switcher::new(paths(&["a.md"]));
+        let s = sw_clean(paths(&["a.md"]));
         let lines = s.result_lines_padded(&theme, 10, 20);
         let line = &lines[0];
         assert_eq!(
@@ -405,16 +435,31 @@ mod tests {
     #[test]
     fn la_fila_no_seleccionada_no_padea() {
         // Solo la fila seleccionada lleva barra/padding; las demas quedan al largo
-        // de su contenido (marker + path), sin relleno.
+        // de su contenido (marker de seleccion + columna dirty + path), sin relleno.
         let theme = Theme::frappe();
-        let s = Switcher::new(paths(&["a.md", "bb.md"]));
+        let s = sw_clean(paths(&["a.md", "bb.md"]));
         let lines = s.result_lines_padded(&theme, 10, 30);
-        // La fila 0 esta seleccionada (padea a 30); la fila 1 no (mide 2 + 5 = 7).
+        // La fila 0 esta seleccionada (padea a 30); la fila 1 no (mide 2 + 4 + 5).
         assert_eq!(line_text(&lines[0]).chars().count(), 30);
         assert_eq!(
             line_text(&lines[1]).chars().count(),
-            2 + "bb.md".chars().count()
+            2 + 4 + "bb.md".chars().count()
         );
+    }
+
+    #[test]
+    fn marca_dirty_solo_en_los_candidatos_sin_guardar() {
+        // El candidato dirty muestra `[+]` en su columna; el limpio, espacios. La
+        // columna es de ancho fijo, asi los nombres quedan alineados en ambos.
+        let theme = Theme::frappe();
+        // dos buffers: el primero sin guardar, el segundo limpio.
+        let s = Switcher::new(paths(&["untitled.md", "notes.md"]), vec![true, false]);
+        let lines = s.result_lines_padded(&theme, 10, 40);
+        // spans[1] es la columna dirty en cada fila.
+        assert_eq!(lines[0].spans[1].content.as_ref(), "[+] ");
+        assert_eq!(lines[1].spans[1].content.as_ref(), "    ");
+        // El `[+]` lleva color de acento (heading_1), no es texto plano.
+        assert_eq!(lines[0].spans[1].style.fg, Some(theme.heading_1));
     }
 
     #[test]
@@ -446,7 +491,7 @@ mod tests {
 
     #[test]
     fn la_seleccion_clampea() {
-        let mut s = Switcher::new(paths(&["a.md", "b.md"]));
+        let mut s = sw_clean(paths(&["a.md", "b.md"]));
         // Subir de mas no pasa de 0; bajar de mas no pasa del ultimo.
         s.handle_key(key(KeyCode::Up));
         match s.handle_key(key(KeyCode::Enter)) {
