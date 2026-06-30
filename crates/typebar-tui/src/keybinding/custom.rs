@@ -336,6 +336,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "new-buffer" => Action::NewBuffer,
         "next-buffer" => Action::NextBuffer,
         "prev-buffer" => Action::PrevBuffer,
+        "close-buffer" => Action::CloseBuffer,
         "open-switcher" => Action::OpenSwitcher,
         "open-palette" => Action::OpenPalette,
         other => return Err(format!("accion desconocida: {other:?}")),

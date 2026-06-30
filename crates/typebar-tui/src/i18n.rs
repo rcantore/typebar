@@ -100,6 +100,8 @@ pub enum Key {
     HintExportHtml,
     /// Nuevo archivo / buffer vacio ("Nuevo" / "New").
     HintNew,
+    /// Cerrar el buffer activo ("Cerrar buffer" / "Close buffer").
+    HintCloseBuffer,
     /// Switcher de archivos ("Ir a…" / "Go to…").
     HintSwitcher,
     /// Prompt del box del switcher de archivos ("ir a archivo:" / "go to file:").
@@ -122,6 +124,9 @@ pub enum Key {
     MinibufferReplacePrompt,
     /// Linea de ayuda al pie del overlay de reemplazo.
     MinibufferReplaceHelp,
+    /// Prompt de confirmacion al cerrar un buffer con cambios sin guardar. Las
+    /// teclas (`s`/`d`/`c`) son fijas; el texto entre corchetes las anuncia.
+    ConfirmCloseUnsaved,
 
     // --- Mensajes de error (defaults) -------------------------------------
     UsingDefaults,
@@ -213,6 +218,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintExportHtml) => "Export HTML",
         (Locale::Es, Key::HintNew) => "Nuevo",
         (Locale::En, Key::HintNew) => "New",
+        (Locale::Es, Key::HintCloseBuffer) => "Cerrar buffer",
+        (Locale::En, Key::HintCloseBuffer) => "Close buffer",
         (Locale::Es, Key::HintSwitcher) => "Ir a…",
         (Locale::En, Key::HintSwitcher) => "Go to…",
         (Locale::Es, Key::SwitcherPrompt) => "ir a archivo:",
@@ -239,6 +246,12 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::MinibufferReplacePrompt) => "replace:",
         (Locale::Es, Key::MinibufferReplaceHelp) => "Tab cambia campo · Enter reemplaza todo",
         (Locale::En, Key::MinibufferReplaceHelp) => "Tab switches field · Enter replaces all",
+        (Locale::Es, Key::ConfirmCloseUnsaved) => {
+            "cambios sin guardar — [s] guardar y cerrar · [d] descartar · [c] cancelar"
+        }
+        (Locale::En, Key::ConfirmCloseUnsaved) => {
+            "unsaved changes — [s] save & close · [d] discard · [c] cancel"
+        }
 
         // --- Errores ------------------------------------------------------
         (Locale::Es, Key::UsingDefaults) => "usando defaults",

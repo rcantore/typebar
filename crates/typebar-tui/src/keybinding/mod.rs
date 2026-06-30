@@ -121,6 +121,11 @@ pub enum Action {
     /// workspace; lo maneja `run`.
     NextBuffer,
     PrevBuffer,
+    /// Cerrar el buffer activo. Si tiene cambios sin guardar, `run` abre un prompt
+    /// de confirmacion antes de cerrar; si no, cierra directo. Cerrar el unico
+    /// buffer lo reemplaza por uno vacio (nunca quedan cero tabs). Nivel workspace;
+    /// lo maneja `run`.
+    CloseBuffer,
     /// Togglear el modo whitepaper desde el submenu "view" (`^O W` / `z w`):
     /// orquesta zen + theme claro + columna de ancho fijo centrada, para la
     /// sensacion "hoja de papel"/typewriter. Estado de la vista del loop, no del
@@ -215,11 +220,12 @@ fn has_ctrl(key: KeyEvent) -> bool {
 
 /// Comandos de workspace uniformes en los tres presets, todos bajo CONTROL:
 /// `^G` abre el switcher de archivos ("Go to file"), `^A` la paleta de comandos
-/// ("Actions"), `^N` crea un buffer nuevo, y `Ctrl-PageDown`/`Ctrl-PageUp` ciclan
-/// al buffer siguiente/anterior (estilo tabs de browser). Devuelve el `Action`
-/// correspondiente, o `None` si `key` no trae CONTROL o no es uno de estos
-/// atajos. Cada preset lo consulta PRIMERO en su rama ctrl para no repetir estas
-/// ramas identicas; las teclas idiosincraticas de cada preset siguen aparte.
+/// ("Actions"), `^N` crea un buffer nuevo, `^W` cierra el activo, y
+/// `Ctrl-PageDown`/`Ctrl-PageUp` ciclan al buffer siguiente/anterior (estilo tabs
+/// de browser). Devuelve el `Action` correspondiente, o `None` si `key` no trae
+/// CONTROL o no es uno de estos atajos. Cada preset lo consulta PRIMERO en su rama
+/// ctrl para no repetir estas ramas identicas; las teclas idiosincraticas de cada
+/// preset siguen aparte.
 fn workspace_ctrl_command(key: KeyEvent) -> Option<Action> {
     if !has_ctrl(key) {
         return None;
@@ -228,6 +234,7 @@ fn workspace_ctrl_command(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('g') => Some(Action::OpenSwitcher),
         KeyCode::Char('a') => Some(Action::OpenPalette),
         KeyCode::Char('n') => Some(Action::NewBuffer),
+        KeyCode::Char('w') => Some(Action::CloseBuffer),
         KeyCode::PageDown => Some(Action::NextBuffer),
         KeyCode::PageUp => Some(Action::PrevBuffer),
         _ => None,

@@ -111,6 +111,24 @@ impl Workspace {
         self.active = (self.active + n - 1) % n;
     }
 
+    /// Cierra el buffer activo. Mantiene el invariante de que `docs` nunca queda
+    /// vacio: si era el unico buffer, lo reemplaza por uno nuevo y vacio
+    /// (`untitled.md`) en `initial_mode`. Con varios, el foco se queda en el mismo
+    /// indice (que ahora apunta al que era el siguiente) salvo que se cerrara el
+    /// ultimo, en cuyo caso baja al previo. No decide sobre cambios sin guardar:
+    /// eso lo resuelve `run` (que confirma antes de llamar aca si el doc esta dirty).
+    pub fn close_active(&mut self, initial_mode: Mode) {
+        self.docs.remove(self.active);
+        if self.docs.is_empty() {
+            let mut doc = Document::empty("untitled.md");
+            doc.mode = initial_mode;
+            self.docs.push(doc);
+            self.active = 0;
+        } else if self.active >= self.docs.len() {
+            self.active = self.docs.len() - 1;
+        }
+    }
+
     /// Paths de todos los buffers, en orden de apertura.
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
         self.docs.iter().map(|d| d.path.as_path())
@@ -193,6 +211,39 @@ mod tests {
         assert_eq!(ws.active_index(), 0);
         ws.prev_buffer(); // del primero salta al ultimo
         assert_eq!(ws.active_index(), 2);
+    }
+
+    #[test]
+    fn close_active_enfoca_el_siguiente_y_decrece_en_el_ultimo() {
+        let mut ws = ws_from(vec![
+            doc_at("a.md", "a"),
+            doc_at("b.md", "b"),
+            doc_at("c.md", "c"),
+        ]);
+        ws.switch_to(1); // foco en b
+        ws.close_active(Mode::Insert);
+        // Cerrado b: el indice 1 ahora apunta a c (el que era el siguiente).
+        assert_eq!(ws.count(), 2);
+        assert_eq!(ws.active_index(), 1);
+        assert_eq!(ws.active().text(), "c");
+        // Cerrar el ultimo (c): el foco baja al previo (a).
+        ws.close_active(Mode::Insert);
+        assert_eq!(ws.count(), 1);
+        assert_eq!(ws.active_index(), 0);
+        assert_eq!(ws.active().text(), "a");
+    }
+
+    #[test]
+    fn close_active_sobre_el_unico_buffer_lo_reemplaza_por_uno_vacio() {
+        let mut ws = Workspace::new(doc_at("solo.md", "contenido"));
+        ws.close_active(Mode::Normal);
+        // El invariante se mantiene: sigue habiendo un buffer, vacio y untitled,
+        // en el modo del preset.
+        assert_eq!(ws.count(), 1);
+        assert_eq!(ws.active_index(), 0);
+        assert_eq!(ws.active().text(), "");
+        assert_eq!(ws.active().path.to_string_lossy(), "untitled.md");
+        assert_eq!(ws.active().mode, Mode::Normal);
     }
 
     #[test]

@@ -289,6 +289,16 @@ fn main() -> std::io::Result<()> {
     result
 }
 
+/// Prompt de confirmacion modal: mientras vive, `run` le entrega las teclas al
+/// prompt (no al documento) hasta que el usuario resuelve. Por ahora la unica
+/// variante es cerrar un buffer con cambios sin guardar; es un enum para que el
+/// Quit (que hoy sale sin preguntar) pueda reusar el mismo patron mas adelante.
+enum Confirm {
+    /// Cerrar el buffer activo, que esta dirty: `[s]` guarda y cierra, `[d]`
+    /// descarta y cierra, `[c]`/Esc cancela.
+    CloseBuffer,
+}
+
 /// Estado de VISTA del run loop: todo lo que vive entre frames y que `draw` lee y
 /// las acciones tocan, pero que NO es ni el documento, ni el keymap, ni los themes,
 /// ni el nivel de wysiwyg (ese contexto es aparte, fijo durante el run). Agrupar
@@ -330,6 +340,9 @@ struct AppState {
     /// el proximo frame y se limpia al apretar la siguiente tecla. Evita que un
     /// error de guardado tumbe el editor (writing-first: nunca perder el buffer).
     flash: Option<String>,
+    /// Prompt de confirmacion modal activo (None = edicion normal). Mientras vive,
+    /// `run` le entrega las teclas y dibuja su linea en lugar de la status bar.
+    confirm: Option<Confirm>,
 }
 
 impl AppState {
@@ -348,6 +361,7 @@ impl AppState {
             switcher: None,
             palette: None,
             flash: None,
+            confirm: None,
         }
     }
 }
@@ -440,6 +454,36 @@ fn run(
         }
         // Cualquier tecla limpia un mensaje flash previo (ej un error de guardado).
         state.flash = None;
+
+        // Con un prompt de confirmacion abierto, las teclas las consume el prompt
+        // (es modal): `s` guarda y cierra, `d` descarta y cierra, `c`/Esc cancela.
+        // Cualquier otra tecla se ignora (el prompt sigue vivo). Tras cerrar, el
+        // buffer recien enfocado arranca arriba, asi que se resetea el scroll.
+        if state.confirm.is_some() {
+            match key.code {
+                KeyCode::Char('s') => {
+                    state.confirm = None;
+                    // Guardar y, solo si sale bien, cerrar. Si el guardado falla, NO
+                    // cerramos (no perder el buffer): se muestra el error y el buffer
+                    // queda abierto, intacto.
+                    match workspace.active_mut().save() {
+                        Ok(()) => {
+                            workspace.close_active(keymap.initial_mode());
+                            state.scroll = 0;
+                        }
+                        Err(e) => state.flash = Some(format!("save failed: {e}")),
+                    }
+                }
+                KeyCode::Char('d') => {
+                    state.confirm = None;
+                    workspace.close_active(keymap.initial_mode());
+                    state.scroll = 0;
+                }
+                KeyCode::Char('c') | KeyCode::Esc => state.confirm = None,
+                _ => {}
+            }
+            continue;
+        }
 
         // Con la paleta abierta, las teclas las consume la paleta (tipear filtra,
         // flechas/Ctrl-N/P navegan, Enter ejecuta el comando, Esc cancela). Al
@@ -576,6 +620,16 @@ fn dispatch_action(
         // Cambiar de buffer (cycle). El draw reclampa el scroll al nuevo buffer.
         Action::NextBuffer => workspace.next_buffer(),
         Action::PrevBuffer => workspace.prev_buffer(),
+        // Cerrar el buffer activo. Con cambios sin guardar abrimos el prompt de
+        // confirmacion (lo resuelve el loop); si esta limpio, cerramos directo. El
+        // draw reclampa el scroll al buffer que queda enfocado.
+        Action::CloseBuffer => {
+            if workspace.active().dirty {
+                state.confirm = Some(Confirm::CloseBuffer);
+            } else {
+                workspace.close_active(keymap.initial_mode());
+            }
+        }
         Action::OpenSwitcher => {
             // Candidatos: archivos del proyecto (cwd recursivo) mas los buffers
             // abiertos que no esten ya en la lista (p.ej. fuera del cwd), para
@@ -675,7 +729,10 @@ fn draw(
     // buscando). Fuera de zen: editor (resto) + toolbar + gap + status bar; el
     // gap de 1 linea separa visualmente el chrome de comandos del de estado.
     let (tabs_area, editor_area, hints_area, status_area) = if zen {
-        if state.overlay.is_some() {
+        // En zen reservamos la ultima linea para el minibuffer cuando hay un overlay
+        // de busqueda O un prompt de confirmacion activo: si no, el prompt seria
+        // invisible y las teclas "no responderian" sin explicacion.
+        if state.overlay.is_some() || state.confirm.is_some() {
             let [editor, mini] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
             (None, editor, None, Some(mini))
@@ -811,7 +868,18 @@ fn draw(
     // transitorio, ej un error de guardado, que tiene prioridad sobre la status
     // bar normal). En zen sin overlay/flash no hay area y no se dibuja nada.
     if let Some(status_area) = status_area {
-        if let Some(ov) = state.overlay.as_ref() {
+        if let Some(confirm) = state.confirm.as_ref() {
+            // El prompt de confirmacion es modal: tiene prioridad sobre minibuffer,
+            // flash y status bar. Mismo estilo invertido que el flash.
+            let prompt = match confirm {
+                Confirm::CloseBuffer => i18n::t(i18n::Key::ConfirmCloseUnsaved),
+            };
+            let style = Style::default().add_modifier(Modifier::REVERSED);
+            frame.render_widget(
+                Line::from(Span::styled(format!(" {prompt} "), style)),
+                status_area,
+            );
+        } else if let Some(ov) = state.overlay.as_ref() {
             frame.render_widget(ov.minibuffer(), status_area);
         } else if let Some(msg) = state.flash.as_deref() {
             let style = Style::default().add_modifier(Modifier::REVERSED);
@@ -1056,6 +1124,7 @@ fn apply_action(
         | Action::NewBuffer
         | Action::NextBuffer
         | Action::PrevBuffer
+        | Action::CloseBuffer
         | Action::OpenSwitcher
         | Action::OpenPalette => {}
     }
