@@ -98,6 +98,11 @@ impl WordstarKeymap {
                 // (autentico de WordStar).
                 'c' => Resolve::Action(Action::Yank),
                 'v' => Resolve::Action(Action::Paste),
+                // `Ctrl-K F` ("find file"): switcher de archivos. En wordstar `^E`
+                // es el diamante (arriba) y `^G` lo come zellij, asi que el switcher
+                // va por este chord, idiomatico (las ops de archivo viven bajo ^K) y
+                // zellij-safe (zellij no agarra ^K).
+                'f' => Resolve::Action(Action::OpenSwitcher),
                 _ => Resolve::None,
             },
             KeyCode::Char('q') => match letter {
@@ -172,6 +177,7 @@ impl Keymap for WordstarKeymap {
                 Hint::new(Action::Quit, "Q", t(Key::HintQuit)),
                 Hint::new(Action::Yank, "C", t(Key::HintYank)),
                 Hint::new(Action::Paste, "V", t(Key::HintPaste)),
+                Hint::new(Action::OpenSwitcher, "F", t(Key::HintSwitcher)),
             ],
             // `Ctrl-Q` + letra: movimiento rapido y find/replace.
             KeyCode::Char('q') => vec![
@@ -344,6 +350,23 @@ mod tests {
         assert_eq!(
             km.resolve(Mode::Insert, &[prefix, key(KeyCode::Char('C'))]),
             Resolve::Action(Action::Yank)
+        );
+    }
+
+    #[test]
+    fn wordstar_chord_ctrl_k_f_abre_switcher() {
+        // `Ctrl-K F` ("find file") abre el switcher: en wordstar `^E` es el diamante
+        // (arriba) y `^G` lo come zellij, asi que el switcher va por este chord.
+        let km = WordstarKeymap;
+        let prefix = ctrl(KeyCode::Char('k'));
+        assert_eq!(
+            km.resolve(Mode::Insert, &[prefix, key(KeyCode::Char('f'))]),
+            Resolve::Action(Action::OpenSwitcher)
+        );
+        // Guard del diamante: `^E` sigue siendo cursor-arriba, no el switcher.
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('e'))),
+            Resolve::Action(Action::CursorUp)
         );
     }
 

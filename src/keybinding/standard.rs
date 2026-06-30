@@ -44,6 +44,10 @@ impl StandardKeymap {
                 return Resolve::Action(action);
             }
             return match key.code {
+                // Ctrl-E: switcher de archivos ("go to filE"). Alternativa
+                // zellij-safe al ^G del helper compartido (zellij se queda con ^G
+                // para su lock/unlock, asi que ahi nunca llega a typebar).
+                KeyCode::Char('e') => Resolve::Action(Action::OpenSwitcher),
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 KeyCode::Char('q') => Resolve::Action(Action::Quit),
                 // Ctrl-Z deshace, Ctrl-Y rehace (convencion moderna).
@@ -214,6 +218,11 @@ mod tests {
         assert_eq!(
             resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('q'))),
             Resolve::Action(Action::Quit)
+        );
+        // Ctrl-E abre el switcher (alternativa zellij-safe al ^G del helper).
+        assert_eq!(
+            resolve1(&km, Mode::Insert, ctrl(KeyCode::Char('e'))),
+            Resolve::Action(Action::OpenSwitcher)
         );
     }
 

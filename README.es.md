@@ -50,7 +50,7 @@ texto renderizado mientras escribís.
   el portapapeles del sistema, buscar y reemplazar, toggles de negrita/itálica/
   código, y movimientos completos (inicio/fin de línea y de documento, Page
   Up/Down, Home/End).
-- **Multi-archivo con switcher fuzzy y tabs**: `Ctrl-G` abre un fuzzy finder sobre
+- **Multi-archivo con switcher fuzzy y tabs**: `Ctrl-E` abre un fuzzy finder sobre
   los archivos del proyecto y los buffers abiertos (tipeás para filtrar, Enter
   para abrir/cambiar); `Ctrl-N` arranca un archivo nuevo; los buffers abiertos se
   ven como tabs que cambiás con `Ctrl-PageDown`/`Ctrl-PageUp` (o con click, si
