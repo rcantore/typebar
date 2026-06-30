@@ -134,11 +134,12 @@ impl Workspace {
         self.docs.iter().map(|d| d.path.as_path())
     }
 
-    /// Itera los buffers abiertos como `(path, dirty)`, en orden de apertura. Lo
-    /// usa el switcher para listarlos primero y marcar los que tienen cambios sin
-    /// guardar con la misma marca `[+]` que la status bar.
+    /// Itera los buffers abiertos como `(path, unsaved)`, en orden de apertura. Lo
+    /// usa el switcher para listarlos primero y marcar con `[+]` los que no estan
+    /// a salvo en disco (cambios sin guardar O untitled/nunca guardado), mismo
+    /// criterio que la status bar (ver `Document::unsaved`).
     pub fn buffers(&self) -> impl Iterator<Item = (&Path, bool)> {
-        self.docs.iter().map(|d| (d.path.as_path(), d.dirty))
+        self.docs.iter().map(|d| (d.path.as_path(), d.unsaved()))
     }
 }
 

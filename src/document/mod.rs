@@ -52,6 +52,11 @@ pub struct Document {
     pub mode: Mode,
     pub path: PathBuf,
     pub dirty: bool,
+    /// `true` si el documento corresponde a un archivo que existe en disco (se
+    /// abrio de uno existente o ya se guardo al menos una vez). `false` para un
+    /// buffer "untitled"/scratch o un path que todavia no se escribio. Junto con
+    /// `dirty` define `unsaved()`: la marca `[+]` de la status bar y el switcher.
+    persisted: bool,
     /// Ancla de la seleccion: char-index ABSOLUTO donde empezo a seleccionarse.
     /// `None` = sin seleccion. El rango va del min al max entre ancla y cursor
     /// (ver `select`).
@@ -86,25 +91,30 @@ impl Document {
     /// crea recien al guardar).
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let buffer = match std::fs::read_to_string(&path) {
-            Ok(text) => Rope::from_str(&text),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Rope::new(),
+        // `persisted` solo si el archivo EXISTIA en disco. Abrir un path inexistente
+        // (`typebar nuevo.md`) arranca vacio y NO persistido: la marca `[+]` avisa
+        // que todavia no esta en disco, hasta el primer guardado.
+        let (buffer, persisted) = match std::fs::read_to_string(&path) {
+            Ok(text) => (Rope::from_str(&text), true),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (Rope::new(), false),
             Err(e) => return Err(e),
         };
-        Ok(Self::with_buffer(path, buffer))
+        Ok(Self::with_buffer(path, buffer, persisted))
     }
 
     /// Crea un documento NUEVO y vacio con el `path` dado, SIN tocar el disco (a
     /// diferencia de `open`, que leeria el archivo si existe). Para el comando
     /// "new file": un buffer en blanco que recien se escribe al guardar.
     pub fn empty(path: impl AsRef<Path>) -> Self {
-        Self::with_buffer(path.as_ref().to_path_buf(), Rope::new())
+        // Un buffer nuevo no existe en disco todavia: NO persistido.
+        Self::with_buffer(path.as_ref().to_path_buf(), Rope::new(), false)
     }
 
     /// Constructor comun de `open`/`empty`: arma el `Document` con un `buffer`
     /// dado y el resto del estado inicial (cursor arriba, sin dirty/seleccion/
-    /// undo, clipboard del SO si se puede abrir).
-    fn with_buffer(path: std::path::PathBuf, buffer: Rope) -> Self {
+    /// undo, clipboard del SO si se puede abrir). `persisted` indica si el path ya
+    /// existe en disco (abierto de un archivo existente) o no (untitled/scratch).
+    fn with_buffer(path: std::path::PathBuf, buffer: Rope, persisted: bool) -> Self {
         Self {
             buffer,
             line: 0,
@@ -113,6 +123,7 @@ impl Document {
             mode: Mode::Normal,
             path,
             dirty: false,
+            persisted,
             selection_anchor: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -222,11 +233,20 @@ impl Document {
 
     // --- Guardado ----------------------------------------------------------
 
-    /// Escribe el buffer al path y limpia `dirty`.
+    /// Escribe el buffer al path y limpia `dirty`. Tras guardar, el documento ya
+    /// existe en disco: queda `persisted`.
     pub fn save(&mut self) -> io::Result<()> {
         std::fs::write(&self.path, self.buffer.to_string())?;
         self.dirty = false;
+        self.persisted = true;
         Ok(())
+    }
+
+    /// `true` si el buffer no esta "a salvo en disco": tiene cambios sin guardar
+    /// (`dirty`) o todavia no existe como archivo (untitled / nunca guardado). Es
+    /// el criterio de la marca `[+]`, igual en la status bar y en el switcher.
+    pub fn unsaved(&self) -> bool {
+        self.dirty || !self.persisted
     }
 }
 
@@ -248,6 +268,9 @@ pub(crate) mod test_support {
             mode: Mode::Normal,
             path: PathBuf::from("scratch.md"),
             dirty: false,
+            // Por default los docs de test se tratan como "ya en disco" (limpios):
+            // asi `unsaved()` es false salvo que el test edite (dirty) a proposito.
+            persisted: true,
             selection_anchor: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -265,11 +288,34 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::doc_with;
+    use super::{Document, Mode};
 
     #[test]
     fn line_len_ignora_newline() {
         let d = doc_with("hola\n");
         assert_eq!(d.line_len_chars(0), 4);
+    }
+
+    #[test]
+    fn unsaved_marca_dirty_o_no_persistido() {
+        // Un buffer nuevo (untitled) no existe en disco: unsaved, aunque este vacio
+        // y sin editar.
+        let nuevo = Document::empty("untitled.md");
+        assert!(!nuevo.dirty, "un buffer nuevo arranca sin cambios");
+        assert!(nuevo.unsaved(), "pero no esta en disco -> unsaved");
+
+        // Un doc "ya en disco" y sin editar: NO unsaved.
+        let mut limpio = doc_with("hola");
+        assert!(
+            !limpio.unsaved(),
+            "abierto de disco y sin cambios -> guardado"
+        );
+
+        // Tras editarlo (dirty), vuelve a unsaved aunque exista en disco.
+        limpio.mode = Mode::Insert;
+        limpio.insert_char('!');
+        assert!(limpio.dirty);
+        assert!(limpio.unsaved(), "con cambios sin guardar -> unsaved");
     }
 
     // --- Grafemas anchos / multi-char --------------------------------------

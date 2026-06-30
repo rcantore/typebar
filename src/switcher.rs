@@ -54,10 +54,11 @@ pub struct Switcher {
     candidates: Vec<PathBuf>,
     /// Representacion string de cada candidato (cacheada para el fuzzy y el render).
     labels: Vec<String>,
-    /// Marca "sin guardar" por candidato, paralela a `candidates`: `true` si el
-    /// candidato es un buffer abierto con cambios sin guardar. Los archivos del
-    /// disco que no esten abiertos van en `false`.
-    dirty: Vec<bool>,
+    /// Marca "no a salvo en disco" por candidato, paralela a `candidates`: `true`
+    /// si el candidato es un buffer abierto con cambios sin guardar o todavia no
+    /// guardado en disco (untitled). Los archivos del disco que no esten abiertos
+    /// van en `false`.
+    unsaved: Vec<bool>,
     /// Texto tipeado.
     query: String,
     /// Resultados rankeados: indices en `candidates` con su match (para resaltar).
@@ -67,13 +68,13 @@ pub struct Switcher {
 }
 
 impl Switcher {
-    /// Crea el switcher con sus candidatos (y su marca dirty paralela) y la query
-    /// vacia (todos matchean). `dirty[i]` corresponde a `candidates[i]`.
-    pub fn new(candidates: Vec<PathBuf>, dirty: Vec<bool>) -> Self {
+    /// Crea el switcher con sus candidatos (y su marca de sin-guardar paralela) y
+    /// la query vacia (todos matchean). `unsaved[i]` corresponde a `candidates[i]`.
+    pub fn new(candidates: Vec<PathBuf>, unsaved: Vec<bool>) -> Self {
         debug_assert_eq!(
             candidates.len(),
-            dirty.len(),
-            "dirty debe ser paralelo a candidates"
+            unsaved.len(),
+            "unsaved debe ser paralelo a candidates"
         );
         let labels = candidates
             .iter()
@@ -82,7 +83,7 @@ impl Switcher {
         let mut s = Switcher {
             candidates,
             labels,
-            dirty,
+            unsaved,
             query: String::new(),
             results: Vec::new(),
             selected: 0,
@@ -225,7 +226,7 @@ impl Switcher {
             // Marca "sin guardar": el mismo `[+]` que usa la status bar, en columna
             // fija de 4 celdas para que los nombres queden alineados (dirty o no).
             // Los candidatos limpios reservan el mismo ancho con espacios.
-            let dirty_mark = if self.dirty[*ci] { "[+] " } else { "    " };
+            let dirty_mark = if self.unsaved[*ci] { "[+] " } else { "    " };
             let mut dirty_style = Style::default()
                 .fg(theme.heading_1)
                 .add_modifier(Modifier::BOLD);
@@ -319,11 +320,11 @@ mod tests {
         items.iter().map(PathBuf::from).collect()
     }
 
-    /// Switcher con todos los candidatos "limpios" (sin marca dirty): el caso de
-    /// los tests que no ejercitan la marca de sin-guardar.
+    /// Switcher con todos los candidatos "limpios" (sin marca): el caso de los
+    /// tests que no ejercitan la marca de sin-guardar.
     fn sw_clean(candidates: Vec<PathBuf>) -> Switcher {
-        let dirty = vec![false; candidates.len()];
-        Switcher::new(candidates, dirty)
+        let unsaved = vec![false; candidates.len()];
+        Switcher::new(candidates, unsaved)
     }
 
     #[test]
