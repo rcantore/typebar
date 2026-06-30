@@ -1,5 +1,7 @@
 # typebar
 
+[![Crates.io](https://img.shields.io/crates/v/typebar.svg)](https://crates.io/crates/typebar)
+
 *Read this in [Español](README.es.md).*
 
 A WYSIWYG Markdown editor for the terminal, written in Rust. typebar renders
@@ -120,6 +122,17 @@ first launch (the installers above avoid this):
   the quarantine flag with `xattr -d com.apple.quarantine ./typebar`);
   afterwards it runs normally.
 - **Windows**: if SmartScreen appears, choose *More info -> Run anyway*.
+
+### Install with cargo
+
+If you already have a Rust toolchain, install the latest release from
+crates.io. It compiles locally, so there's no Gatekeeper/SmartScreen prompt:
+
+```bash
+cargo install typebar
+```
+
+Then run `typebar notes.md`.
 
 ### Build from source
 
