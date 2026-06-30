@@ -635,18 +635,18 @@ fn dispatch_action(
             // alcanzar va arriba), con su marca dirty real; DESPUES los archivos
             // del proyecto (cwd recursivo) que no esten ya abiertos. Dedup por path.
             let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-            let mut dirty: Vec<bool> = Vec::new();
-            for (path, is_dirty) in workspace.buffers() {
+            let mut unsaved: Vec<bool> = Vec::new();
+            for (path, is_unsaved) in workspace.buffers() {
                 candidates.push(path.to_path_buf());
-                dirty.push(is_dirty);
+                unsaved.push(is_unsaved);
             }
             for p in files::discover(".") {
                 if !candidates.iter().any(|c| c == &p) {
                     candidates.push(p);
-                    dirty.push(false);
+                    unsaved.push(false);
                 }
             }
-            state.switcher = Some(Switcher::new(candidates, dirty));
+            state.switcher = Some(Switcher::new(candidates, unsaved));
         }
         // Abrir la paleta de comandos. Como `OpenPalette` se excluye del catalogo
         // de comandos, no hay forma de recursar desde la propia paleta.
@@ -1009,8 +1009,10 @@ fn status_bar(doc: &Document, keymap: &dyn Keymap, pending: &[KeyEvent]) -> Line
         };
         format!(" {} · {}{} ", keymap.name(), doc.path.display(), sel)
     };
-    let dirty = if doc.dirty { "[+] " } else { "" };
-    let left = format!("{}{}", left, dirty);
+    // Marca de "no a salvo en disco": cambios sin guardar O untitled/nunca
+    // guardado. Mismo criterio que el switcher (ver `Document::unsaved`).
+    let unsaved = if doc.unsaved() { "[+] " } else { "" };
+    let left = format!("{}{}", left, unsaved);
     // Contador de palabras: con seleccion activa muestra "seleccionadas/total".
     let words = match doc.selection_word_count() {
         Some(sel) => i18n::words_count_selection(sel, doc.word_count()),

@@ -44,6 +44,9 @@ impl VimKeymap {
                 return Resolve::Action(action);
             }
             return match key.code {
+                // Ctrl-E: switcher de archivos, alternativa zellij-safe al ^G del
+                // helper compartido (zellij se queda con ^G para su lock/unlock).
+                KeyCode::Char('e') => Resolve::Action(Action::OpenSwitcher),
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 // Ctrl-R: rehacer (lo canonico de Vim).
                 KeyCode::Char('r') => Resolve::Action(Action::Redo),
@@ -114,6 +117,8 @@ impl VimKeymap {
                 return Resolve::Action(action);
             }
             return match key.code {
+                // Ctrl-E: switcher de archivos, alternativa zellij-safe al ^G.
+                KeyCode::Char('e') => Resolve::Action(Action::OpenSwitcher),
                 KeyCode::Char('s') => Resolve::Action(Action::Save),
                 // Ctrl-P: prefijo de formato (agnostico al modo).
                 KeyCode::Char('p') => Resolve::Pending,
@@ -263,6 +268,19 @@ mod tests {
             resolve1(&km, Mode::Normal, ctrl(KeyCode::Char('s'))),
             Resolve::Action(Action::Save)
         );
+    }
+
+    #[test]
+    fn vim_ctrl_e_abre_switcher_en_normal_e_insert() {
+        // Ctrl-E abre el switcher (alternativa zellij-safe al ^G), en los dos modos
+        // donde funcionan los comandos de workspace.
+        let km = VimKeymap;
+        for mode in [Mode::Normal, Mode::Insert] {
+            assert_eq!(
+                resolve1(&km, mode, ctrl(KeyCode::Char('e'))),
+                Resolve::Action(Action::OpenSwitcher)
+            );
+        }
     }
 
     #[test]

@@ -49,7 +49,7 @@ and your text rendered as you type.
 - **Editing essentials**: undo/redo, visual selection, system clipboard
   copy/paste/cut, find & replace, bold/italic/code toggles, and full motions
   (line/doc start & end, Page Up/Down, Home/End).
-- **Multiple files with a fuzzy switcher and tabs**: `Ctrl-G` opens a fuzzy finder
+- **Multiple files with a fuzzy switcher and tabs**: `Ctrl-E` opens a fuzzy finder
   over the project files and open buffers (type to filter, Enter to open/switch);
   `Ctrl-N` starts a new file; open buffers show as tabs you can cycle with
   `Ctrl-PageDown`/`Ctrl-PageUp` (or click, with `[ui] mouse = true`).
