@@ -367,12 +367,16 @@ enum TableAlign {
     Right,
 }
 
-/// Tipo de fila dentro de una tabla.
+/// Tipo de fila dentro de una tabla. `TopBorder`/`BottomBorder` no son filas del
+/// markdown: se dibujan sobre las lineas EN BLANCO que rodean a la tabla (truco
+/// estilo editxr), para cerrar el marco sin agregar lineas (mapeo 1:1 intacto).
 #[derive(Clone, Copy, PartialEq)]
 enum TableRowKind {
+    TopBorder,
     Header,
     Delimiter,
     Body,
+    BottomBorder,
 }
 
 /// Una linea de tabla lista para dibujarse como grilla: su tipo, el texto ya
@@ -388,12 +392,12 @@ struct TableLine {
 /// Devuelve, por linea del documento, su `TableLine` si esa linea es parte de una
 /// tabla (`None` si no). El render dibuja las filas INACTIVAS como grilla alineada
 /// (la activa va cruda, ver `render`). Mantiene el mapeo 1:1 linea-source ->
-/// linea-pantalla: cada fila (header, delimitadora, cuerpo) ocupa una sola linea,
-/// igual que en el markdown. No hay borde superior/inferior: no existe una linea de
-/// source para ellos y meterlos romperia el mapeo del cursor (estilo GitHub).
+/// linea-pantalla: cada fila ocupa una sola linea. El marco superior/inferior se
+/// dibuja REUSANDO las lineas en blanco que rodean la tabla (truco estilo editxr):
+/// no agrega lineas, asi el cursor sigue mapeando 1:1.
 fn collect_tables(source: &str) -> Vec<Option<TableLine>> {
-    let line_count = source.split('\n').count();
-    let mut out: Vec<Option<TableLine>> = (0..line_count).map(|_| None).collect();
+    let src_lines: Vec<&str> = source.split('\n').collect();
+    let mut out: Vec<Option<TableLine>> = (0..src_lines.len()).map(|_| None).collect();
 
     let mut parser = MarkdownParser::default();
     let Some(tree) = parser.parse(source.as_bytes(), None) else {
@@ -404,7 +408,7 @@ fn collect_tables(source: &str) -> Vec<Option<TableLine>> {
     loop {
         let node = cursor.node();
         if node.kind() == "pipe_table" {
-            process_table(&node, source, &mut out);
+            process_table(&node, source, &src_lines, &mut out);
             // No descendemos: `process_table` ya recorrio toda la tabla.
         } else if cursor.goto_first_child() {
             continue;
@@ -420,9 +424,10 @@ fn collect_tables(source: &str) -> Vec<Option<TableLine>> {
     }
 }
 
-/// Procesa un nodo `pipe_table`: calcula anchos/alineaciones por columna y escribe
-/// un `TableLine` en `out` por cada fila (indexado por su linea de source).
-fn process_table(table: &Node, source: &str, out: &mut [Option<TableLine>]) {
+/// Procesa un nodo `pipe_table`: calcula anchos/alineaciones por columna, escribe
+/// un `TableLine` en `out` por cada fila, y cierra el marco superior/inferior sobre
+/// las lineas en blanco adyacentes a la tabla (si las hay).
+fn process_table(table: &Node, source: &str, src_lines: &[&str], out: &mut [Option<TableLine>]) {
     let mut tc = table.walk();
     let row_nodes: Vec<Node> = table.children(&mut tc).collect();
 
@@ -463,6 +468,9 @@ fn process_table(table: &Node, source: &str, out: &mut [Option<TableLine>]) {
     }
     aligns.resize(ncols, TableAlign::Left);
 
+    let first = rows.iter().map(|(l, _, _)| *l).min();
+    let last = rows.iter().map(|(l, _, _)| *l).max();
+
     for (line, kind, mut cells) in rows {
         cells.resize(ncols, String::new());
         if let Some(slot) = out.get_mut(line) {
@@ -473,6 +481,30 @@ fn process_table(table: &Node, source: &str, out: &mut [Option<TableLine>]) {
                 aligns: aligns.clone(),
             });
         }
+    }
+
+    // Marco superior/inferior: reusar la linea EN BLANCO de arriba/abajo (truco
+    // editxr). Solo si existe y esta vacia: nunca pisamos contenido. Si el cursor
+    // esta sobre esa linea, el render la dibuja cruda (vacia) y el marco no se ve
+    // mientras la editas: la guarda sale gratis del modelo de linea activa.
+    let border = |kind| TableLine {
+        kind,
+        cells: Vec::new(),
+        widths: widths.clone(),
+        aligns: aligns.clone(),
+    };
+    let is_blank = |idx: usize| src_lines.get(idx).is_some_and(|l| l.trim().is_empty());
+    if let Some(first) = first
+        && first > 0
+        && is_blank(first - 1)
+    {
+        out[first - 1] = Some(border(TableRowKind::TopBorder));
+    }
+    if let Some(last) = last
+        && is_blank(last + 1)
+        && let Some(slot) = out.get_mut(last + 1)
+    {
+        *slot = Some(border(TableRowKind::BottomBorder));
     }
 }
 
@@ -513,12 +545,21 @@ fn render_table_line(info: &TableLine, theme: &Theme) -> Vec<Span<'static>> {
     let ncols = info.widths.len();
     let mut spans: Vec<Span<'static>> = Vec::new();
 
-    if info.kind == TableRowKind::Delimiter {
-        spans.push(Span::styled("├".to_string(), border));
+    // Filas de borde (todas dibujadas igual, cambian las esquinas/uniones): el marco
+    // superior redondeado (`╭┬╮`), el separador del header (`├┼┤`) y el inferior
+    // redondeado (`╰┴╯`).
+    let corners = match info.kind {
+        TableRowKind::TopBorder => Some(("╭", "┬", "╮")),
+        TableRowKind::Delimiter => Some(("├", "┼", "┤")),
+        TableRowKind::BottomBorder => Some(("╰", "┴", "╯")),
+        _ => None,
+    };
+    if let Some((lead, junction, tail)) = corners {
+        spans.push(Span::styled(lead.to_string(), border));
         for (i, w) in info.widths.iter().enumerate() {
             spans.push(Span::styled("─".repeat(w + 2), border));
-            let junction = if i + 1 < ncols { "┼" } else { "┤" };
-            spans.push(Span::styled(junction.to_string(), border));
+            let j = if i + 1 < ncols { junction } else { tail };
+            spans.push(Span::styled(j.to_string(), border));
         }
         return spans;
     }
@@ -1142,6 +1183,46 @@ mod tests {
         // La delimitadora es el separador `├─┼─┤`.
         let delim = line_text(&lines, 1);
         assert!(delim.starts_with('├') && delim.contains('┼') && delim.ends_with('┤'));
+    }
+
+    #[test]
+    fn tabla_cierra_el_marco_en_las_lineas_en_blanco() {
+        // El marco superior/inferior se dibuja sobre las lineas EN BLANCO que rodean
+        // la tabla (truco editxr), sin agregar lineas (mapeo 1:1).
+        let theme = test_theme();
+        // 0="", 1=header, 2=delim, 3=body, 4="", 5="x", 6=""
+        let source = "\n| a | b |\n| --- | --- |\n| cc | dd |\n\nx\n";
+        // Cursor en la linea 5 ('x'), fuera de la tabla y de las blancas adyacentes.
+        let lines = render(source, None, &[], None, &theme, Some(5), 2, 0);
+        // Marco superior (linea 0, la blanca de arriba): `╭┬╮`.
+        let top = line_text(&lines, 0);
+        assert!(
+            top.starts_with('╭') && top.contains('┬') && top.ends_with('╮'),
+            "marco superior: {top:?}"
+        );
+        // Marco inferior (linea 4, la blanca de abajo): `╰┴╯`.
+        let bot = line_text(&lines, 4);
+        assert!(
+            bot.starts_with('╰') && bot.contains('┴') && bot.ends_with('╯'),
+            "marco inferior: {bot:?}"
+        );
+        // El marco alinea con la grilla (mismo ancho que el header).
+        assert_eq!(line_width(&lines, 0), line_width(&lines, 1));
+    }
+
+    #[test]
+    fn tabla_sobre_la_blanca_activa_no_dibuja_marco() {
+        // Si el cursor esta sobre la linea en blanco de arriba, esa linea va cruda
+        // (vacia): el marco no se dibuja ahi mientras la editas.
+        let theme = test_theme();
+        let source = "\n| a | b |\n| --- | --- |\n| cc | dd |\n\nx\n";
+        // Cursor en la linea 0 (la blanca de arriba): activa -> cruda.
+        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        assert_eq!(
+            line_text(&lines, 0),
+            "",
+            "la blanca activa queda vacia, sin marco"
+        );
     }
 
     #[test]
