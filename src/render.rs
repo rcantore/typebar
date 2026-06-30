@@ -17,6 +17,7 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use tree_sitter::Node;
 use tree_sitter_md::MarkdownParser;
 use unicode_width::UnicodeWidthStr;
 
@@ -356,6 +357,195 @@ fn collect_styles(
     }
 }
 
+// --- Tablas: layout de grilla para las filas inactivas ----------------------
+
+/// Alineacion de una columna, leida de la fila delimitadora (`:--`, `--:`, `:-:`).
+#[derive(Clone, Copy, PartialEq)]
+enum TableAlign {
+    Left,
+    Center,
+    Right,
+}
+
+/// Tipo de fila dentro de una tabla.
+#[derive(Clone, Copy, PartialEq)]
+enum TableRowKind {
+    Header,
+    Delimiter,
+    Body,
+}
+
+/// Una linea de tabla lista para dibujarse como grilla: su tipo, el texto ya
+/// trimmeado de cada celda (vacio en la delimitadora) y -compartidos por toda la
+/// tabla- el ancho y la alineacion de cada columna.
+struct TableLine {
+    kind: TableRowKind,
+    cells: Vec<String>,
+    widths: Vec<usize>,
+    aligns: Vec<TableAlign>,
+}
+
+/// Devuelve, por linea del documento, su `TableLine` si esa linea es parte de una
+/// tabla (`None` si no). El render dibuja las filas INACTIVAS como grilla alineada
+/// (la activa va cruda, ver `render`). Mantiene el mapeo 1:1 linea-source ->
+/// linea-pantalla: cada fila (header, delimitadora, cuerpo) ocupa una sola linea,
+/// igual que en el markdown. No hay borde superior/inferior: no existe una linea de
+/// source para ellos y meterlos romperia el mapeo del cursor (estilo GitHub).
+fn collect_tables(source: &str) -> Vec<Option<TableLine>> {
+    let line_count = source.split('\n').count();
+    let mut out: Vec<Option<TableLine>> = (0..line_count).map(|_| None).collect();
+
+    let mut parser = MarkdownParser::default();
+    let Some(tree) = parser.parse(source.as_bytes(), None) else {
+        return out;
+    };
+
+    let mut cursor = tree.block_tree().walk();
+    loop {
+        let node = cursor.node();
+        if node.kind() == "pipe_table" {
+            process_table(&node, source, &mut out);
+            // No descendemos: `process_table` ya recorrio toda la tabla.
+        } else if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return out;
+            }
+        }
+    }
+}
+
+/// Procesa un nodo `pipe_table`: calcula anchos/alineaciones por columna y escribe
+/// un `TableLine` en `out` por cada fila (indexado por su linea de source).
+fn process_table(table: &Node, source: &str, out: &mut [Option<TableLine>]) {
+    let mut tc = table.walk();
+    let row_nodes: Vec<Node> = table.children(&mut tc).collect();
+
+    let mut rows: Vec<(usize, TableRowKind, Vec<String>)> = Vec::new();
+    let mut aligns: Vec<TableAlign> = Vec::new();
+    for row in &row_nodes {
+        let line = row.start_position().row;
+        match row.kind() {
+            "pipe_table_header" => rows.push((line, TableRowKind::Header, row_cells(row, source))),
+            "pipe_table_row" => rows.push((line, TableRowKind::Body, row_cells(row, source))),
+            "pipe_table_delimiter_row" => {
+                aligns = row_aligns(row, source);
+                rows.push((line, TableRowKind::Delimiter, Vec::new()));
+            }
+            _ => {}
+        }
+    }
+
+    let ncols = rows.iter().map(|(_, _, c)| c.len()).max().unwrap_or(0);
+    if ncols == 0 {
+        return;
+    }
+
+    // Ancho de columna = max ancho VISUAL del contenido (header + cuerpo; la fila
+    // delimitadora no cuenta).
+    let mut widths = vec![0usize; ncols];
+    for (_, kind, cells) in &rows {
+        if *kind == TableRowKind::Delimiter {
+            continue;
+        }
+        for (i, w) in widths.iter_mut().enumerate() {
+            let cell_w = cells
+                .get(i)
+                .map(|s| UnicodeWidthStr::width(s.as_str()))
+                .unwrap_or(0);
+            *w = (*w).max(cell_w);
+        }
+    }
+    aligns.resize(ncols, TableAlign::Left);
+
+    for (line, kind, mut cells) in rows {
+        cells.resize(ncols, String::new());
+        if let Some(slot) = out.get_mut(line) {
+            *slot = Some(TableLine {
+                kind,
+                cells,
+                widths: widths.clone(),
+                aligns: aligns.clone(),
+            });
+        }
+    }
+}
+
+/// Texto trimmeado de cada `pipe_table_cell` de una fila, en orden.
+fn row_cells(row: &Node, source: &str) -> Vec<String> {
+    let mut c = row.walk();
+    row.children(&mut c)
+        .filter(|n| n.kind() == "pipe_table_cell")
+        .map(|n| source[n.byte_range()].trim().to_string())
+        .collect()
+}
+
+/// Alineacion de cada `pipe_table_delimiter_cell`, leida de los `:` (`:--` izq,
+/// `--:` der, `:-:` centro, default izq).
+fn row_aligns(row: &Node, source: &str) -> Vec<TableAlign> {
+    let mut c = row.walk();
+    row.children(&mut c)
+        .filter(|n| n.kind() == "pipe_table_delimiter_cell")
+        .map(|n| {
+            let t = source[n.byte_range()].trim();
+            match (t.starts_with(':'), t.ends_with(':')) {
+                (true, true) => TableAlign::Center,
+                (false, true) => TableAlign::Right,
+                _ => TableAlign::Left,
+            }
+        })
+        .collect()
+}
+
+/// Spans de una linea de tabla como grilla alineada (box-drawing). El header va en
+/// negrita; los bordes (`│ ├ ┼ ┤ ─`) atenuados. Estilo GitHub: sin borde
+/// superior/inferior (no hay linea de source para ellos), solo verticales y el
+/// separador del header (que sale de la fila delimitadora). Cada columna ocupa
+/// `width + 2` celdas (un espacio de padding a cada lado), asi los `│` y los `┼`
+/// caen en la misma columna en todas las filas.
+fn render_table_line(info: &TableLine, theme: &Theme) -> Vec<Span<'static>> {
+    let border = marker_style(theme);
+    let ncols = info.widths.len();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    if info.kind == TableRowKind::Delimiter {
+        spans.push(Span::styled("├".to_string(), border));
+        for (i, w) in info.widths.iter().enumerate() {
+            spans.push(Span::styled("─".repeat(w + 2), border));
+            let junction = if i + 1 < ncols { "┼" } else { "┤" };
+            spans.push(Span::styled(junction.to_string(), border));
+        }
+        return spans;
+    }
+
+    let cell_style = if info.kind == TableRowKind::Header {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+
+    spans.push(Span::styled("│".to_string(), border));
+    for (i, cell) in info.cells.iter().enumerate() {
+        let pad = info.widths[i].saturating_sub(UnicodeWidthStr::width(cell.as_str()));
+        let (lp, rp) = match info.aligns[i] {
+            TableAlign::Center => (pad / 2, pad - pad / 2),
+            TableAlign::Right => (pad, 0),
+            TableAlign::Left => (0, pad),
+        };
+        // ` {leftpad}{contenido}{rightpad} ` + el `│` de cierre.
+        spans.push(Span::styled(" ".repeat(1 + lp), Style::default()));
+        spans.push(Span::styled(cell.clone(), cell_style));
+        spans.push(Span::styled(" ".repeat(rp + 1), Style::default()));
+        spans.push(Span::styled("│".to_string(), border));
+    }
+    spans
+}
+
 // --- Render a ratatui ------------------------------------------------------
 
 /// Convierte el documento Markdown en lineas estilizadas listas para ratatui.
@@ -399,6 +589,8 @@ pub fn render(
     code_box_width: usize,
 ) -> Vec<Line<'static>> {
     let (spans, hide_byte, replace_byte, code_pad) = collect_styles(source, theme);
+    // Layout de grilla por linea para las tablas (None si la linea no es tabla).
+    let table_lines = collect_tables(source);
 
     // Estilo por byte. Pintamos los tramos de menor a mayor profundidad, asi
     // el mas profundo (mas especifico) queda arriba.
@@ -457,6 +649,15 @@ pub fn render(
         offset = line_end + 1; // saltar el '\n'
 
         let show_markers = force_full || active_line == Some(line_idx);
+
+        // Tablas: las filas INACTIVAS (sin cursor) se dibujan como grilla alineada
+        // (box-drawing). La fila activa cae al render crudo de abajo, asi el cursor
+        // mapea 1:1. Con `force_full` (Nivel 1, o seleccion/busqueda) la tabla va
+        // cruda, para que el highlight quede sobre celdas reales.
+        if !show_markers && let Some(info) = table_lines.get(line_idx).and_then(|o| o.as_ref()) {
+            lines.push(Line::from(render_table_line(info, theme)));
+            continue;
+        }
 
         let mut line_spans: Vec<Span<'static>> = Vec::new();
 
@@ -862,7 +1063,7 @@ mod tests {
         assert!(!flags[4], "despues");
     }
 
-    // --- Tablas (estilo-only, sin re-alinear) -----------------------------
+    // --- Tablas: grilla en filas inactivas, crudo en la activa -------------
 
     /// Primer span de la linea `idx` cuyo contenido es exactamente `content`.
     fn span_of<'a>(
@@ -877,18 +1078,15 @@ mod tests {
     }
 
     #[test]
-    fn tabla_no_realinea_el_texto_y_pone_el_header_en_negrita() {
-        // Invariante critico del editor: el texto visible de cada linea es
-        // identico al source (no se inserta padding), asi el cursor sigue mapeando
-        // a los bytes. Solo se agrega jerarquia visual: header en negrita, pipes
-        // atenuados, cuerpo plano.
+    fn tabla_fila_activa_se_renderiza_cruda_con_estilo() {
+        // La fila con el cursor (activa) va CRUDA (1:1, sin grilla) con el realce
+        // estilo-only: header en negrita y pipes atenuados. Asi el cursor mapea a
+        // los bytes mientras editas esa fila.
         let theme = test_theme();
         let source = "| Name | Age |\n|------|-----|\n| Ada  | 36  |\n";
+        // Cursor en el header (linea 0): esa fila va cruda.
         let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 0), "| Name | Age |");
-        assert_eq!(line_text(&lines, 1), "|------|-----|");
-        assert_eq!(line_text(&lines, 2), "| Ada  | 36  |");
-        // Celdas del header en negrita.
         assert!(
             span_of(&lines, 0, "Name ")
                 .unwrap()
@@ -896,53 +1094,70 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::BOLD)
         );
-        assert!(
-            span_of(&lines, 0, "Age ")
-                .unwrap()
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
-        );
-        // Pipes atenuados (color marker) en todas las filas.
-        for idx in [0, 2] {
-            for s in &lines[idx].spans {
-                if s.content.as_ref() == "|" {
-                    assert_eq!(s.style.fg, Some(theme.marker));
-                }
+        // Pipes atenuados (color marker).
+        for s in &lines[0].spans {
+            if s.content.as_ref() == "|" {
+                assert_eq!(s.style.fg, Some(theme.marker));
             }
         }
-        // El cuerpo NO va en negrita (solo el header): ninguna celda del cuerpo se
-        // estiliza, asi que su texto se fusiona con los espacios default de al lado
-        // y ningun span de la fila lleva BOLD.
-        assert!(
-            lines[2]
-                .spans
-                .iter()
-                .all(|s| !s.style.add_modifier.contains(Modifier::BOLD))
-        );
     }
 
     #[test]
-    fn tabla_fila_delimitadora_atenuada_y_colons_acentuados() {
-        // La fila delimitadora va atenuada como estructura; los `:` de alignment
-        // se acentuan con el color de heading por encima del dim.
+    fn tabla_fila_delimitadora_activa_atenuada_y_colons_acentuados() {
+        // En la fila delimitadora ACTIVA (cruda) se ve el realce estilo-only: los
+        // guiones atenuados y los `:` de alignment acentuados.
         let theme = test_theme();
         let source = "| A | B |\n| :--- | ---: |\n| x | y |\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
-        // 1:1 intacto.
+        // Cursor en la delimitadora (linea 1): va cruda.
+        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "| :--- | ---: |");
-        // Los `:` de alignment van con el color de heading (acento).
         assert_eq!(
             span_of(&lines, 1, ":").unwrap().style.fg,
             Some(theme.heading_1)
         );
-        // Los guiones de la fila van atenuados (color marker), no acentuados.
         let dash = lines[1]
             .spans
             .iter()
             .find(|s| s.content.as_ref().contains('-'))
             .unwrap();
         assert_eq!(dash.style.fg, Some(theme.marker));
+    }
+
+    #[test]
+    fn tabla_inactiva_se_alinea_en_grilla() {
+        // Con el cursor FUERA de la tabla, las filas se dibujan como grilla alineada
+        // (box-drawing), no como markdown crudo. Columnas de anchos distintos para
+        // verificar que el padding las empareja.
+        let theme = test_theme();
+        let source = "| a | bbbb |\n| --- | --- |\n| cc | d |\n\nx\n";
+        // Cursor en la linea 4 ('x'), fuera de la tabla.
+        let lines = render(source, None, &[], None, &theme, Some(4), 2, 0);
+        let header = line_text(&lines, 0);
+        let body = line_text(&lines, 2);
+        // Bordes box-drawing, sin pipes ASCII.
+        assert!(header.contains('│') && body.contains('│'));
+        assert!(!header.contains('|') && !body.contains('|'));
+        // Header y cuerpo alinean al MISMO ancho (columnas en grilla).
+        assert_eq!(line_width(&lines, 0), line_width(&lines, 2));
+        // La delimitadora es el separador `├─┼─┤`.
+        let delim = line_text(&lines, 1);
+        assert!(delim.starts_with('├') && delim.contains('┼') && delim.ends_with('┤'));
+    }
+
+    #[test]
+    fn tabla_grilla_respeta_alignment_a_la_derecha() {
+        // Columna right-aligned (`--:`): el padding va a la IZQUIERDA del contenido.
+        let theme = test_theme();
+        let source = "| num |\n| --: |\n| 7 |\n\nx\n";
+        // Cursor fuera de la tabla (linea 4).
+        let lines = render(source, None, &[], None, &theme, Some(4), 2, 0);
+        // Ancho de columna = max("num"=3, "7"=1) = 3. El "7" right-aligned queda
+        // pegado a la derecha: tres espacios antes del 7 dentro de la celda.
+        let body = line_text(&lines, 2);
+        assert!(
+            body.contains("   7"),
+            "right-align: el 7 va a la derecha (padding a la izquierda): {body:?}"
+        );
     }
 
     #[test]
