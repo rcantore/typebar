@@ -1,5 +1,7 @@
 # typebar
 
+[![Crates.io](https://img.shields.io/crates/v/typebar.svg)](https://crates.io/crates/typebar)
+
 *Read this in [English](README.md).*
 
 Un editor de Markdown WYSIWYG para la terminal, escrito en Rust. typebar
@@ -125,6 +127,17 @@ en el primer arranque (los instaladores de arriba evitan esto):
   después corre normal.
 - **Windows**: si aparece SmartScreen, elegí *Más información -> Ejecutar de
   todas formas*.
+
+### Instalar con cargo
+
+Si ya tenés un toolchain de Rust, instalá la última versión desde crates.io.
+Compila localmente, así que no dispara el aviso de Gatekeeper/SmartScreen:
+
+```bash
+cargo install typebar
+```
+
+Después corré `typebar notas.md`.
 
 ### Compilar desde el código
 
