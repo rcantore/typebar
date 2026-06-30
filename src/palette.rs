@@ -55,6 +55,7 @@ const COMMANDS: &[(Action, Key)] = &[
     (Action::ToggleWhitepaper, Key::HintWhitepaper),
     (Action::ExportHtml, Key::HintExportHtml),
     (Action::NewBuffer, Key::HintNew),
+    (Action::CloseBuffer, Key::HintCloseBuffer),
     (Action::OpenSwitcher, Key::HintSwitcher),
     (Action::LineStart, Key::HintLineStart),
     (Action::LineEnd, Key::HintLineEnd),
