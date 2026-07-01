@@ -1,6 +1,6 @@
 [package]
 name = "typebar"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Roberto Cantore Galvez"]
 description = "Editor de Markdown WYSIWYG para terminal, con keybindings configurables (standard/vim/wordstar)."

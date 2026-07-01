@@ -16,6 +16,36 @@ How to maintain this file:
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-01
+
+### Added
+
+- Close the active buffer with `Ctrl-W` (all presets; remappable via
+  `close-buffer`). If it has unsaved changes, a prompt asks first — `[s]` save &
+  close, `[d]` discard, `[c]` cancel. Closing the only buffer replaces it with a
+  fresh empty one.
+- Table rendering. Markdown pipe tables render as an aligned grid with
+  box-drawing borders: column widths from content, a header separator from the
+  `|---|` row, and a full frame whose top/bottom borders reuse the blank lines
+  around the table (no extra lines, so the cursor still maps 1:1). Alignment
+  (`:--`, `--:`, `:-:`) is respected and the header is bold. The row under the
+  cursor stays raw Markdown for editing, like the rest of the WYSIWYG view.
+
+### Changed
+
+- File switcher moved off `Ctrl-G` (collides with zellij's lock toggle) to
+  `Ctrl-E` in the standard and vim presets; in wordstar, where `Ctrl-E` is
+  cursor-up, it's the `Ctrl-K F` chord ("find file"). `Ctrl-G` still works in
+  standard/vim as a legacy alias.
+- Fuzzy switcher lists open buffers first (most relevant to reach), then the
+  project files, deduplicated. Candidates that aren't safely on disk (unsaved
+  changes, or a never-saved buffer) are marked with `[+]`.
+- The unsaved marker `[+]` now means "not safely on disk" — unsaved changes OR a
+  never-saved buffer — consistently in the status bar and the switcher.
+- Minimal chrome: the editor no longer draws a frame around itself; a subtle rule
+  separates the writing area from the toolbar/status. Toolbar, themes and status
+  bar are unchanged.
+
 ### Fixed
 
 - Code blocks now render as a box. Fenced (` ``` `) and indented code blocks fill
