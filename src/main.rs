@@ -729,25 +729,26 @@ fn draw(
     let whitepaper = state.whitepaper;
     let zen = state.zen || whitepaper;
 
-    // Zen/focus: ocultamos todo el chrome (borde, toolbar, status) para dejar
-    // solo el texto. Excepcion: si hay un overlay de busqueda activo reservamos
-    // la ultima linea para el minibuffer (si no, no se veria que se esta
-    // buscando). Fuera de zen: editor (resto) + toolbar + gap + status bar; el
-    // gap de 1 linea separa visualmente el chrome de comandos del de estado.
-    let (tabs_area, editor_area, hints_area, status_area) = if zen {
+    // Zen/focus: ocultamos todo el chrome (toolbar, status) para dejar solo el
+    // texto. Excepcion: si hay un overlay de busqueda activo reservamos la ultima
+    // linea para el minibuffer (si no, no se veria que se esta buscando). Fuera de
+    // zen: editor (resto) + linea separadora + toolbar + status bar. Como el editor
+    // ya no lleva marco (chrome minimal), la separadora (una regla tenue) marca el
+    // "piso" de la zona de escritura y la despega del menu/estado.
+    let (tabs_area, editor_area, sep_area, hints_area, status_area) = if zen {
         // En zen reservamos la ultima linea para el minibuffer cuando hay un overlay
         // de busqueda O un prompt de confirmacion activo: si no, el prompt seria
         // invisible y las teclas "no responderian" sin explicacion.
         if state.overlay.is_some() || state.confirm.is_some() {
             let [editor, mini] =
                 Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
-            (None, editor, None, Some(mini))
+            (None, editor, None, None, Some(mini))
         } else {
-            (None, frame.area(), None, None)
+            (None, frame.area(), None, None, None)
         }
     } else if tabs.is_some() {
         // Con tabs (>=2 buffers) reservamos una fila ARRIBA de todo para la barra.
-        let [tabs_a, editor, hints, _gap, status] = Layout::vertical([
+        let [tabs_a, editor, sep, hints, status] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
@@ -755,16 +756,16 @@ fn draw(
             Constraint::Length(1),
         ])
         .areas(frame.area());
-        (Some(tabs_a), editor, Some(hints), Some(status))
+        (Some(tabs_a), editor, Some(sep), Some(hints), Some(status))
     } else {
-        let [editor, hints, _gap, status] = Layout::vertical([
+        let [editor, sep, hints, status] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
         .areas(frame.area());
-        (None, editor, Some(hints), Some(status))
+        (None, editor, Some(sep), Some(hints), Some(status))
     };
 
     // Whitepaper: el editor no ocupa todo el ancho sino una columna centrada de
@@ -780,6 +781,19 @@ fn draw(
     // Barra de tabs (si la hay): la fila reservada arriba.
     if let (Some(area), Some(line)) = (tabs_area, tabs) {
         frame.render_widget(Paragraph::new(line), area);
+    }
+
+    // Regla separadora: el "piso" de la zona de escritura. Una linea tenue de ancho
+    // completo que despega el texto de la toolbar/status ahora que no hay marco.
+    if let Some(area) = sep_area {
+        let rule = "─".repeat(area.width as usize);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                rule,
+                Style::default().fg(theme.marker),
+            ))),
+            area,
+        );
     }
 
     // Chrome minimal (estilo editxr): el editor NO lleva marco en ningun modo, para
@@ -1194,6 +1208,11 @@ mod tests {
             !screen.contains('┌') && !screen.contains('╭'),
             "no deberia haber marco alrededor del editor"
         );
+        // La regla separadora (piso de la zona de escritura) esta presente.
+        assert!(
+            screen.contains('─'),
+            "falta la regla que separa la escritura del menu/status"
+        );
     }
 
     #[test]
@@ -1203,6 +1222,10 @@ mod tests {
         assert!(
             !screen.contains("Save"),
             "la toolbar no deberia verse en zen"
+        );
+        assert!(
+            !screen.contains('─'),
+            "en zen no hay regla separadora (chrome oculto)"
         );
         assert!(
             screen.contains("hola mundo"),
