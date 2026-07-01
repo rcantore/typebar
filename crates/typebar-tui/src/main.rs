@@ -1035,7 +1035,11 @@ fn status_bar(doc: &Document, keymap: &dyn Keymap, pending: &[KeyEvent]) -> Line
         None => i18n::words_count(doc.word_count()),
     };
     let right = format!(" {} · {}:{} ", words, doc.line + 1, doc.display_col() + 1);
+    // Margen de 1 espacio SIN fondo antes del pill, para que el pill del status
+    // arranque en la misma columna que el primer boton de la toolbar (que tambien
+    // lleva 1 espacio de margen). Asi los bordes izquierdos quedan alineados.
     let mut spans = vec![
+        Span::raw(" "),
         Span::styled(left, Style::default().add_modifier(Modifier::REVERSED)),
         Span::raw(" "),
     ];
