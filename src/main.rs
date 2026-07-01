@@ -930,8 +930,7 @@ fn draw(
         } else {
             0
         };
-        let cursor_x =
-            editor_area.x + border + pad_left + code_indent + doc.display_col() as u16;
+        let cursor_x = editor_area.x + border + pad_left + code_indent + doc.display_col() as u16;
         let cursor_y = editor_area.y + border + pad_top + (doc.line - scroll) as u16;
         if whitepaper {
             // En papel el cursor real del terminal usa un color fijo que sobre el
