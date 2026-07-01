@@ -782,13 +782,15 @@ fn draw(
         frame.render_widget(Paragraph::new(line), area);
     }
 
-    // En zen no hay borde (el editor ocupa todo); fuera de zen, el Block bordered
-    // come 1 linea arriba y 1 abajo. Este offset alinea el alto util y el cursor.
-    let border: u16 = if zen { 0 } else { 1 };
-    // Margen izquierdo, para que el texto no quede pegado al borde. En zen (sin
-    // marco) le damos un poco mas de aire (2) ya que no hay borde que separe;
-    // fuera de zen alcanza con 1 (el borde ya separa). Suma al offset del cursor.
-    let pad_left: u16 = if zen { 2 } else { 1 };
+    // Chrome minimal (estilo editxr): el editor NO lleva marco en ningun modo, para
+    // que el texto respire y el foco sea la escritura. `border` queda en 0 siempre;
+    // se conserva como constante para el calculo de offsets del cursor/viewport (que
+    // lo suman/restan de forma uniforme).
+    let border: u16 = 0;
+    // Margen izquierdo para que el texto no quede pegado al filo. Sin marco, damos
+    // aire (2 celdas) en todos los modos; asi el texto queda en la misma columna que
+    // antes (cuando el borde ocupaba 1 + 1 de padding). Suma al offset del cursor.
+    let pad_left: u16 = 2;
     // Margen superior, para que el texto no arranque pegado al borde de arriba.
     // En papel son 2 (se siente mas una "hoja"); en el resto 1, una fila de aire
     // (tanto en normal como en zen el texto quedaba pegado arriba). Suma al offset
@@ -826,16 +828,11 @@ fn draw(
         matches.iter().position(|m| m.start == doc.cursor_byte())
     };
 
-    // En zen el Block va sin borde ni titulo (solo texto), pero con el mismo
-    // margen izquierdo; fuera de zen, bordered con el path en el titulo. El
-    // padding tiene que coincidir con `pad_left` (que ya usa el cursor).
-    let block = if zen {
-        Block::default().padding(Padding::new(pad_left, 0, pad_top, 0))
-    } else {
-        Block::bordered()
-            .title(format!(" typebar · {} ", doc.path.display()))
-            .padding(Padding::new(pad_left, 0, pad_top, 0))
-    };
+    // Chrome minimal: el editor va sin marco ni titulo en todos los modos (solo
+    // texto con su margen). El path se ve en la barra de tabs (con >=2 buffers) y en
+    // la status bar; no hace falta un titulo de marco. El padding coincide con
+    // `pad_left`/`pad_top` (que ya usa el cursor).
+    let block = Block::default().padding(Padding::new(pad_left, 0, pad_top, 0));
     // En Nivel 2 la linea con el cursor se renderiza como Nivel 1 (markers
     // visibles) para preservar el mapeo cursor->columna 1:1. Las demas lineas
     // ocultan los delimiters inline (ver `render::render`).
@@ -898,9 +895,10 @@ fn draw(
         }
     }
 
-    // Cursor: +1,+1 por el borde del Block, y restando scroll. La X es la columna
-    // *visual* (celdas), no el indice de char: asi cae sobre el glifo que dibujo el
-    // render aunque haya CJK/emoji de doble ancho.
+    // Cursor: sumando el margen (`border` es 0 con el chrome minimal, pero se deja
+    // en la formula por uniformidad) mas `pad_left`/`pad_top`, y restando scroll. La
+    // X es la columna *visual* (celdas), no el indice de char: asi cae sobre el glifo
+    // que dibujo el render aunque haya CJK/emoji de doble ancho.
     if doc.line >= scroll {
         // Si el cursor esta sobre una linea de bloque de codigo, el render le
         // aplico un margen izquierdo (`CODE_BOX_LEFT_PAD`) que corre el texto a
@@ -1186,22 +1184,22 @@ mod tests {
 
     #[test]
     fn draw_normal_muestra_chrome() {
-        // Fuera de zen: el borde con el titulo (`typebar`) y la toolbar (`Save`,
-        // locale En por default en tests) estan presentes, igual que el texto.
+        // Fuera de zen (chrome minimal, sin marco): la toolbar (`Save`, locale En por
+        // default en tests) y el texto estan presentes. No hay borde: no aparece la
+        // esquina superior del marco.
         let screen = render_to_string(false, None, None);
-        assert!(screen.contains("typebar"), "falta el titulo del borde");
         assert!(screen.contains("Save"), "falta la toolbar");
         assert!(screen.contains("hola mundo"), "falta el texto");
+        assert!(
+            !screen.contains('┌') && !screen.contains('╭'),
+            "no deberia haber marco alrededor del editor"
+        );
     }
 
     #[test]
     fn draw_zen_oculta_chrome_pero_muestra_texto() {
-        // En zen: sin borde/titulo ni toolbar; solo el texto.
+        // En zen: sin toolbar; solo el texto.
         let screen = render_to_string(true, None, None);
-        assert!(
-            !screen.contains("typebar"),
-            "el titulo no deberia verse en zen"
-        );
         assert!(
             !screen.contains("Save"),
             "la toolbar no deberia verse en zen"
