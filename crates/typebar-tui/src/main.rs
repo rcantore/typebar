@@ -748,9 +748,12 @@ fn draw(
         }
     } else if tabs.is_some() {
         // Con tabs (>=2 buffers) reservamos una fila ARRIBA de todo para la barra.
-        let [tabs_a, editor, sep, hints, status] = Layout::vertical([
+        // Abajo: regla (piso de escritura) + toolbar + gap + status. La regla despega
+        // el texto del chrome; el gap despega la toolbar del status.
+        let [tabs_a, editor, sep, hints, _gap, status] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(1),
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -758,8 +761,9 @@ fn draw(
         .areas(frame.area());
         (Some(tabs_a), editor, Some(sep), Some(hints), Some(status))
     } else {
-        let [editor, sep, hints, status] = Layout::vertical([
+        let [editor, sep, hints, _gap, status] = Layout::vertical([
             Constraint::Min(1),
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
