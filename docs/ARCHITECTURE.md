@@ -34,7 +34,7 @@ que el editor, que toma el input del teclado y lo imprime ya estilizado.
 
 ## Modulos Principales
 
-### 1. Document Model (`src/document/`)
+### 1. Document Model (`crates/typebar-core/src/document/`)
 
 El corazon del editor. Mantiene el texto y su representacion estructural.
 
@@ -65,7 +65,7 @@ struct CursorState {
 
 En Nivel 1 el mapeo de cursor es 1:1 (no ocultamos markers), por lo que `position` siempre coincide con la posicion visual. En Nivel 2 el mapeo sigue siendo 1:1 sobre la linea activa, porque esa linea se renderiza como Nivel 1; los markers solo se contraen en las lineas inactivas, donde el cursor no esta.
 
-### 2. Renderer Engine (`src/renderer/`)
+### 2. Renderer Engine (`crates/typebar-tui/src/render.rs`)
 
 Transforma el AST de Markdown en widgets estilizados de ratatui.
 
@@ -105,7 +105,7 @@ Transforma el AST de Markdown en widgets estilizados de ratatui.
 
 Si hay seleccion no vacia o coincidencias de busqueda activas, se vuelve a Nivel 1 global mientras dure el estado, para que los highlights caigan sobre celdas reales y no sobre bytes ocultos. Se configura con `[ui].wysiwyg_level = 1 | 2` en el TOML (default `2`).
 
-### 3. Keybinding System (`src/keybinding.rs`)
+### 3. Keybinding System (`crates/typebar-tui/src/keybinding/`)
 
 Sistema configurable con presets intercambiables. Desacopla la *tecla fisica*
 de la *accion semantica*: cada preset implementa el trait `Keymap` y traduce una
@@ -196,7 +196,7 @@ pub trait Keymap {
 
 El chord `Ctrl-P B/I/C` togglea negrita/italica/codigo sobre la palabra bajo el
 cursor. La deteccion del estilo existente NO es textual sino **AST-based**: el
-modulo `src/markdown.rs` parsea el documento con tree-sitter-md y la funcion
+modulo `crates/typebar-core/src/markdown.rs` parsea el documento con tree-sitter-md y la funcion
 `enclosing(text, byte_offset, kind)` busca el nodo inline mas interno
 (`strong_emphasis`/`emphasis`/`code_span`) que contiene el offset del cursor,
 devolviendo los rangos en bytes de sus marcadores de apertura y cierre. Con eso
@@ -213,7 +213,7 @@ devolviendo los rangos en bytes de sus marcadores de apertura y cierre. Con eso
 `markdown.rs` aisla todo el uso de tree-sitter para consultas semanticas, para
 que `document.rs` no dependa de la gramatica directamente.
 
-#### Modelo de seleccion (`src/document/select.rs`)
+#### Modelo de seleccion (`crates/typebar-core/src/document/select.rs`)
 
 La seleccion se guarda en `Document` como un *ancla* opcional
 (`selection_anchor: Option<usize>`), un char-index ABSOLUTO en el buffer. El
@@ -241,7 +241,7 @@ sin exponer el buffer.
   armar el mapa de estilo por byte, pisa el `bg` de los bytes seleccionados
   (`SELECTION_BG`) preservando fg/modifiers del texto.
 
-#### Undo/Redo (`src/document/history.rs`, implementado)
+#### Undo/Redo (`crates/typebar-core/src/document/history.rs`, implementado)
 
 Undo/redo lineal por **snapshots**, no por diffs. Cada snapshot guarda una copia
 del estado restaurable: `{ buffer: Rope, line, col, selection_anchor }`. Clonar
@@ -269,7 +269,7 @@ nodos, asi que no hace falta modelar operaciones inversas.
   Normal); standard y wordstar usan `Ctrl-Z` deshacer y `Ctrl-Y` rehacer
   (convencion moderna; el raw mode captura `Ctrl-Z` asi que no suspende).
 
-#### Clipboard interno (`src/document/clipboard.rs`, implementado)
+#### Clipboard interno (`crates/typebar-core/src/document/clipboard.rs`, implementado)
 
 Portapapeles INTERNO del editor (no el del SO), guardado en `Document` como
 `clipboard: Option<String>` (privado, no persiste entre sesiones).
@@ -346,7 +346,7 @@ preset = "vim"
 "Escape" = "EnterNormalMode"
 ```
 
-### 4. Theme Engine (`src/theme/`)
+### 4. Theme Engine (`crates/typebar-tui/src/theme/`)
 
 Sistema de theming completo para la comunidad ricer.
 
@@ -398,7 +398,7 @@ Maneja la disposicion de paneles y modos de visualizacion.
 - **Zen mode:** solo el editor centrado con ancho maximo configurable, todo lo demas oculto.
 - **Split (futuro):** dos editores lado a lado, post-MVP.
 
-### 7. i18n (`src/i18n/`)
+### 7. i18n (`crates/typebar-core/src/i18n.rs`)
 
 Sistema de internacionalizacion ligero basado en archivos TOML.
 
@@ -425,28 +425,48 @@ no_results = "Sin resultados"
 
 ## Estructura del Proyecto
 
+El repo es un Cargo workspace con dos crates: `typebar-core`, el nucleo
+agnostico de UI (document model, buffers, search, fuzzy, files, markdown,
+export, i18n, text), y `typebar-tui`, la interfaz de terminal (entry point,
+render, keybindings, theme, config, pickers), que depende de `typebar-core` y
+se publica en crates.io como `typebar`. La separacion existe para que una
+futura GUI (evaluada sobre Tauri, ver la branch `gui`) pueda reusar el mismo
+nucleo sin arrastrar dependencias de terminal (ratatui, crossterm).
+
 ```
 typebar/
-- Cargo.toml
+- Cargo.toml              # workspace
 - LICENSE-MIT
 - LICENSE-APACHE
 - README.md
 - CONTRIBUTING.md
-- src/
-  - main.rs               # CLI entry, clap args
-  - app.rs                # App shell, event loop
-  - document/             # buffer, tree, cursor, history
-  - renderer/             # style_map, spans, viewport
-  - keybindings/          # parser, vim preset, actions
-  - theme/                # loader, default
-  - i18n/                 # macro t!() + locale loader
-  - file_manager/         # tree, fuzzy
-  - layout/               # zen mode
-  - config/               # defaults
-- themes/                 # default-dark, default-light, catppuccin-frappe
-- locales/                # en.toml, es.toml
-- config/                 # default.toml
+- examples/               # config.toml de ejemplo
 - docs/                   # ARCHITECTURE, KEYBINDINGS, THEMING
+- crates/
+  - typebar-core/
+    - src/
+      - lib.rs
+      - document/         # buffer, cursor, edit, motion, select, history, clipboard, find
+      - buffers.rs
+      - search.rs
+      - fuzzy.rs
+      - files.rs
+      - markdown.rs
+      - export.rs
+      - i18n.rs
+      - text.rs
+  - typebar-tui/
+    - src/
+      - main.rs           # CLI entry, event loop
+      - render.rs
+      - config.rs
+      - overlay.rs
+      - palette.rs
+      - switcher.rs
+      - tabs.rs
+      - keybinding/       # parser, presets (standard, vim, wordstar), overrides
+      - theme/            # loader, paletas Catppuccin
+    - examples/           # sample.md
 ```
 
 ---

@@ -19,10 +19,13 @@ toolchain (Rust **1.85+**). Install it via [rustup](https://rustup.rs/).
 git clone https://github.com/rcantore/typebar
 cd typebar
 cargo build
-cargo run -- examples/sample.md      # try it out
+cargo run -- crates/typebar-tui/examples/sample.md      # try it out
 ```
 
-For a high-level tour of how the editor is structured, read
+typebar is a Cargo workspace with two crates: `typebar-core` (the UI-agnostic
+document model, buffers, search, markdown, export, i18n) and `typebar-tui`
+(the terminal interface, packaged as `typebar`). For a high-level tour of how
+the editor is structured, read
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Before you open a pull request

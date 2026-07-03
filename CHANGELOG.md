@@ -16,6 +16,13 @@ How to maintain this file:
 
 ## [Unreleased]
 
+### Changed
+
+- Internal restructure into a Cargo workspace, with the editor's core (document
+  model, buffers, search, fuzzy, files, markdown, export, i18n, text) extracted
+  into its own `typebar-core` crate. No behavior or installation changes; the
+  published package is still `typebar`.
+
 ## [0.3.0] - 2026-07-01
 
 ### Added
