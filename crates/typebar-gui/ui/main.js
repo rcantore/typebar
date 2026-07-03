@@ -22,6 +22,7 @@
 // indice del bloque en edicion. Nada de logica de markdown en este archivo.
 
 const invoke = window.__TAURI__.core.invoke;
+const listen = window.__TAURI__.event.listen;
 
 const docEl = document.getElementById("doc");
 const docPathEl = document.getElementById("doc-path");
@@ -41,6 +42,24 @@ let textareaEl = null;
 let currentPath = null;
 // Guarda para ignorar el blur que dispara quitar el textarea del DOM al repintar.
 let isPainting = false;
+
+// Snapshot del documento tal como esta en disco (ultimo load/save). Comparado
+// contra fullDocument() da el estado "dirty" (cambios sin guardar). Comparar
+// strings enteras es barato de sobra para el tamano de un documento de texto,
+// asi que lo recalculamos hasta mientras se tipea.
+let savedDocument = "";
+
+// Columna objetivo para navegar con flechas entre bloques (punto 1). Igual que
+// en la TUI: al subir/bajar se conserva la columna aproximada. null cuando no
+// se esta navegando verticalmente.
+let goalColumn = null;
+
+// Instruccion de donde dejar el caret en el proximo paint(). null = al final
+// (comportamiento por defecto). Tipos:
+//   { type: "within", within }              -> offset absoluto dentro del value
+//   { type: "edge", edge, goalColumn }       -> "first"/"last" linea, en columna
+//   { type: "snippet", fullText, offset }    -> mapear click renderizado a source
+let pendingCaret = null;
 
 // Documento de bienvenida por defecto (markdown embebido).
 const WELCOME = `# typebar
@@ -107,6 +126,25 @@ function blockIndexAtOffset(offset) {
   return Math.max(0, blocks.length - 1);
 }
 
+// Dado un array de bloques y un offset absoluto en el documento que forman,
+// devuelve el indice del bloque que lo contiene y el offset relativo dentro de
+// ese bloque. Generaliza `blockIndexAtOffset` para reubicar el caret tras
+// re-segmentar (puntos 1 y 3). Un offset que cae justo en el limite entra al
+// ultimo bloque como su posicion final.
+function locateOffset(blocksArr, offset) {
+  let off = 0;
+  for (let k = 0; k < blocksArr.length; k++) {
+    const len = blocksArr[k].source.length;
+    if (offset < off + len) {
+      return { index: k, within: offset - off };
+    }
+    off += len;
+  }
+  const last = Math.max(0, blocksArr.length - 1);
+  const within = blocksArr.length ? blocksArr[last].source.length : 0;
+  return { index: last, within };
+}
+
 // Un documento vacio se muestra como un unico bloque editable en blanco, para
 // poder empezar a escribir enseguida.
 function ensureNonEmpty() {
@@ -140,16 +178,60 @@ function makeTextarea(i) {
   ta.spellcheck = false;
   ta.setAttribute("autocomplete", "off");
   ta.setAttribute("autocapitalize", "off");
-  ta.addEventListener("input", () => autosize(ta));
-  ta.addEventListener("blur", onBlur);
-  ta.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      commitEdit();
-    }
+  ta.addEventListener("input", () => {
+    autosize(ta);
+    refreshDirty();
+    // El gesto de "linea en blanco" puede confirmar y partir el parrafo.
+    maybeSplitOnBlankLine(ta);
   });
+  ta.addEventListener("blur", onBlur);
+  ta.addEventListener("keydown", onTextareaKeydown);
   textareaEl = ta;
   return ta;
+}
+
+// A partir de un mousedown sobre un bloque renderizado, calcula { fullText,
+// offset }: el texto plano del bloque y el offset del caracter clickeado dentro
+// de ese texto. Usa caretRangeFromPoint (WebKit) con caretPositionFromPoint como
+// alternativa. Si el navegador no ofrece ninguno o el click no cae sobre un nodo
+// de texto, devuelve null y la edicion abre con el caret al final (como antes).
+function clickMapFromEvent(el, e) {
+  let node = null;
+  let nodeOffset = 0;
+  if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+    if (range) {
+      node = range.startContainer;
+      nodeOffset = range.startOffset;
+    }
+  } else if (document.caretPositionFromPoint) {
+    const cp = document.caretPositionFromPoint(e.clientX, e.clientY);
+    if (cp) {
+      node = cp.offsetNode;
+      nodeOffset = cp.offset;
+    }
+  }
+  if (!node || node.nodeType !== Node.TEXT_NODE) {
+    return null;
+  }
+  // Offset global dentro del texto plano del bloque: sumamos el largo de los
+  // nodos de texto previos hasta el nodo clickeado.
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  let n;
+  let found = false;
+  while ((n = walker.nextNode())) {
+    if (n === node) {
+      offset += nodeOffset;
+      found = true;
+      break;
+    }
+    offset += n.textContent.length;
+  }
+  if (!found) {
+    return null;
+  }
+  return { fullText: el.textContent, offset };
 }
 
 // Crea el bloque renderizado (solo lectura) del bloque `i`. El HTML lo genero
@@ -164,9 +246,11 @@ function makeRendered(i) {
   }
   // mousedown con preventDefault: entra a editar sin robar el foco de forma que
   // dispare el blur del textarea anterior (la transicion la maneja startEdit).
+  // Antes de entrar, calculamos donde cayo el click sobre el texto renderizado
+  // para poder posicionar el caret en el punto equivalente del source (punto 2).
   el.addEventListener("mousedown", (e) => {
     e.preventDefault();
-    startEdit(i);
+    startEdit(i, clickMapFromEvent(el, e));
   });
   // Evita que un enlace del render navegue: aca solo se edita el source.
   el.addEventListener("click", (e) => e.preventDefault());
@@ -191,7 +275,7 @@ function paint() {
 
   if (textareaEl) {
     autosize(textareaEl);
-    focusAtEnd(textareaEl);
+    applyPendingCaret(textareaEl);
   }
   isPainting = false;
 }
@@ -203,6 +287,85 @@ function focusAtEnd(ta) {
   ta.setSelectionRange(end, end);
 }
 
+// Coloca el caret en el textarea recien pintado segun `pendingCaret` y lo
+// consume. Sin instruccion, cae al final (comportamiento historico).
+function applyPendingCaret(ta) {
+  const pending = pendingCaret;
+  pendingCaret = null;
+  if (!pending) {
+    focusAtEnd(ta);
+    return;
+  }
+  ta.focus();
+  if (pending.type === "within") {
+    const pos = Math.max(0, Math.min(pending.within, ta.value.length));
+    ta.setSelectionRange(pos, pos);
+    return;
+  }
+  if (pending.type === "edge") {
+    const pos = caretAtEdge(ta.value, pending.edge, pending.goalColumn);
+    ta.setSelectionRange(pos, pos);
+    return;
+  }
+  if (pending.type === "snippet") {
+    const pos = caretFromSnippet(ta.value, pending.fullText, pending.offset);
+    if (pos === null) {
+      focusAtEnd(ta);
+    } else {
+      ta.setSelectionRange(pos, pos);
+    }
+    return;
+  }
+  focusAtEnd(ta);
+}
+
+// Offset en `value` para dejar el caret en la primera o ultima linea, en la
+// columna objetivo `goalColumn` (recortada al largo de esa linea). "primera" y
+// "ultima" se calculan sobre los "\n" del value, NO sobre las lineas visuales
+// que produce el word-wrap. Es una aproximacion aceptable para el spike: al
+// saltar entre bloques cortos coincide, y en parrafos largos wrapeados el salto
+// cae en el extremo logico de la linea, no en la fila visual exacta.
+function caretAtEdge(value, edge, goalColumn) {
+  const col = goalColumn ?? 0;
+  if (edge === "first") {
+    const lineEnd = value.indexOf("\n");
+    const len = lineEnd === -1 ? value.length : lineEnd;
+    return Math.min(col, len);
+  }
+  // Ultima linea: arranca despues del ultimo "\n".
+  const lineStart = value.lastIndexOf("\n") + 1;
+  const len = value.length - lineStart;
+  return lineStart + Math.min(col, len);
+}
+
+// Mapea un click sobre el HTML renderizado a una posicion en el `source`
+// markdown (punto 2). `fullText` es el textContent del bloque renderizado y
+// `offset` el punto clickeado dentro de ese texto plano. Tomamos una ventana de
+// contexto alrededor del click y la buscamos en el source; como el render quita
+// sintaxis (##, **, backticks, marcadores de lista), el texto plano coincide con
+// el source SOLO en la prosa. Por eso probamos ventanas cada vez mas chicas y,
+// si ninguna matchea (el click cayo sobre sintaxis transformada, p.ej. el texto
+// visible de un link cuya URL no esta en el render), devolvemos null para caer
+// con gracia al final del bloque. Limite conocido: si la ventana aparece mas de
+// una vez en el source, tomamos la primera ocurrencia (aceptable para el spike).
+function caretFromSnippet(source, fullText, offset) {
+  for (const radius of [8, 5, 3]) {
+    const start = Math.max(0, offset - radius);
+    const end = Math.min(fullText.length, offset + radius);
+    const snippet = fullText.slice(start, end);
+    if (snippet.length < 3) {
+      continue;
+    }
+    const idx = source.indexOf(snippet);
+    if (idx !== -1) {
+      // Reconstruimos la posicion exacta sumando cuanto adentro del snippet
+      // habia caido el click.
+      return idx + (offset - start);
+    }
+  }
+  return null;
+}
+
 // --- Transiciones de edicion ---------------------------------------------
 
 // Confirma la edicion actual: junta el documento, lo re-segmenta con el nucleo
@@ -212,6 +375,7 @@ async function commitEdit() {
     return;
   }
   await setDocumentFromMarkdown(fullDocument());
+  refreshDirty();
 }
 
 // Blur del textarea: confirma, salvo que el blur venga de repintar.
@@ -224,8 +388,19 @@ function onBlur() {
 
 // Entra a editar el bloque `i`. Si ya se estaba editando otro, lo confirma
 // primero y reubica el foco al bloque que quedo en la misma posicion (la
-// re-segmentacion puede haber cambiado los indices).
-async function startEdit(i) {
+// re-segmentacion puede haber cambiado los indices). `clickMap`, si viene, lleva
+// { fullText, offset } para mapear el punto clickeado del render al source
+// (punto 2); si no, el caret cae al final como antes.
+async function startEdit(i, clickMap) {
+  // Un click arranca navegacion desde cero: se olvida la columna objetivo.
+  goalColumn = null;
+  if (clickMap) {
+    pendingCaret = {
+      type: "snippet",
+      fullText: clickMap.fullText,
+      offset: clickMap.offset,
+    };
+  }
   if (editingIndex === i) {
     return;
   }
@@ -242,9 +417,108 @@ async function startEdit(i) {
   paint();
 }
 
+// Teclas dentro del textarea del bloque en edicion.
+function onTextareaKeydown(e) {
+  const ta = e.target;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    goalColumn = null;
+    commitEdit();
+    return;
+  }
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    const dir = e.key === "ArrowUp" ? -1 : 1;
+    const pos = ta.selectionStart;
+    const value = ta.value;
+    const before = value.slice(0, pos);
+    // "primera/ultima linea" se calcula sobre los "\n" del value, no sobre las
+    // filas visuales del word-wrap (aceptable para el spike).
+    const onFirstLine = !before.includes("\n");
+    const onLastLine = !value.slice(pos).includes("\n");
+    const atEdge = dir < 0 ? onFirstLine : onLastLine;
+    if (!atEdge) {
+      // Movimiento vertical normal dentro del textarea: WebKit maneja su propia
+      // columna; reiniciamos la nuestra para que la proxima cadena de saltos
+      // arranque fresca.
+      goalColumn = null;
+      return;
+    }
+    e.preventDefault();
+    const col = pos - (before.lastIndexOf("\n") + 1);
+    // Conservamos la columna objetivo entre saltos consecutivos (como la TUI).
+    if (goalColumn === null) {
+      goalColumn = col;
+    }
+    navigateToAdjacentBlock(dir);
+    return;
+  }
+  // Cualquier otra tecla (tipear, flechas horizontales) rompe la cadena de
+  // navegacion vertical.
+  goalColumn = null;
+}
+
+// Confirma el bloque en edicion y abre el adyacente (`dir` = -1 arriba, +1
+// abajo), dejando el caret en la columna objetivo sobre la linea de contacto
+// (ultima del anterior al subir, primera del siguiente al bajar). En el primer
+// o ultimo bloque no hace nada. Re-segmenta como `startEdit` porque editar pudo
+// cambiar la particion; reubica el indice por offset absoluto.
+async function navigateToAdjacentBlock(dir) {
+  const target = editingIndex + dir;
+  if (target < 0 || target >= blocks.length) {
+    return; // extremos: nos quedamos donde estamos.
+  }
+  const targetOffset = docOffsetOfBlockStart(target);
+  blocks = await invoke("render_blocks", { markdown: fullDocument() });
+  editingIndex = blockIndexAtOffset(targetOffset);
+  ensureNonEmpty();
+  pendingCaret = {
+    type: "edge",
+    edge: dir < 0 ? "last" : "first",
+    goalColumn,
+  };
+  paint();
+}
+
+// Detecta el gesto universal de "nuevo parrafo": el caret quedo en una linea en
+// blanco recien formada (doble Enter). Confirma, re-segmenta y sigue editando el
+// bloque donde cayo el caret, sin pasar por el mouse ni Escape (punto 3).
+//
+// Fences: una linea en blanco DENTRO de un code fence abierto no parte el bloque
+// (el nucleo lo mantiene entero). Lo detectamos sin logica de markdown: si tras
+// re-segmentar el value entero sigue siendo UN solo bloque identico, no hubo
+// split y seguimos editando sin repintar (sin parpadeo).
+async function maybeSplitOnBlankLine(ta) {
+  const pos = ta.selectionStart;
+  const value = ta.value;
+  // Patron del doble Enter: el caret viene precedido por dos "\n" (linea en
+  // blanco). Cubre el final de parrafo y tambien un corte en el medio.
+  if (pos < 2 || value[pos - 1] !== "\n" || value[pos - 2] !== "\n") {
+    return;
+  }
+  // Offset absoluto del caret en el documento completo (con el textarea vivo).
+  const absOffset = docOffsetOfBlockStart(editingIndex) + pos;
+  const newBlocks = await invoke("render_blocks", { markdown: fullDocument() });
+  const loc = locateOffset(newBlocks, absOffset);
+  // Si el bloque que contiene el caret es identico al value actual, NO hubo
+  // corte estructural (linea en blanco final a la espera del proximo parrafo, o
+  // fence abierto): seguimos editando el mismo textarea sin repintar.
+  if (newBlocks[loc.index] && newBlocks[loc.index].source === value) {
+    return;
+  }
+  // Hubo split: adoptamos la nueva segmentacion y seguimos editando el bloque
+  // donde quedo el caret, en la posicion correspondiente.
+  blocks = newBlocks;
+  editingIndex = loc.index;
+  ensureNonEmpty();
+  pendingCaret = { type: "within", within: loc.within };
+  paint();
+  refreshDirty();
+}
+
 // Click en el espacio vacio bajo el ultimo bloque: agrega un parrafo nuevo al
 // final y lo pone en edicion.
 async function appendBlockAndEdit() {
+  goalColumn = null;
   if (editingIndex !== null) {
     blocks = await invoke("render_blocks", { markdown: fullDocument() });
     editingIndex = null;
@@ -275,6 +549,57 @@ docEl.addEventListener("mousedown", (e) => {
   }
 });
 
+// --- Estado del documento (dirty + titulo) --------------------------------
+
+// Nombre de archivo a partir de una ruta absoluta (separadores unix o windows).
+function basename(path) {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
+}
+
+// Documento con cambios sin guardar respecto del ultimo load/save.
+function isDirty() {
+  return fullDocument() !== savedDocument;
+}
+
+// Ultimo estado dirty informado al backend y ultimo titulo pintado, para no
+// repetir IPC en cada tecla.
+let lastDirtyReported = null;
+let lastTitleRendered = null;
+
+// Rearma el titulo de la ventana segun el estado: "nombre.md" con archivo,
+// "typebar" sin archivo, con "● " adelante si hay cambios sin guardar. Solo hace
+// IPC si el titulo efectivamente cambio (cambia por dirty o por nombre de
+// archivo), para no parpadear ni llamar de mas.
+function updateTitle() {
+  const name = currentPath ? basename(currentPath) : "typebar";
+  const title = (isDirty() ? "● " : "") + name;
+  if (title === lastTitleRendered) {
+    return;
+  }
+  lastTitleRendered = title;
+  invoke("update_title", { title }).catch(() => {});
+}
+
+// Recalcula el estado dirty y refresca el titulo. Comparar dos strings es
+// barato, asi que esto puede llamarse hasta en cada tecla; el estado dirty solo
+// se informa al backend cuando cambia (lo usa el guard de cierre).
+function refreshDirty() {
+  const dirty = isDirty();
+  if (dirty !== lastDirtyReported) {
+    lastDirtyReported = dirty;
+    invoke("set_dirty", { dirty }).catch(() => {});
+  }
+  updateTitle();
+}
+
+// Marca el documento como guardado: toma como base el contenido `contents` (lo
+// que quedo en disco) y refresca el estado.
+function markSaved(contents) {
+  savedDocument = contents;
+  refreshDirty();
+}
+
 // --- Archivo --------------------------------------------------------------
 
 // Actualiza el rotulo de la ruta del documento en la barra superior.
@@ -284,9 +609,30 @@ function setDocPath(path) {
   docPathEl.title = path || "";
 }
 
-// Abrir: dialogo nativo, lectura por el backend y carga como bloques.
+// Si hay cambios sin guardar, pregunta por dialogo nativo si descartarlos.
+// Devuelve true si se puede seguir (no habia cambios o el usuario descarto).
+async function confirmDiscardIfDirty(message) {
+  if (!isDirty()) {
+    return true;
+  }
+  try {
+    return await invoke("confirm_discard", { message });
+  } catch (err) {
+    // Ante un fallo del dialogo, preferimos no perder trabajo: cancelamos.
+    return false;
+  }
+}
+
+// Abrir: si hay cambios sin guardar pregunta primero (guard de Open); luego
+// dialogo nativo, lectura por el backend y carga como bloques.
 async function openFile() {
   try {
+    const ok = await confirmDiscardIfDirty(
+      "Vas a abrir otro archivo y perderas los cambios sin guardar. ¿Descartarlos?",
+    );
+    if (!ok) {
+      return; // el usuario prefirio no perder los cambios
+    }
     const path = await invoke("pick_open_path");
     if (!path) {
       return; // el usuario cancelo
@@ -294,6 +640,7 @@ async function openFile() {
     const contents = await invoke("load_file", { path });
     await setDocumentFromMarkdown(contents);
     setDocPath(path);
+    markSaved(contents);
   } catch (err) {
     alert("No se pudo abrir el archivo: " + err);
   }
@@ -301,33 +648,40 @@ async function openFile() {
 
 // Guarda en `path` el documento completo (incluye el bloque en edicion, si hay).
 async function writeTo(path) {
-  await invoke("save_file", { path, contents: fullDocument() });
+  const contents = fullDocument();
+  await invoke("save_file", { path, contents });
   setDocPath(path);
+  markSaved(contents);
 }
 
-// Save: reusa la ruta actual; si no hay, cae en "Save as".
+// Save: reusa la ruta actual; si no hay, cae en "Save as". Devuelve true si el
+// documento quedo guardado (lo usa el flujo "Guardar y cerrar").
 async function saveFile() {
   try {
     if (!currentPath) {
-      await saveFileAs();
-      return;
+      return await saveFileAs();
     }
     await writeTo(currentPath);
+    return true;
   } catch (err) {
     alert("No se pudo guardar: " + err);
+    return false;
   }
 }
 
-// Save as: siempre pide una ruta nueva por el dialogo nativo.
+// Save as: siempre pide una ruta nueva por el dialogo nativo. Devuelve true si
+// se guardo, false si el usuario cancelo o hubo error.
 async function saveFileAs() {
   try {
     const path = await invoke("pick_save_path");
     if (!path) {
-      return; // el usuario cancelo
+      return false; // el usuario cancelo
     }
     await writeTo(path);
+    return true;
   } catch (err) {
     alert("No se pudo guardar: " + err);
+    return false;
   }
 }
 
@@ -345,5 +699,20 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Estado inicial: documento de bienvenida.
-setDocumentFromMarkdown(WELCOME);
+// Flujo "Guardar y cerrar": el guard de cierre en Rust emite este evento cuando
+// el usuario elige "Guardar" en el dialogo de salida. Guardamos y, solo si lo
+// logramos, terminamos de cerrar la ventana (close_window). Si el guardado se
+// cancela, la ventana queda abierta con el trabajo intacto.
+listen("typebar://save-and-close", async () => {
+  const saved = await saveFile();
+  if (saved) {
+    invoke("close_window").catch(() => {});
+  }
+});
+
+// Estado inicial: documento de bienvenida. Fijamos la base "guardada" en el
+// mismo contenido para arrancar sin cambios pendientes (titulo "typebar").
+(async () => {
+  await setDocumentFromMarkdown(WELCOME);
+  markSaved(WELCOME);
+})();

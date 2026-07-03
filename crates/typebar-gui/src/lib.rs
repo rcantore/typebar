@@ -7,11 +7,17 @@
 //! logica de markdown en este crate.
 
 use std::fs;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 
 use serde::Serialize;
-use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+
+/// Estado compartido: si el documento tiene cambios sin guardar. El unico que
+/// conoce el contenido en vivo es el frontend (el markdown vive en JS), asi que
+/// es el frontend quien informa este flag via `set_dirty`. Lo lee el guard de
+/// cierre en `on_window_event` para decidir si preguntar antes de cerrar.
+struct DirtyFlag(Mutex<bool>);
 
 /// Extensiones de archivo que ofrecemos en los dialogos de abrir y guardar.
 const MD_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "txt"];
@@ -101,11 +107,60 @@ async fn pick_save_path(app: AppHandle) -> Result<Option<String>, String> {
     Ok(picked.map(|fp| fp.to_string()))
 }
 
+/// Actualiza el titulo de la ventana. Lo maneja Rust (no el JS) para no depender
+/// del permiso `core:window:allow-set-title` del lado del frontend: el titulo
+/// refleja el estado del documento (`nombre.md`, `● nombre.md` con cambios, o
+/// "typebar" sin archivo) y lo arma el frontend, que solo pasa el texto ya hecho.
+#[tauri::command]
+fn update_title(window: WebviewWindow, title: String) -> Result<(), String> {
+    window.set_title(&title).map_err(|e| e.to_string())
+}
+
+/// El frontend informa aca si hay cambios sin guardar. Lo guardamos en el estado
+/// para que el guard de cierre (`on_window_event`) sepa si preguntar.
+#[tauri::command]
+fn set_dirty(state: tauri::State<'_, DirtyFlag>, dirty: bool) {
+    if let Ok(mut flag) = state.0.lock() {
+        *flag = dirty;
+    }
+}
+
+/// Cierra la ventana de verdad (sin volver a disparar el guard de cierre, que
+/// solo escucha `CloseRequested`). Lo usa el flujo "Guardar y cerrar": el JS
+/// guarda y, si lo logra, llama a este comando para terminar de cerrar.
+#[tauri::command]
+fn close_window(window: WebviewWindow) -> Result<(), String> {
+    window.destroy().map_err(|e| e.to_string())
+}
+
+/// Muestra un dialogo nativo de confirmacion (Descartar / Cancelar) y devuelve
+/// `true` si el usuario acepta descartar los cambios. Lo usa el guard de "abrir
+/// otro archivo" con cambios sin guardar. Mismo patron de canal que los pickers:
+/// al ser comando async, el `recv` bloqueante corre en un worker del runtime y
+/// no congela la ventana.
+#[tauri::command]
+async fn confirm_discard(app: AppHandle, message: String) -> Result<bool, String> {
+    let (tx, rx) = mpsc::channel();
+    app.dialog()
+        .message(message)
+        .title("Cambios sin guardar")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Descartar".to_string(),
+            "Cancelar".to_string(),
+        ))
+        .show(move |accepted| {
+            // `accepted` es true cuando se presiona el primer boton ("Descartar").
+            let _ = tx.send(accepted);
+        });
+    rx.recv().map_err(|e| e.to_string())
+}
+
 /// Punto de entrada del backend: registra el plugin de dialogos y los comandos
 /// IPC, y arranca la ventana definida en tauri.conf.json.
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(DirtyFlag(Mutex::new(false)))
         .invoke_handler(tauri::generate_handler![
             load_file,
             save_file,
@@ -113,7 +168,55 @@ pub fn run() {
             render_blocks,
             pick_open_path,
             pick_save_path,
+            update_title,
+            set_dirty,
+            close_window,
+            confirm_discard,
         ])
+        // Guard de cierre: si el documento tiene cambios sin guardar, frenamos el
+        // cierre de la ventana y preguntamos con un dialogo nativo de tres
+        // opciones. "Guardar" no puede resolverse aca (el contenido vive en JS),
+        // asi que emitimos un evento para que el frontend guarde y, si lo logra,
+        // vuelva a cerrar via `close_window`. Es la variante mas simple que NO
+        // pierde datos: "Cancelar" deja la ventana abierta con todo intacto y
+        // "Descartar" es una decision explicita del usuario.
+        .on_window_event(|window, event| {
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            let dirty = window
+                .state::<DirtyFlag>()
+                .0
+                .lock()
+                .map(|flag| *flag)
+                .unwrap_or(false);
+            if !dirty {
+                return; // sin cambios: dejamos cerrar sin molestar.
+            }
+            api.prevent_close();
+            let win = window.clone();
+            window
+                .dialog()
+                .message("El documento tiene cambios sin guardar.")
+                .title("Cerrar typebar")
+                .buttons(MessageDialogButtons::YesNoCancelCustom(
+                    "Guardar".to_string(),
+                    "Descartar".to_string(),
+                    "Cancelar".to_string(),
+                ))
+                .show_with_result(move |result| match result {
+                    MessageDialogResult::Custom(label) if label == "Guardar" => {
+                        // El frontend guarda y, si tiene exito, llama close_window.
+                        let _ = win.emit("typebar://save-and-close", ());
+                    }
+                    MessageDialogResult::Custom(label) if label == "Descartar" => {
+                        let _ = win.destroy();
+                    }
+                    // "Cancelar", el boton Cancel nativo o cerrar el dialogo: no
+                    // cerramos y no perdemos nada.
+                    _ => {}
+                });
+        })
         .run(tauri::generate_context!())
         .expect("error al arrancar la aplicacion typebar-gui");
 }
