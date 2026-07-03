@@ -12,7 +12,7 @@ use super::{
     Action, Hint, Keymap, Resolve, format_hints, has_ctrl, resolve_format_second,
     resolve_view_second, view_hints, workspace_ctrl_command,
 };
-use crate::document::Mode;
+use typebar_core::document::Mode;
 
 pub struct WordstarKeymap;
 
@@ -143,7 +143,7 @@ impl Keymap for WordstarKeymap {
     }
 
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
-        use crate::i18n::{Key, t};
+        use typebar_core::i18n::{Key, t};
         // Toolbar "lean" (ver standard): esencial + submenus. El resto (nuevo, ir
         // a archivo, undo, copiar/pegar, reemplazar) se descubre por la paleta
         // (`^A`) y sus chords. Antes la barra se desbordaba y cortaba el Quit.
@@ -158,7 +158,7 @@ impl Keymap for WordstarKeymap {
     }
 
     fn chord_hints(&self, _mode: Mode, pending: &[KeyEvent]) -> Vec<Hint> {
-        use crate::i18n::{Key, t};
+        use typebar_core::i18n::{Key, t};
         let [k] = pending else {
             return Vec::new();
         };
@@ -196,10 +196,10 @@ impl Keymap for WordstarKeymap {
 #[cfg(test)]
 mod tests {
     use super::WordstarKeymap;
-    use crate::document::Mode;
     use crate::keybinding::test_support::{ctrl, key, resolve1, shift};
     use crate::keybinding::{Action, Keymap, Resolve};
     use ratatui::crossterm::event::KeyCode;
+    use typebar_core::document::Mode;
 
     #[test]
     fn wordstar_home_end_pgup_pgdown_modernos() {

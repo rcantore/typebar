@@ -7,7 +7,7 @@ use super::{
     Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, resolve_format_second,
     resolve_view_second, view_hints, workspace_ctrl_command,
 };
-use crate::document::Mode;
+use typebar_core::document::Mode;
 
 /// True si `key` es el prefijo del submenu "view" de Vim: la tecla `z` sin
 /// CONTROL. En Vim `z` ya es el prefijo de comandos de vista (scroll/folds), asi
@@ -171,7 +171,7 @@ impl Keymap for VimKeymap {
     }
 
     fn hints(&self, mode: Mode) -> Vec<Hint> {
-        use crate::i18n::{Key, t};
+        use typebar_core::i18n::{Key, t};
         match mode {
             // Toolbar "lean" (ver standard): se conservan los hints MODALES (`i`/`v`,
             // que son esenciales para usar vim) mas Save, paleta, Search, los dos
@@ -215,10 +215,10 @@ impl Keymap for VimKeymap {
 #[cfg(test)]
 mod tests {
     use super::VimKeymap;
-    use crate::document::Mode;
     use crate::keybinding::test_support::{ctrl, key, resolve1};
     use crate::keybinding::{Action, Keymap, Resolve};
     use ratatui::crossterm::event::KeyCode;
+    use typebar_core::document::Mode;
 
     #[test]
     fn vim_es_modal_y_arranca_en_normal() {

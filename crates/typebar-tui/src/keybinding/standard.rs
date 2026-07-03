@@ -8,7 +8,7 @@ use super::{
     Action, Hint, Keymap, Resolve, format_hints, has_ctrl, is_format_prefix, is_view_prefix,
     resolve_format_second, resolve_view_second, view_hints, workspace_ctrl_command,
 };
-use crate::document::Mode;
+use typebar_core::document::Mode;
 
 /// Devuelve la accion de extender seleccion si `key` es una flecha con SHIFT, o
 /// `None` si no aplica. Las flechas SIN shift siguen el camino normal (que
@@ -114,7 +114,7 @@ impl Keymap for StandardKeymap {
     }
 
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
-        use crate::i18n::{Key, t};
+        use typebar_core::i18n::{Key, t};
         // Toolbar "lean": solo lo esencial mas los dos submenus. El resto de los
         // comandos (nuevo, ir a archivo, undo, copiar/pegar, reemplazar, negrita)
         // se descubre por la paleta (`^A`) y por sus teclas; antes la barra se
@@ -144,10 +144,10 @@ impl Keymap for StandardKeymap {
 #[cfg(test)]
 mod tests {
     use super::StandardKeymap;
-    use crate::document::Mode;
     use crate::keybinding::test_support::{ctrl, key, resolve1, shift};
     use crate::keybinding::{Action, Keymap, Resolve};
     use ratatui::crossterm::event::KeyCode;
+    use typebar_core::document::Mode;
 
     #[test]
     fn standard_shift_flechas_extienden_seleccion() {

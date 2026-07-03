@@ -250,16 +250,18 @@ impl Document {
     }
 }
 
-/// Helpers compartidos por los tests de los submodulos de `document`.
-#[cfg(test)]
-pub(crate) mod test_support {
+/// Helpers compartidos por los tests de los submodulos de `document` y, via la
+/// feature `test-support`, por los tests de los crates que consumen el nucleo
+/// (p.ej. la TUI, que construye `Document`s de prueba).
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
     use super::{Document, Mode};
     use ropey::Rope;
     use std::path::PathBuf;
 
     /// Construye un `Document` desde texto crudo seteando los campos privados
     /// directamente (atajo comun en los tests).
-    pub(crate) fn doc_with(text: &str) -> Document {
+    pub fn doc_with(text: &str) -> Document {
         Document {
             buffer: Rope::from_str(text),
             line: 0,

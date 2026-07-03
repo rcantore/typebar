@@ -143,7 +143,10 @@ pub fn load_from_path(path: &Path) -> Config {
         // (permisos, etc.) si los reportamos antes de caer al default.
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Config::default(),
         Err(err) => {
-            eprintln!("{}", crate::i18n::error_config_read_failed(path, err));
+            eprintln!(
+                "{}",
+                typebar_core::i18n::error_config_read_failed(path, err)
+            );
             return Config::default();
         }
     };
@@ -157,7 +160,7 @@ pub fn parse_config(raw: &str, origen: &str) -> Config {
     match toml::from_str::<Config>(raw) {
         Ok(config) => config,
         Err(err) => {
-            eprintln!("{}", crate::i18n::error_config_invalid(origen, err));
+            eprintln!("{}", typebar_core::i18n::error_config_invalid(origen, err));
             Config::default()
         }
     }

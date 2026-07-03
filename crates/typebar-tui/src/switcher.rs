@@ -13,9 +13,9 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use std::ops::Range;
 use std::path::PathBuf;
 
-use crate::fuzzy;
-use crate::i18n;
 use crate::theme::Theme;
+use typebar_core::fuzzy;
+use typebar_core::i18n;
 
 /// Ventana de scroll de un picker: el rango `[start, end)` de filas a dibujar
 /// para que el item `selected` siempre entre dentro de `max_rows`, dado un total

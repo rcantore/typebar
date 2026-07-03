@@ -9,27 +9,20 @@
 //! (modeless con chords tipo `Ctrl-K S`) opt-in via el flag `--keys`. El loop
 //! acumula teclas en un buffer `pending` para resolver secuencias multi-tecla.
 
-mod buffers;
 mod config;
-mod document;
-mod export;
-mod files;
-mod fuzzy;
-mod i18n;
 mod keybinding;
-mod markdown;
 mod overlay;
 mod palette;
 mod render;
-mod search;
 mod switcher;
 mod tabs;
-mod text;
 mod theme;
 
-use document::{Document, Mode};
+use typebar_core::document::{Document, Mode};
+use typebar_core::markdown::InlineKind;
+use typebar_core::{buffers, export, files, i18n};
+
 use keybinding::{Action, Binding, CustomKeymap, Keymap, Resolve, keymap_from_name, parse_binding};
-use markdown::InlineKind;
 use overlay::Overlay;
 use palette::{Palette, PaletteOutcome};
 use switcher::{Switcher, SwitcherOutcome};
@@ -1170,7 +1163,7 @@ fn toggle_inline_action(doc: &mut Document, kind: InlineKind) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use document::test_support::doc_with;
+    use typebar_core::document::test_support::doc_with;
 
     /// Renderiza un frame con `draw` sobre un backend de prueba y devuelve todo el
     /// buffer como texto plano (filas separadas por `\n`). Sirve para verificar

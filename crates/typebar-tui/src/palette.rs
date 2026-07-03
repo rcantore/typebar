@@ -16,12 +16,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::document::Mode;
-use crate::fuzzy;
-use crate::i18n::{self, Key};
 use crate::keybinding::{Action, Keymap};
 use crate::switcher::scroll_window;
 use crate::theme::Theme;
+use typebar_core::document::Mode;
+use typebar_core::fuzzy;
+use typebar_core::i18n::{self, Key};
 
 /// Que debe hacer `run` tras pasarle una tecla a la paleta.
 pub enum PaletteOutcome {

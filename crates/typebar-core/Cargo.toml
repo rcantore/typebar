@@ -1,0 +1,23 @@
+[package]
+name = "typebar-core"
+description = "Nucleo agnostico de UI del editor typebar: documento, edicion, markdown, busqueda."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Expone `document::test_support` a crates consumidores (p.ej. los tests de la
+# TUI que construyen `Document`s de prueba). En el build normal queda apagada.
+test-support = []
+
+[dependencies]
+arboard = { version = "3.6.1", default-features = false }
+dirs = "6.0.0"
+pulldown-cmark = "0.13"
+ropey = "1.6.1"
+tree-sitter = "0.26"
+tree-sitter-md = { version = "0.5", features = ["parser"] }
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"

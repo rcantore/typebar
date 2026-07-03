@@ -33,7 +33,7 @@ pub use wordstar::WordstarKeymap;
 
 use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
 
-use crate::document::Mode;
+use typebar_core::document::Mode;
 
 /// Operaciones semanticas que un keymap puede producir a partir de una tecla.
 /// El loop principal las traduce a llamadas concretas sobre el `Document`.
@@ -274,7 +274,7 @@ fn resolve_format_second(second: KeyEvent) -> Resolve {
 /// Hints de continuacion del chord de formato `Ctrl-P` + letra, compartido por
 /// los tres presets (igual que `resolve_format_second` comparte su resolucion).
 fn format_hints() -> Vec<Hint> {
-    use crate::i18n::{Key, t};
+    use typebar_core::i18n::{Key, t};
     vec![
         Hint::new(Action::ToggleBold, "B", t(Key::HintBold)),
         Hint::new(Action::ToggleItalic, "I", t(Key::HintItalic)),
@@ -306,7 +306,7 @@ fn resolve_view_second(second: KeyEvent) -> Resolve {
 /// Hints de continuacion del submenu "view", compartido por los tres presets
 /// (igual que `format_hints`). La `keys` es solo la segunda tecla.
 fn view_hints() -> Vec<Hint> {
-    use crate::i18n::{Key, t};
+    use typebar_core::i18n::{Key, t};
     vec![
         Hint::new(Action::ToggleZen, "Z", t(Key::HintZen)),
         Hint::new(Action::ToggleLightTheme, "L", t(Key::HintLight)),
@@ -328,8 +328,8 @@ pub fn keymap_from_name(name: &str) -> Box<dyn Keymap> {
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::{Keymap, Resolve};
-    use crate::document::Mode;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use typebar_core::document::Mode;
 
     /// KeyEvent simple sin modificadores.
     pub(crate) fn key(code: KeyCode) -> KeyEvent {

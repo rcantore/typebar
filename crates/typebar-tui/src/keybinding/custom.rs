@@ -30,7 +30,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{Action, Hint, Keymap, Resolve};
-use crate::document::Mode;
+use typebar_core::document::Mode;
 
 /// Una tecla individual normalizada para comparar contra los `KeyEvent` que
 /// entrega la terminal: solo nos quedamos con codigo y los modificadores

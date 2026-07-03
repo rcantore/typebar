@@ -34,6 +34,10 @@ impl Locale {
     /// Parsea un nombre canonico (`"es"`, `"en"`, etc.). Acepta tambien locales
     /// estilo `LANG` (`"es_AR.UTF-8"` -> `Es`) mirando solo el prefijo de 2
     /// chars. `None` si no matchea ninguno conocido.
+    // Devuelve `Option` (no `Result`) y se usa con `.and_then`, asi que no
+    // encaja con `FromStr`. Al pasar a crate-libreria el metodo es API publica
+    // y clippy pide implementar el trait; lo silenciamos a proposito.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Locale> {
         let head: String = s.trim().chars().take(2).collect::<String>().to_lowercase();
         match head.as_str() {

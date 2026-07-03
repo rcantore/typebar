@@ -1786,14 +1786,25 @@ dependencies = [
 name = "typebar"
 version = "0.3.0"
 dependencies = [
- "arboard",
  "crossterm",
  "dirs",
- "pulldown-cmark",
  "ratatui",
- "ropey",
  "serde",
  "toml",
+ "tree-sitter",
+ "tree-sitter-md",
+ "typebar-core",
+ "unicode-width",
+]
+
+[[package]]
+name = "typebar-core"
+version = "0.3.0"
+dependencies = [
+ "arboard",
+ "dirs",
+ "pulldown-cmark",
+ "ropey",
  "tree-sitter",
  "tree-sitter-md",
  "unicode-segmentation",

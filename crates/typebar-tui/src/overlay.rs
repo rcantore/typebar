@@ -12,9 +12,9 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::document::Document;
-use crate::i18n;
-use crate::search;
+use typebar_core::document::Document;
+use typebar_core::i18n;
+use typebar_core::search;
 
 /// Estado de un overlay activo sobre el editor. Mientras vive, las teclas las
 /// consume el overlay (no el documento): se tipea el termino, se navega entre
@@ -183,7 +183,7 @@ impl Overlay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::test_support::doc_with;
+    use typebar_core::document::test_support::doc_with;
 
     /// KeyEvent simple para los tests del overlay.
     fn k(code: KeyCode) -> KeyEvent {
