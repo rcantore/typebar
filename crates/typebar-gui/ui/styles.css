@@ -9,6 +9,7 @@
   --accent: #7287fd; /* un unico acento discreto */
   --edit-bg: rgba(76, 79, 105, 0.05); /* tinta al 5%: fondo del modo edicion */
   --hover-bg: rgba(76, 79, 105, 0.035); /* realce sutil al pasar por un bloque */
+  --ink-faint: rgba(76, 79, 105, 0.42); /* tinta ~40%: marcadores del Nivel 1 */
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
     "Times New Roman", serif;
@@ -135,25 +136,97 @@ body {
   min-height: 1.4rem;
 }
 
-/* Textarea del bloque en edicion: source markdown crudo, monospace, fondo con
-   tinta al 5% para senalar el modo edicion. overflow oculto: la altura la
-   ajusta el JS al contenido. */
-.block-source {
+/* Superficie editable del bloque activo: el "Nivel 1" del bloque. Su textContent
+   ES el source markdown crudo (byte a byte), pero pintado: los marcadores quedan
+   visibles y atenuados y el contenido se estiliza. Mantiene el MISMO serif, el
+   mismo cuerpo, line-height, padding y margen que el bloque renderizado, para
+   que el swap render<->edicion NO salte de tipografia ni desplace el texto; solo
+   cambia el fondo tintado como senal de edicion.
+   white-space: pre-wrap es clave: respeta los "\n" literales del source (que son
+   caracteres reales del textContent) y los muestra como saltos de linea. */
+.block-editor {
   display: block;
-  width: 100%;
-  border: 0;
   outline: none;
-  resize: none;
-  overflow: hidden;
-  font-family: var(--mono);
-  font-size: 0.9rem;
-  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-family: var(--serif);
+  font-size: inherit;
+  line-height: 1.7;
   color: var(--ink);
   background: var(--edit-bg);
   border-radius: 6px;
-  padding: 0.5rem;
-  margin: 0.15rem -0.5rem;
+  padding: 0.1rem 0.5rem;
+  margin: 0 -0.5rem;
+  caret-color: var(--ink);
   tab-size: 2;
+}
+
+/* Un code fence completo en edicion va todo en mono (excepcion a la serif). */
+.block-editor-code {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+
+/* Escala de heading del bloque en edicion, a la par del render (.block h1..h3).
+   La pinta el JS segun la cantidad de "#" del source, en vivo. */
+.block-editor-h1 {
+  font-size: 1.9rem;
+  line-height: 1.25;
+}
+.block-editor-h2 {
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+.block-editor-h3 {
+  font-size: 1.2rem;
+  line-height: 1.3;
+}
+.block-editor-h4,
+.block-editor-h5,
+.block-editor-h6 {
+  font-size: 1.05rem;
+  line-height: 1.4;
+}
+
+/* --- Tramos estilizados del Nivel 1 (clases md-<kind> que emite style_spans).
+   Marcadores VISIBLES pero atenuados (tinta ~40%), contenido con su enfasis. --- */
+
+/* Marcadores de sintaxis: #, **, *, backticks, cercas, pipes, corchetes/parentesis
+   de links. Como el Nivel 1 de la TUI, nunca se ocultan: solo se atenuan. */
+.md-marker,
+.md-list_marker,
+.md-blockquote {
+  color: var(--ink-faint);
+}
+
+.md-heading,
+.md-bold {
+  font-weight: 700;
+}
+
+.md-italic {
+  font-style: italic;
+}
+
+/* Codigo inline y bloques de codigo: mono con el fondo sutil del render. */
+.md-code,
+.md-code_block {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--panel);
+  border-radius: 4px;
+}
+
+/* Texto visible de un link: acento discreto, subrayado suave (como .block a). */
+.md-link_text {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+}
+
+/* Destino/titulo del link: secundario, atenuado. */
+.md-link_url {
+  color: var(--ink-soft);
 }
 
 /* Tipografia de lo renderizado, sobre la columna de bloques. */

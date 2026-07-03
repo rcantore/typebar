@@ -238,6 +238,264 @@ fn delimiters(node: &tree_sitter::Node) -> Option<Markers> {
     Some(Markers { open, close })
 }
 
+// --- Mapa de estilos por rango (Nivel 1) para la GUI -----------------------
+//
+// La TUI ya mapea el documento a estilos por byte en su renderer (ver
+// `typebar-tui/src/render.rs::collect_styles`): recorre el arbol de
+// tree-sitter-md y le da a cada tramo un estilo, resolviendo el solapamiento por
+// PROFUNDIDAD (el nodo mas interno gana, p.ej. los `**` de una negrita pintan
+// "marcador" por encima del "negrita" que los contiene). Ese es el "Nivel 1" de
+// la TUI: los marcadores nunca se ocultan, solo se atenuan.
+//
+// `style_spans` expone esa misma logica como una API estable y agnostica de
+// terminal para que la GUI pinte el bloque en edicion con el markdown CRUDO
+// visible pero estilizado. No inventa categorias nuevas: mapea las que el motor
+// ya distingue a un enum acotado, y aplana el resultado a tramos que NO se
+// solapan (los huecos son texto plano), que es lo que el JS necesita para armar
+// la secuencia de `<span>`s.
+
+/// Categoria de estilo de un tramo del source markdown. Espeja las distinciones
+/// del renderer "Nivel 1" de la TUI, expuestas para la GUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpanKind {
+    /// Texto de un heading (`# ...`). El nivel lo infiere el consumidor por la
+    /// cantidad de `#` del marcador (que cae en `Marker`).
+    Heading,
+    /// Contenido de una negrita (`**...**`); los `**` caen en `Marker`.
+    Bold,
+    /// Contenido de una italica (`*...*` / `_..._`); los delimitadores en `Marker`.
+    Italic,
+    /// Contenido de codigo inline (`` `...` ``); los backticks en `Marker`.
+    Code,
+    /// Bloque de codigo (fenced o indentado): todo el bloque en mono.
+    CodeBlock,
+    /// Marcador de sintaxis atenuado: `#`, `**`, `*`, `` ` ``, cercas ```` ``` ````,
+    /// pipes de tabla, corchetes/parentesis/`!` de links e imagenes, etc.
+    Marker,
+    /// Marcador de item de lista (`-`, `*`, `+`, `1.`, `1)`).
+    ListMarker,
+    /// Marcador `>` de blockquote.
+    Blockquote,
+    /// Texto visible de un link o alt de una imagen (`[esto](...)`).
+    LinkText,
+    /// Destino o titulo de un link (`[...](esto)`).
+    LinkUrl,
+}
+
+impl SpanKind {
+    /// Nombre estable de la categoria; la GUI lo usa como clase CSS `md-<kind>`.
+    /// Estable: el frontend depende de estos strings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpanKind::Heading => "heading",
+            SpanKind::Bold => "bold",
+            SpanKind::Italic => "italic",
+            SpanKind::Code => "code",
+            SpanKind::CodeBlock => "code_block",
+            SpanKind::Marker => "marker",
+            SpanKind::ListMarker => "list_marker",
+            SpanKind::Blockquote => "blockquote",
+            SpanKind::LinkText => "link_text",
+            SpanKind::LinkUrl => "link_url",
+        }
+    }
+}
+
+/// Un tramo estilizado del source, en offsets UTF-16 (las unidades del `String`
+/// de JS), listo para el consumidor JS de la GUI. Los tramos NO se solapan y van
+/// ordenados por `start`; los huecos entre tramos son texto plano.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleSpan {
+    /// Inicio del tramo, en unidades UTF-16.
+    pub start: usize,
+    /// Fin exclusivo del tramo, en unidades UTF-16.
+    pub end: usize,
+    /// Categoria de estilo.
+    pub kind: SpanKind,
+}
+
+/// Tramo estilizado en BYTES con la profundidad del nodo, antes de resolver el
+/// solapamiento. Interno: `style_spans` lo aplana.
+struct StyleRange {
+    start: usize,
+    end: usize,
+    kind: SpanKind,
+    depth: usize,
+}
+
+/// Mapea un `kind`/`parent` de nodo de tree-sitter-md a nuestra categoria de
+/// estilo. Es la traduccion de las mismas reglas del renderer de la TUI (ver
+/// `collect_styles`) a nuestro enum acotado. Las ramas van de la mas especifica
+/// a la mas generica: los `_marker`/`_delimiter` genericos quedan al final.
+fn classify(kind: &str, parent: Option<&str>) -> Option<SpanKind> {
+    match kind {
+        // El texto de un heading es el nodo `inline` hijo del heading (atx o
+        // setext). El marcador `#`/`##` se atenua aparte (rama generica).
+        "inline" if matches!(parent, Some("atx_heading" | "setext_heading")) => {
+            Some(SpanKind::Heading)
+        }
+        "strong_emphasis" => Some(SpanKind::Bold),
+        "emphasis" => Some(SpanKind::Italic),
+        "code_span" => Some(SpanKind::Code),
+        "fenced_code_block" | "indented_code_block" => Some(SpanKind::CodeBlock),
+        // La cerca ``` de apertura/cierre es un marcador (dentro de la caja mono).
+        "fenced_code_block_delimiter" => Some(SpanKind::Marker),
+        "block_quote_marker" => Some(SpanKind::Blockquote),
+        "link_text" | "image_description" => Some(SpanKind::LinkText),
+        "link_destination" | "link_title" => Some(SpanKind::LinkUrl),
+        // Tablas: la fila de cabecera en negrita, la fila delimitadora y los
+        // pipes `|` como estructura atenuada (mismas distinciones que la TUI).
+        "pipe_table_cell" if parent == Some("pipe_table_header") => Some(SpanKind::Bold),
+        "pipe_table_delimiter_row" => Some(SpanKind::Marker),
+        "|" if matches!(
+            parent,
+            Some("pipe_table_header" | "pipe_table_row" | "pipe_table_delimiter_row")
+        ) =>
+        {
+            Some(SpanKind::Marker)
+        }
+        // Marcadores de item de lista (bullet u ordenado).
+        k if k.starts_with("list_marker") => Some(SpanKind::ListMarker),
+        // Todo lo que rodea al texto visible de un link o imagen (`[`, `]`, `(`,
+        // `)`, `!`) es marcador; el texto/destino ya se resolvio arriba.
+        _ if matches!(parent, Some("inline_link" | "image")) => Some(SpanKind::Marker),
+        // Cualquier otro marcador o delimitador: atenuado.
+        k if k.ends_with("_marker") || k.ends_with("_delimiter") => Some(SpanKind::Marker),
+        _ => None,
+    }
+}
+
+/// DFS iterativo del arbol de tree-sitter-md que junta los tramos estilizados en
+/// BYTES con su profundidad. Mismo recorrido block+inline que usa la TUI.
+fn collect_style_ranges(source: &str) -> Vec<StyleRange> {
+    let mut ranges: Vec<StyleRange> = Vec::new();
+    if source.is_empty() {
+        return ranges;
+    }
+    let mut parser = MarkdownParser::default();
+    let Some(tree) = parser.parse(source.as_bytes(), None) else {
+        return ranges;
+    };
+    let mut cursor = tree.walk();
+    // `stack` guarda los kinds de los ancestros; su largo es la profundidad.
+    let mut stack: Vec<&str> = Vec::new();
+
+    'dfs: loop {
+        let node = cursor.node();
+        let kind = node.kind();
+        let range = node.byte_range();
+        let depth = stack.len();
+        let parent = stack.last().copied();
+
+        if let Some(k) = classify(kind, parent) {
+            ranges.push(StyleRange {
+                start: range.start,
+                end: range.end,
+                kind: k,
+                depth,
+            });
+        }
+
+        if cursor.goto_first_child() {
+            stack.push(kind);
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if stack.pop().is_none() {
+                break 'dfs; // volvimos a la raiz: fin del DFS.
+            }
+            cursor.goto_parent();
+        }
+    }
+    ranges
+}
+
+/// Mapa byte -> offset UTF-16. Cada byte apunta al offset UTF-16 del char al que
+/// pertenece (su inicio); el ultimo slot (len) es el total. Como los limites de
+/// los tramos de tree-sitter caen siempre en frontera de char, la conversion es
+/// exacta. tree-sitter trabaja en BYTES de Rust y el JS en unidades UTF-16, asi
+/// que sin esta conversion los offsets se corren con acentos, emoji o CJK.
+fn byte_to_utf16_map(source: &str) -> Vec<usize> {
+    let mut map = vec![0usize; source.len() + 1];
+    let mut u16_off = 0usize;
+    for (b, ch) in source.char_indices() {
+        for slot in &mut map[b..b + ch.len_utf8()] {
+            *slot = u16_off;
+        }
+        u16_off += ch.len_utf16();
+    }
+    map[source.len()] = u16_off;
+    map
+}
+
+/// Devuelve los tramos de estilo del `source` markdown, en offsets UTF-16, para
+/// que la GUI pinte el "Nivel 1" del bloque en edicion: el markdown crudo
+/// VISIBLE pero estilizado. Los tramos no se solapan y van ordenados por `start`;
+/// los huecos son texto plano.
+///
+/// Resuelve el solapamiento por profundidad (el nodo mas interno gana, igual que
+/// el pintado por `depth` de la TUI) pintando byte a byte, y despues coalesce las
+/// corridas contiguas del mismo kind en un solo tramo.
+pub fn style_spans(source: &str) -> Vec<StyleSpan> {
+    // tree-sitter-md necesita el newline final para reconocer un bloque: sin el,
+    // "# T" o "> cita" a medio tipear parsean como ERROR y no se estilarian. Le
+    // agregamos un '\n' sintetico para parsear y despues recortamos los tramos al
+    // largo original (los offsets internos no cambian porque solo se apendea).
+    let len = source.len();
+    let owned;
+    let parse_src: &str = if source.is_empty() || source.ends_with('\n') {
+        source
+    } else {
+        owned = format!("{source}\n");
+        &owned
+    };
+
+    // 1. Junto los tramos y los ordeno por profundidad ascendente, para pintar el
+    //    mas profundo (mas especifico) al final y que gane.
+    let mut ranges = collect_style_ranges(parse_src);
+    ranges.sort_by_key(|r| r.depth);
+
+    let mut byte_kind: Vec<Option<SpanKind>> = vec![None; parse_src.len()];
+    for r in &ranges {
+        for slot in &mut byte_kind[r.start..r.end] {
+            *slot = Some(r.kind);
+        }
+    }
+
+    // 2. Coalesce corridas contiguas del mismo kind en tramos (todavia en bytes),
+    //    recortando al largo original (descarta lo que caiga en el '\n' sintetico).
+    let mut byte_spans: Vec<(usize, usize, SpanKind)> = Vec::new();
+    let mut i = 0;
+    while i < byte_kind.len() {
+        if let Some(kind) = byte_kind[i] {
+            let start = i;
+            i += 1;
+            while i < byte_kind.len() && byte_kind[i] == Some(kind) {
+                i += 1;
+            }
+            if start < len {
+                byte_spans.push((start, i.min(len), kind));
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // 3. Convierto los offsets de bytes a UTF-16 (lo que consume el JS).
+    let map = byte_to_utf16_map(source);
+    byte_spans
+        .into_iter()
+        .map(|(start, end, kind)| StyleSpan {
+            start: map[start],
+            end: map[end],
+            kind,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +620,114 @@ mod tests {
         assert_eq!(list_prefix("hola mundo"), None);
         // Solo el guion sin espacio (posible thematic break, no item).
         assert_eq!(list_prefix("-"), None);
+    }
+
+    // --- Spans de estilo (Nivel 1 de la GUI) -------------------------------
+
+    /// Helper: primer tramo del kind dado.
+    fn first(spans: &[StyleSpan], kind: SpanKind) -> Option<&StyleSpan> {
+        spans.iter().find(|s| s.kind == kind)
+    }
+
+    #[test]
+    fn style_spans_heading_marca_marcador_y_texto() {
+        // "# Hola": '#' es marcador (0..1) y "Hola" es heading (2..6).
+        let spans = style_spans("# Hola");
+        let marker = first(&spans, SpanKind::Marker).expect("marcador '#'");
+        assert_eq!((marker.start, marker.end), (0, 1));
+        let h = first(&spans, SpanKind::Heading).expect("texto heading");
+        assert_eq!((h.start, h.end), (2, 6));
+    }
+
+    #[test]
+    fn style_spans_negrita_separa_marcadores_del_contenido() {
+        // "**hola**": '**' marcador en 0..2 y 6..8, "hola" negrita en 2..6.
+        let spans = style_spans("**hola**");
+        let bold = first(&spans, SpanKind::Bold).expect("negrita");
+        assert_eq!((bold.start, bold.end), (2, 6));
+        let markers: Vec<_> = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::Marker)
+            .collect();
+        assert_eq!(markers.len(), 2, "spans: {spans:?}");
+        assert_eq!((markers[0].start, markers[0].end), (0, 2));
+        assert_eq!((markers[1].start, markers[1].end), (6, 8));
+    }
+
+    #[test]
+    fn style_spans_codigo_inline_separa_backticks() {
+        // "`x`": backticks marcador, 'x' codigo en 1..2.
+        let spans = style_spans("`x`");
+        let code = first(&spans, SpanKind::Code).expect("codigo");
+        assert_eq!((code.start, code.end), (1, 2));
+        // Los dos backticks quedan como marcador.
+        assert_eq!(
+            spans.iter().filter(|s| s.kind == SpanKind::Marker).count(),
+            2
+        );
+    }
+
+    #[test]
+    fn style_spans_lista_y_blockquote() {
+        let lista = style_spans("- item");
+        assert!(
+            first(&lista, SpanKind::ListMarker).is_some(),
+            "spans: {lista:?}"
+        );
+        let cita = style_spans("> cita");
+        assert!(
+            first(&cita, SpanKind::Blockquote).is_some(),
+            "spans: {cita:?}"
+        );
+    }
+
+    #[test]
+    fn style_spans_texto_plano_no_tiene_tramos() {
+        assert!(style_spans("hola mundo sin formato").is_empty());
+        assert!(style_spans("").is_empty());
+    }
+
+    #[test]
+    fn style_spans_tramos_no_se_solapan_y_van_ordenados() {
+        // Invariante para el consumidor JS: tramos ordenados y disjuntos.
+        let spans = style_spans("# T con **negro** y `cod`\n");
+        let mut prev_end = 0;
+        for s in &spans {
+            assert!(s.start >= prev_end, "solapan/desordenados: {spans:?}");
+            assert!(s.end > s.start);
+            prev_end = s.end;
+        }
+    }
+
+    // --- Conversion de offsets a UTF-16 con multibyte -----------------------
+
+    #[test]
+    fn style_spans_offsets_utf16_con_acento() {
+        // 'é' ocupa 2 bytes UTF-8 pero 1 unidad UTF-16: el contenido cae en 2..3.
+        let spans = style_spans("**é**");
+        let bold = first(&spans, SpanKind::Bold).expect("negrita");
+        assert_eq!((bold.start, bold.end), (2, 3));
+    }
+
+    #[test]
+    fn style_spans_offsets_utf16_con_emoji() {
+        // '😀' es 4 bytes UTF-8 y 2 unidades UTF-16 (par surrogate): negrita en 2..4
+        // y el marcador de cierre arranca despues del par, en 4..6.
+        let spans = style_spans("**😀**");
+        let bold = first(&spans, SpanKind::Bold).expect("negrita");
+        assert_eq!((bold.start, bold.end), (2, 4));
+        let close = spans
+            .iter()
+            .rfind(|s| s.kind == SpanKind::Marker)
+            .expect("marcador de cierre");
+        assert_eq!((close.start, close.end), (4, 6));
+    }
+
+    #[test]
+    fn style_spans_offsets_utf16_con_cjk() {
+        // Cada CJK ocupa 3 bytes UTF-8 y 1 unidad UTF-16: "中文" cae en 2..4.
+        let spans = style_spans("# 中文");
+        let h = first(&spans, SpanKind::Heading).expect("heading");
+        assert_eq!((h.start, h.end), (2, 4));
     }
 }

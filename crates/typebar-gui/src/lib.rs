@@ -70,6 +70,34 @@ fn render_blocks(markdown: String) -> Result<Vec<GuiBlock>, String> {
     Ok(blocks)
 }
 
+/// Un tramo estilizado del source de un bloque para el frontend. `start`/`end`
+/// van en unidades UTF-16 (las que usa el `String` de JS) y `kind` es el nombre
+/// estable de la categoria, que el frontend usa como clase CSS `md-<kind>`.
+/// Espeja a `typebar_core::markdown::StyleSpan`.
+#[derive(Serialize, Debug)]
+struct GuiSpan {
+    start: usize,
+    end: usize,
+    kind: &'static str,
+}
+
+/// Devuelve los tramos de estilo del `source` markdown para que el frontend
+/// pinte el bloque en edicion con el markdown crudo VISIBLE pero estilizado (el
+/// "Nivel 1" de la TUI: marcadores atenuados, contenido con su enfasis). Capa
+/// fina sobre `typebar_core::markdown::style_spans`: la logica de markdown vive
+/// en el nucleo; aca solo serializamos para el IPC.
+#[tauri::command]
+fn style_spans(source: String) -> Vec<GuiSpan> {
+    typebar_core::markdown::style_spans(&source)
+        .into_iter()
+        .map(|s| GuiSpan {
+            start: s.start,
+            end: s.end,
+            kind: s.kind.as_str(),
+        })
+        .collect()
+}
+
 /// Abre el dialogo nativo para elegir un archivo a abrir. Devuelve la ruta
 /// elegida, o `None` si el usuario cancela.
 ///
@@ -166,6 +194,7 @@ pub fn run() {
             save_file,
             render_html,
             render_blocks,
+            style_spans,
             pick_open_path,
             pick_save_path,
             update_title,
@@ -243,6 +272,22 @@ mod tests {
         // La concatenacion de sources reconstruye el documento (round-trip).
         let rejoined: String = blocks.iter().map(|b| b.source.as_str()).collect();
         assert_eq!(rejoined, "# Hola\n\nmundo\n");
+    }
+
+    #[test]
+    fn style_spans_delega_en_el_nucleo() {
+        // Debe devolver los tramos del nucleo con su kind como string estable.
+        let spans = style_spans("# Hola".to_string());
+        assert!(
+            spans.iter().any(|s| s.kind == "heading"),
+            "esperaba un tramo heading; spans: {spans:?}"
+        );
+        assert!(spans.iter().any(|s| s.kind == "marker"));
+    }
+
+    #[test]
+    fn style_spans_texto_plano_no_da_tramos() {
+        assert!(style_spans("texto sin formato".to_string()).is_empty());
     }
 
     #[test]
