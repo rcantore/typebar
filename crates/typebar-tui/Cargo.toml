@@ -1,0 +1,24 @@
+[package]
+name = "typebar"
+description = "Editor de Markdown WYSIWYG para terminal, con keybindings configurables (standard/vim/wordstar)."
+keywords = ["markdown", "editor", "tui", "wysiwyg", "terminal"]
+categories = ["command-line-utilities", "text-editors"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+arboard = { version = "3.6.1", default-features = false }
+crossterm = "0.29"
+dirs = "6.0.0"
+pulldown-cmark = "0.13"
+ratatui = "0.30"
+ropey = "1.6.1"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.2"
+tree-sitter = "0.26"
+tree-sitter-md = { version = "0.5", features = ["parser"] }
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
