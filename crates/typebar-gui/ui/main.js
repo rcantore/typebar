@@ -605,7 +605,9 @@ function markSaved(contents) {
 // Actualiza el rotulo de la ruta del documento en la barra superior.
 function setDocPath(path) {
   currentPath = path;
-  docPathEl.textContent = path || "documento sin guardar";
+  // "sin archivo" y no "sin guardar": este rotulo es la RUTA del documento,
+  // no el estado dirty (ese vive en el titulo de la ventana como "●").
+  docPathEl.textContent = path || "sin archivo";
   docPathEl.title = path || "";
 }
 
