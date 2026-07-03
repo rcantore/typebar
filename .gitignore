@@ -1,6 +1,9 @@
 # Rust build artifacts
 /target
 
+# Artefactos generados por Tauri (schemas de capabilities, etc.)
+/crates/typebar-gui/gen/
+
 # Archivo de trabajo del editor (default cuando no se pasa path)
 /scratch.md
 

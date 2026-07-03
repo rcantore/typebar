@@ -1,0 +1,237 @@
+/* Estetica austera tipo papel, inspirada en el modo whitepaper de la TUI:
+   fondo off-white, tinta suave, nada recargado. */
+:root {
+  --paper: #dce0e8; /* off-white, el papel */
+  --ink: #4c4f69; /* tinta principal */
+  --ink-soft: #6c6f85; /* tinta atenuada para lo secundario */
+  --line: #bcc0cc; /* reglas y bordes */
+  --panel: #e6e9ef; /* leve contraste para la zona de fuente */
+  --accent: #7287fd; /* un unico acento discreto */
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    "Times New Roman", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  /* Sin scroll a nivel de pagina: cada panel maneja el suyo. */
+  overflow: hidden;
+}
+
+/* Barra superior */
+.toolbar {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  flex: 0 0 auto;
+}
+
+.brand {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.toolbar button {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.toolbar button:hover {
+  border-color: var(--ink-soft);
+  background: var(--panel);
+}
+
+.toolbar button:active {
+  background: var(--line);
+}
+
+.doc-path {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+/* Regla separadora, mismo margen izquierdo que la toolbar */
+.rule {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 0 1rem;
+  background: var(--line);
+}
+
+/* Dos paneles lado a lado que reparten el alto restante */
+.panes {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0; /* deja que los hijos scrolleen */
+}
+
+.pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pane-source {
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* Textarea de la fuente: monospace, sin adornos, ocupa todo el panel */
+#source {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  outline: none;
+  resize: none;
+  padding: 1.4rem 1.6rem;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+/* Preview: columna de lectura centrada, tipografia serif */
+.pane-preview {
+  display: flex;
+  justify-content: center;
+}
+
+.reading {
+  width: 100%;
+  max-width: 70ch;
+  padding: 1.6rem 2rem 4rem;
+  line-height: 1.7;
+  font-size: 1.05rem;
+}
+
+.reading h1,
+.reading h2,
+.reading h3,
+.reading h4,
+.reading h5,
+.reading h6 {
+  font-family: var(--serif);
+  line-height: 1.25;
+  color: var(--ink);
+  margin: 1.8rem 0 0.6rem;
+}
+
+.reading h1 {
+  font-size: 1.9rem;
+}
+.reading h2 {
+  font-size: 1.5rem;
+}
+.reading h3 {
+  font-size: 1.2rem;
+}
+
+.reading p {
+  margin: 0 0 1rem;
+}
+
+.reading a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.reading code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--panel);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.reading pre {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.reading pre code {
+  background: none;
+  padding: 0;
+}
+
+.reading blockquote {
+  margin: 1rem 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.reading table {
+  border-collapse: collapse;
+}
+
+.reading th,
+.reading td {
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.7rem;
+}
+
+.reading img {
+  max-width: 100%;
+}
+
+.reading hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 2rem 0;
+}
+
+/* En ventanas angostas, apilamos los paneles en vez de partirlos. */
+@media (max-width: 720px) {
+  .panes {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .pane-source {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>typebar</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Barra superior minima: acciones de archivo y estado del documento. -->
+    <header class="toolbar">
+      <span class="brand">typebar</span>
+      <div class="actions">
+        <button id="btn-open" type="button">Open</button>
+        <button id="btn-save" type="button">Save</button>
+        <button id="btn-save-as" type="button">Save as</button>
+      </div>
+      <span id="doc-path" class="doc-path">documento sin guardar</span>
+    </header>
+
+    <!-- Regla separadora entre la barra y la zona de escritura, como en la TUI. -->
+    <div class="rule"></div>
+
+    <main class="panes">
+      <!-- Fuente cruda del markdown, en monospace. -->
+      <section class="pane pane-source">
+        <textarea
+          id="source"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+        ></textarea>
+      </section>
+
+      <!-- Preview WYSIWYG: columna de lectura centrada, tipografia serif. -->
+      <section class="pane pane-preview">
+        <article id="preview" class="reading"></article>
+      </section>
+    </main>
+
+    <script src="main.js"></script>
+  </body>
+</html>
