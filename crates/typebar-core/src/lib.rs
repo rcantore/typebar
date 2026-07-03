@@ -9,6 +9,7 @@
 //! Lo consumen la TUI (`typebar`) y, a futuro, la GUI (`typebar-gui`): ambas
 //! frentes comparten este mismo nucleo y solo aportan la capa de presentacion.
 
+pub mod blocks;
 pub mod buffers;
 pub mod document;
 pub mod export;

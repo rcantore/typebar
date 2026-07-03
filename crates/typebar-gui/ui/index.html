@@ -21,21 +21,12 @@
     <!-- Regla separadora entre la barra y la zona de escritura, como en la TUI. -->
     <div class="rule"></div>
 
-    <main class="panes">
-      <!-- Fuente cruda del markdown, en monospace. -->
-      <section class="pane pane-source">
-        <textarea
-          id="source"
-          spellcheck="false"
-          autocomplete="off"
-          autocapitalize="off"
-        ></textarea>
-      </section>
-
-      <!-- Preview WYSIWYG: columna de lectura centrada, tipografia serif. -->
-      <section class="pane pane-preview">
-        <article id="preview" class="reading"></article>
-      </section>
+    <!-- Editor WYSIWYG por bloques: una sola columna centrada sobre el papel.
+         Cada bloque se ve renderizado; el que tiene el foco se swapea por su
+         source markdown crudo. Es el "Nivel 2" de la TUI (linea activa cruda,
+         resto renderizado) subido de linea a bloque. -->
+    <main class="page">
+      <div id="doc" class="doc"></div>
     </main>
 
     <script src="main.js"></script>

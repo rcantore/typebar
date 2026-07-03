@@ -5,8 +5,10 @@
   --ink: #4c4f69; /* tinta principal */
   --ink-soft: #6c6f85; /* tinta atenuada para lo secundario */
   --line: #bcc0cc; /* reglas y bordes */
-  --panel: #e6e9ef; /* leve contraste para la zona de fuente */
+  --panel: #e6e9ef; /* leve contraste para code/pre */
   --accent: #7287fd; /* un unico acento discreto */
+  --edit-bg: rgba(76, 79, 105, 0.05); /* tinta al 5%: fondo del modo edicion */
+  --hover-bg: rgba(76, 79, 105, 0.035); /* realce sutil al pasar por un bloque */
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
     "Times New Roman", serif;
@@ -28,7 +30,7 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--serif);
-  /* Sin scroll a nivel de pagina: cada panel maneja el suyo. */
+  /* Sin scroll a nivel de pagina: la columna de bloques maneja el suyo. */
   overflow: hidden;
 }
 
@@ -95,88 +97,106 @@ body {
   background: var(--line);
 }
 
-/* Dos paneles lado a lado que reparten el alto restante */
-.panes {
+/* Zona de escritura: una sola columna centrada que scrollea. */
+.page {
   flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  min-height: 0; /* deja que los hijos scrolleen */
-}
-
-.pane {
-  min-width: 0;
   min-height: 0;
   overflow: auto;
-}
-
-.pane-source {
-  border-right: 1px solid var(--line);
-  background: var(--panel);
-}
-
-/* Textarea de la fuente: monospace, sin adornos, ocupa todo el panel */
-#source {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  outline: none;
-  resize: none;
-  padding: 1.4rem 1.6rem;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.9rem;
-  line-height: 1.6;
-  tab-size: 2;
-}
-
-/* Preview: columna de lectura centrada, tipografia serif */
-.pane-preview {
   display: flex;
   justify-content: center;
 }
 
-.reading {
+.doc {
   width: 100%;
   max-width: 70ch;
-  padding: 1.6rem 2rem 4rem;
+  /* El padding inferior grande deja una zona vacia clickeable debajo del
+     ultimo bloque para agregar un parrafo nuevo. */
+  padding: 1.8rem 2rem 40vh;
   line-height: 1.7;
   font-size: 1.05rem;
 }
 
-.reading h1,
-.reading h2,
-.reading h3,
-.reading h4,
-.reading h5,
-.reading h6 {
+/* Bloque renderizado (sin foco). El margen negativo compensa el padding para
+   que el realce/edicion no desplace el texto horizontalmente. */
+.block {
+  cursor: text;
+  border-radius: 6px;
+  padding: 0.1rem 0.5rem;
+  margin: 0 -0.5rem;
+  transition: background 0.1s ease;
+}
+
+.block:hover {
+  background: var(--hover-bg);
+}
+
+/* Bloque renderizado vacio (solo espacios): altura minima para poder clickearlo. */
+.block-empty {
+  min-height: 1.4rem;
+}
+
+/* Textarea del bloque en edicion: source markdown crudo, monospace, fondo con
+   tinta al 5% para senalar el modo edicion. overflow oculto: la altura la
+   ajusta el JS al contenido. */
+.block-source {
+  display: block;
+  width: 100%;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--ink);
+  background: var(--edit-bg);
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin: 0.15rem -0.5rem;
+  tab-size: 2;
+}
+
+/* Tipografia de lo renderizado, sobre la columna de bloques. */
+.block > :first-child {
+  margin-top: 0;
+}
+.block > :last-child {
+  margin-bottom: 0;
+}
+
+.block h1,
+.block h2,
+.block h3,
+.block h4,
+.block h5,
+.block h6 {
   font-family: var(--serif);
   line-height: 1.25;
   color: var(--ink);
   margin: 1.8rem 0 0.6rem;
 }
 
-.reading h1 {
+.block h1 {
   font-size: 1.9rem;
 }
-.reading h2 {
+.block h2 {
   font-size: 1.5rem;
 }
-.reading h3 {
+.block h3 {
   font-size: 1.2rem;
 }
 
-.reading p {
+.block p {
   margin: 0 0 1rem;
 }
 
-.reading a {
+.block a {
   color: var(--accent);
   text-decoration: none;
   border-bottom: 1px solid var(--line);
 }
 
-.reading code {
+.block code {
   font-family: var(--mono);
   font-size: 0.86em;
   background: var(--panel);
@@ -184,7 +204,7 @@ body {
   border-radius: 4px;
 }
 
-.reading pre {
+.block pre {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -192,46 +212,34 @@ body {
   overflow-x: auto;
 }
 
-.reading pre code {
+.block pre code {
   background: none;
   padding: 0;
 }
 
-.reading blockquote {
+.block blockquote {
   margin: 1rem 0;
   padding-left: 1rem;
   border-left: 3px solid var(--line);
   color: var(--ink-soft);
 }
 
-.reading table {
+.block table {
   border-collapse: collapse;
 }
 
-.reading th,
-.reading td {
+.block th,
+.block td {
   border: 1px solid var(--line);
   padding: 0.4rem 0.7rem;
 }
 
-.reading img {
+.block img {
   max-width: 100%;
 }
 
-.reading hr {
+.block hr {
   border: 0;
   border-top: 1px solid var(--line);
   margin: 2rem 0;
-}
-
-/* En ventanas angostas, apilamos los paneles en vez de partirlos. */
-@media (max-width: 720px) {
-  .panes {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr 1fr;
-  }
-  .pane-source {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
 }
