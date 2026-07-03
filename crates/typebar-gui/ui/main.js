@@ -1,7 +1,7 @@
-// Frontend del cuarto spike de la GUI de typebar: editor WYSIWYG por bloques
-// estilo Typora. JavaScript vanilla, sin frameworks ni bundlers. Habla con el
-// backend Rust por IPC via el global window.__TAURI__ (habilitado por
-// withGlobalTauri en tauri.conf.json).
+// Frontend de la GUI de typebar: editor WYSIWYG por bloques estilo Typora.
+// JavaScript vanilla, sin frameworks ni bundlers. Habla con el backend Rust por
+// IPC via el global window.__TAURI__ (habilitado por withGlobalTauri en
+// tauri.conf.json).
 //
 // Modelo (decidido, no negociable): el markdown es la UNICA fuente de verdad.
 // Nada de contenteditable libre ni de convertir HTML de vuelta a markdown. El
@@ -9,24 +9,47 @@
 //   - Los bloques SIN foco se ven renderizados (HTML que genera el nucleo).
 //   - El bloque CON foco se swapea in-place por una superficie editable
 //     (<div contenteditable>) cuyo textContent ES el source markdown crudo, byte
-//     a byte, pero PINTADO: los marcadores (`**`, `#`, `-`, `>`, backticks)
-//     quedan visibles pero atenuados y el contenido se estiliza (bold en bold,
-//     heading a su escala, code en mono). El estilado es solo pintura encima del
-//     texto; el textContent nunca deja de ser el markdown exacto.
+//     a byte, pero PINTADO: el contenido se estiliza (bold en bold, heading a su
+//     escala, code en mono) y los marcadores (`**`, `#`, `-`, `>`, backticks) se
+//     muestran u OCULTAN segun donde este el caret (ver Nivel 2, abajo). El
+//     estilado es solo pintura encima del texto; el textContent nunca deja de
+//     ser el markdown exacto.
 // Al sacar el foco (blur, Escape, click en otro bloque) se junta el documento
 // entero, se re-parsea con el nucleo (render_blocks) y se repinta. Se re-parsea
 // TODO a proposito: editar un bloque puede cambiar la segmentacion (p.ej. una
 // linea en blanco parte un parrafo en dos) y asi el estado queda consistente.
 //
-// Esto es el "Nivel 1" de la TUI (los marcadores nunca se ocultan, solo se
-// atenuan) aplicado al bloque activo, sobre el "Nivel 2" por bloque (el resto
-// contraido/renderizado). Ese paralelismo es identidad del producto.
+// Nivel 1 vs Nivel 2 del bloque activo (ver ACTIVE_BLOCK_LEVEL):
+//   - Nivel 1: los marcadores siempre visibles, atenuados (como el Nivel 1 de la
+//     TUI, donde la sintaxis nunca se oculta).
+//   - Nivel 2 (por defecto): los marcadores del bloque en edicion se OCULTAN,
+//     salvo los del elemento donde cae el caret, que se revelan para editarlos
+//     (la sensacion Typora). Es el mismo salto que el "Nivel 2" de la TUI, pero
+//     en vez de la linea activa cruda es el ELEMENTO activo el que muestra su
+//     sintaxis. El ocultado es por CSS (clase `md-hidden`, display:none): el nodo
+//     sigue en el DOM, asi el textContent sigue siendo el markdown exacto y toda
+//     la maquinaria de offsets (caret, undo, split, dirty) sigue valida.
 //
-// El estilado de los tramos lo calcula el nucleo (`style_spans`): aca no hay
-// nada de logica de markdown, solo pintura de spans y manejo del caret.
+// Que revelar lo decide el nucleo a medias: `style_info` devuelve los tramos de
+// estilo (spans) Y los rangos completos de cada elemento (elements). El caret
+// dentro del rango [start,end] inclusive de un elemento revela sus marcadores.
+// Aca no hay logica de markdown: solo pintura de spans, interseccion de rangos y
+// manejo del caret.
 
 const invoke = window.__TAURI__.core.invoke;
 const listen = window.__TAURI__.event.listen;
+
+// Nivel de revelado de marcadores del bloque activo (ver el comentario de
+// cabecera). 2 = comportamiento Typora (ocultar los marcadores salvo los del
+// elemento bajo el caret). 1 = comportamiento anterior (todos los marcadores
+// siempre visibles, atenuados). Es una constante para poder volver al Nivel 1 si
+// el usuario lo prefiere, sin tocar el resto de la logica.
+const ACTIVE_BLOCK_LEVEL = 2;
+
+// Kinds de span que son MARCADORES ocultables (los `md-<kind>` que el Nivel 2
+// esconde). El resto de los tramos (contenido: bold, heading, code, link_text,
+// etc) siempre se ve. Espeja las clases CSS que emite applySpans.
+const MARKER_KINDS = new Set(["marker", "list_marker", "blockquote"]);
 
 const docEl = document.getElementById("doc");
 const docPathEl = document.getElementById("doc-path");
@@ -70,8 +93,15 @@ let goalColumn = null;
 //   { type: "snippet", fullText, offset }    -> mapear click renderizado a source
 let pendingCaret = null;
 
+// Rangos de elementos (Nivel 2) del bloque en edicion, tal como los devolvio la
+// ultima llamada a style_info. Cacheados para calcular EN JS que marcadores
+// revelar en cada movimiento de caret (selectionchange), sin volver a llamar al
+// backend: solo hay IPC cuando cambia el CONTENIDO. Cada elemento es
+// { start, end, kind } en offsets UTF-16 (= indices de String JS).
+let currentElements = [];
+
 // Token monotono para descartar repintados de spans obsoletos: cada pedido a
-// style_spans es async, y entre el pedido y la respuesta el usuario pudo seguir
+// style_info es async, y entre el pedido y la respuesta el usuario pudo seguir
 // tipeando. Solo aplicamos la respuesta si el token sigue vigente.
 let repaintToken = 0;
 // Timer del repintado con debounce corto (evita pedir spans en cada tecla).
@@ -94,14 +124,15 @@ const UNDO_COALESCE_MS = 500;
 // Documento de bienvenida por defecto (markdown embebido).
 const WELCOME = `# typebar
 
-Editor de Markdown **WYSIWYG por bloques**, ahora como app de escritorio.
-Este es el cuarto *spike* de la GUI en Tauri v2 sobre \`typebar-core\`.
+Editor de Markdown **WYSIWYG por bloques**, como app de escritorio en Tauri v2
+sobre \`typebar-core\`.
 
 ## Como funciona
 
-El documento se ve como una columna de bloques renderizados. Al hacer click en
-un bloque, se convierte en su *source* markdown crudo pero **estilizado**: los
-marcadores quedan a la vista, atenuados, y escribis sobre el documento.
+El documento se ve como una columna de bloques renderizados. Hace click en un
+bloque y editalo: los marcadores de markdown (\`**\`, \`#\`, backticks) aparecen
+solo donde esta el cursor. Salis de una **negrita** y los \`**\` se esfuman;
+volves a meter el cursor adentro y reaparecen para editarlos.
 
 - Hace click en este bloque para editarlo.
 - Usa **Open** para cargar un \`.md\` desde disco.
@@ -277,12 +308,37 @@ function syncEditorScale(div) {
   }
 }
 
+// Indice del elemento DUENO de un marcador que ocupa [start, end): el elemento
+// mas interno (rango mas chico) que lo contiene por completo. Ese es el elemento
+// que, al tener el caret adentro, revela el marcador. Devuelve -1 si ningun
+// elemento lo contiene (p.ej. las cercas ``` de un fence o los pipes de una
+// tabla, que no modelamos como elemento y por eso quedan siempre visibles).
+function markerOwner(start, end, elements) {
+  let best = -1;
+  let bestSize = Infinity;
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
+    if (el.start <= start && end <= el.end) {
+      const size = el.end - el.start;
+      if (size < bestSize) {
+        bestSize = size;
+        best = i;
+      }
+    }
+  }
+  return best;
+}
+
 // Reconstruye el interior del editor como secuencia de <span class="md-<kind>">
-// + texto plano a partir de `text` (el source crudo) y `spans` (los tramos de
-// estilo del nucleo, en offsets UTF-16 = indices de String JS). Los huecos entre
-// tramos son texto plano. El resultado tiene el MISMO textContent que `text`
-// (solo cambia la pintura), asi la invariante se mantiene.
-function applySpans(div, text, spans) {
+// + texto plano a partir de `text` (el source crudo), `spans` (los tramos de
+// estilo del nucleo, en offsets UTF-16 = indices de String JS) y `elements` (los
+// rangos de elementos para el Nivel 2). Los huecos entre tramos son texto plano.
+// A cada span de MARCADOR le anota en data-owner el indice del elemento que lo
+// revela, para que updateMarkerVisibility togglee la clase sin recalcular nada de
+// markdown. El resultado tiene el MISMO textContent que `text` (solo cambia la
+// pintura, y los md-hidden siguen contando en textContent), asi la invariante se
+// mantiene.
+function applySpans(div, text, spans, elements) {
   const frag = document.createDocumentFragment();
   let pos = 0;
   for (const sp of spans) {
@@ -297,6 +353,9 @@ function applySpans(div, text, spans) {
     const el = document.createElement("span");
     el.className = "md-" + sp.kind;
     el.textContent = text.slice(sp.start, sp.end);
+    if (MARKER_KINDS.has(sp.kind)) {
+      el.dataset.owner = markerOwner(sp.start, sp.end, elements);
+    }
     frag.appendChild(el);
     pos = sp.end;
   }
@@ -307,10 +366,75 @@ function applySpans(div, text, spans) {
   div.appendChild(frag);
 }
 
-// Pide los spans del contenido actual del editor y repinta, preservando el caret
-// por offset absoluto. Es el corazon del "Nivel 1" del bloque activo. Async
-// (style_spans es IPC); descarta la respuesta si el editor cambio o el usuario
-// siguio tipeando (token/textContent), o si hay una composicion IME en curso.
+// --- Nivel 2: revelado de marcadores segun el caret -----------------------
+
+// Offsets de texto (en unidades de String JS) de los dos extremos de la
+// seleccion dentro de `root`, o null si la seleccion no esta dentro del editor.
+// Igual que getCaretOffset pero devuelve ambos extremos, para revelar los
+// elementos que toca cualquiera de las dos puntas de una seleccion. Range.toString
+// concatena el texto de los nodos SIN respetar el CSS, asi que los marcadores
+// ocultos (display:none) siguen contando y los offsets coinciden con textContent.
+function getSelectionOffsets(root) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) {
+    return null;
+  }
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+    return null;
+  }
+  const pre = range.cloneRange();
+  pre.selectNodeContents(root);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const start = pre.toString().length;
+  pre.setEnd(range.endContainer, range.endOffset);
+  const end = pre.toString().length;
+  return { start, end };
+}
+
+// Toggle de la clase md-hidden de cada marcador del editor segun donde este el
+// caret/seleccion. Barato: cero IPC (usa currentElements ya cacheado), solo
+// interseccion de rangos y toggle de clases (no reconstruye el DOM, asi el caret
+// no se pierde). Un marcador se revela si su elemento dueno (data-owner) contiene
+// alguno de los dos extremos de la seleccion, en [start,end] INCLUSIVE; los
+// marcadores sin dueno (-1) quedan visibles siempre. Con el caret fuera de todo
+// elemento, todos los marcadores con dueno se ocultan.
+//
+// En Nivel 1 es un no-op: nunca se agrega md-hidden y los marcadores quedan como
+// los pinto applySpans (visibles, atenuados).
+function updateMarkerVisibility(div) {
+  if (ACTIVE_BLOCK_LEVEL !== 2 || !div) {
+    return;
+  }
+  const markers = div.querySelectorAll(".md-marker, .md-list_marker, .md-blockquote");
+  const sel = getSelectionOffsets(div);
+  // Set de indices de elementos "activos": los que contienen algun extremo de la
+  // seleccion (inclusive). Sin seleccion dentro del editor, queda vacio (oculta
+  // todos los marcadores con dueno).
+  const active = new Set();
+  if (sel) {
+    for (let i = 0; i < currentElements.length; i++) {
+      const e = currentElements[i];
+      const hitStart = e.start <= sel.start && sel.start <= e.end;
+      const hitEnd = e.start <= sel.end && sel.end <= e.end;
+      if (hitStart || hitEnd) {
+        active.add(i);
+      }
+    }
+  }
+  for (const m of markers) {
+    const owner = Number(m.dataset.owner);
+    // Sin dueno (-1) => siempre visible. Con dueno => visible solo si esta activo.
+    const reveal = owner < 0 || active.has(owner);
+    m.classList.toggle("md-hidden", !reveal);
+  }
+}
+
+// Pide al nucleo el estilo del contenido actual del editor (spans + elementos) y
+// repinta, preservando el caret por offset absoluto. Es el corazon del pintado
+// del bloque activo. Async (style_info es IPC); descarta la respuesta si el
+// editor cambio o el usuario siguio tipeando (token/textContent), o si hay una
+// composicion IME en curso.
 async function repaintEditor() {
   const div = editorEl;
   if (!div) {
@@ -321,9 +445,9 @@ async function repaintEditor() {
   }
   const text = div.textContent;
   const token = ++repaintToken;
-  let spans;
+  let info;
   try {
-    spans = await invoke("style_spans", { source: text });
+    info = await invoke("style_info", { source: text });
   } catch {
     return;
   }
@@ -336,10 +460,17 @@ async function repaintEditor() {
   }
   const caret = getCaretOffset(div);
   syncEditorScale(div);
-  applySpans(div, text, spans);
+  // Cacheamos los rangos de elementos para el Nivel 2 antes de pintar: applySpans
+  // los usa para anotar el dueno de cada marcador y updateMarkerVisibility para
+  // togglear la visibilidad en cada movimiento de caret sin IPC.
+  currentElements = info.elements || [];
+  applySpans(div, text, info.spans || [], currentElements);
   if (caret !== null) {
     setCaretOffset(div, caret);
   }
+  // Primer revelado ya con el caret puesto: el elemento bajo el caret aparece sin
+  // esperar al primer selectionchange (importante al ENTRAR a un bloque).
+  updateMarkerVisibility(div);
 }
 
 // Programa un repintado de spans con debounce corto (no en cada tecla).
@@ -418,6 +549,8 @@ function makeEditor(i) {
   div.addEventListener("keydown", onEditorKeydown);
   div.addEventListener("blur", onBlur);
   div.addEventListener("paste", onPaste);
+  div.addEventListener("copy", onCopy);
+  div.addEventListener("cut", onCut);
   div.addEventListener("drop", onDrop);
   div.addEventListener("dragover", (e) => e.preventDefault());
   div.addEventListener("compositionstart", () => {
@@ -678,6 +811,51 @@ function onPaste(e) {
     insertTextAtCaret(div, text);
     onEditorInput();
   }
+}
+
+// copy: la seleccion VISUAL excluye el texto oculto (los marcadores en
+// display:none), asi que getSelection().toString() copiaria markdown sin sus `**`,
+// `#`, etc. Interceptamos y ponemos en el portapapeles el SLICE del source crudo,
+// calculado por offsets sobre el textContent (que SI incluye los nodos ocultos).
+// Asi copiar desde el editor siempre da markdown fiel, con marcadores.
+function onCopy(e) {
+  const div = editorEl;
+  if (!div) {
+    return;
+  }
+  const sel = getSelectionOffsets(div);
+  if (!sel || sel.start === sel.end) {
+    return; // sin seleccion: nada que copiar, dejamos el gesto nativo.
+  }
+  e.preventDefault();
+  const a = Math.min(sel.start, sel.end);
+  const b = Math.max(sel.start, sel.end);
+  if (e.clipboardData) {
+    e.clipboardData.setData("text/plain", div.textContent.slice(a, b));
+  }
+}
+
+// cut: como copy (source crudo al portapapeles) y ademas borra el rango sobre el
+// texto crudo, deja el caret donde arrancaba la seleccion y dispara el repintado.
+function onCut(e) {
+  const div = editorEl;
+  if (!div) {
+    return;
+  }
+  const sel = getSelectionOffsets(div);
+  if (!sel || sel.start === sel.end) {
+    return;
+  }
+  e.preventDefault();
+  const a = Math.min(sel.start, sel.end);
+  const b = Math.max(sel.start, sel.end);
+  const text = div.textContent;
+  if (e.clipboardData) {
+    e.clipboardData.setData("text/plain", text.slice(a, b));
+  }
+  div.textContent = text.slice(0, a) + text.slice(b);
+  setCaretOffset(div, a);
+  onEditorInput();
 }
 
 // drop: idem, solo texto plano en el caret (o al final).
@@ -1057,6 +1235,25 @@ async function saveFileAs() {
 btnOpen.addEventListener("click", openFile);
 btnSave.addEventListener("click", saveFile);
 btnSaveAs.addEventListener("click", saveFileAs);
+
+// Nivel 2: en cada movimiento de caret o cambio de seleccion dentro del editor,
+// recalculamos que marcadores revelar. Es el camino barato (cero IPC): usa
+// currentElements ya cacheado y solo togglea clases, sin recrear nodos (asi el
+// caret no se pierde). Filtramos que la seleccion caiga dentro del editor y no
+// corremos en medio de un repintado ni de una composicion IME.
+document.addEventListener("selectionchange", () => {
+  if (!editorEl || isPainting || isComposing) {
+    return;
+  }
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) {
+    return;
+  }
+  if (!editorEl.contains(sel.getRangeAt(0).endContainer)) {
+    return; // la seleccion no esta en el editor: no tocamos la visibilidad.
+  }
+  updateMarkerVisibility(editorEl);
+});
 
 // Cmd/Ctrl+S guarda sin importar donde este el foco.
 document.addEventListener("keydown", (e) => {

@@ -314,6 +314,73 @@ pub struct StyleSpan {
     pub kind: SpanKind,
 }
 
+// --- Rangos de elementos (Nivel 2 del bloque activo) -----------------------
+//
+// El "Nivel 2" de la GUI oculta los marcadores del bloque en edicion, salvo los
+// del elemento donde esta el caret, que se revelan para editarlos (la sensacion
+// Typora). Es el mismo salto que el "Nivel 2" de la TUI, pero en vez de linea
+// activa cruda es el ELEMENTO activo el que muestra su sintaxis.
+//
+// Para decidir "que marcador pertenece a que elemento" el JS necesita, ademas de
+// los spans planos, el rango COMPLETO de cada elemento (con sus marcadores
+// adentro). tree-sitter ya da esos nodos: el rango del nodo `strong_emphasis`
+// entero es exactamente una negrita con sus `**`, el de `atx_heading` la linea
+// del heading con su `#`, etc. `style_elements` los expone en offsets UTF-16;
+// el JS calcula por interseccion de rangos que revelar, sin logica de markdown.
+
+/// Tipo de elemento revelable. Los inline (`Bold`/`Italic`/`Code`/`Link`) tienen
+/// como rango el nodo entero (marcadores incluidos); los de linea/bloque
+/// (`Heading`/`ListItem`/`Blockquote`) el rango del nodo de tree-sitter, que para
+/// un heading atx es su linea y para un item de lista o una cita puede abarcar
+/// varias lineas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElementKind {
+    Bold,
+    Italic,
+    Code,
+    Link,
+    Heading,
+    ListItem,
+    Blockquote,
+}
+
+impl ElementKind {
+    /// Nombre estable de la categoria (el frontend lo recibe como metadato).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ElementKind::Bold => "bold",
+            ElementKind::Italic => "italic",
+            ElementKind::Code => "code",
+            ElementKind::Link => "link",
+            ElementKind::Heading => "heading",
+            ElementKind::ListItem => "list_item",
+            ElementKind::Blockquote => "blockquote",
+        }
+    }
+}
+
+/// Rango COMPLETO de un elemento revelable, en offsets UTF-16, incluyendo sus
+/// marcadores. Los rangos PUEDEN anidarse (una negrita dentro de un heading da
+/// dos elementos que se contienen); el consumidor resuelve la profundidad.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleElement {
+    /// Inicio del elemento, en unidades UTF-16.
+    pub start: usize,
+    /// Fin (inclusive en la logica del consumidor) del elemento, en UTF-16.
+    pub end: usize,
+    /// Tipo de elemento.
+    pub kind: ElementKind,
+}
+
+/// Respuesta unificada para el frontend: los tramos de estilo (Nivel 1) y los
+/// rangos de elementos (Nivel 2), en UNA sola pasada para el consumidor. El
+/// comando IPC devuelve ambas listas juntas para evitar dos round-trips.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleInfo {
+    pub spans: Vec<StyleSpan>,
+    pub elements: Vec<StyleElement>,
+}
+
 /// Tramo estilizado en BYTES con la profundidad del nodo, antes de resolver el
 /// solapamiento. Interno: `style_spans` lo aplana.
 struct StyleRange {
@@ -494,6 +561,102 @@ pub fn style_spans(source: &str) -> Vec<StyleSpan> {
             kind,
         })
         .collect()
+}
+
+/// Mapea el `kind()` de un nodo de tree-sitter-md a un `ElementKind` revelable, o
+/// `None` si el nodo no es un elemento que oculte/revele marcadores.
+fn element_kind(kind: &str) -> Option<ElementKind> {
+    match kind {
+        "strong_emphasis" => Some(ElementKind::Bold),
+        "emphasis" => Some(ElementKind::Italic),
+        "code_span" => Some(ElementKind::Code),
+        "inline_link" | "image" => Some(ElementKind::Link),
+        "atx_heading" | "setext_heading" => Some(ElementKind::Heading),
+        "list_item" => Some(ElementKind::ListItem),
+        "block_quote" => Some(ElementKind::Blockquote),
+        _ => None,
+    }
+}
+
+/// Devuelve los rangos COMPLETOS de los elementos revelables del `source`, en
+/// offsets UTF-16, para el "Nivel 2" del bloque en edicion. Cada rango abarca el
+/// nodo entero (marcadores incluidos): una negrita con sus `**`, un heading con
+/// su `#`, un item de lista con su vineta, etc. Los rangos pueden anidarse; el
+/// consumidor resuelve la profundidad (el elemento mas interno es el "dueno" de
+/// un marcador).
+///
+/// A los nodos de linea/bloque (heading, item, cita) se les recorta el `\n` final
+/// para que el rango NO invada el arranque del bloque siguiente.
+pub fn style_elements(source: &str) -> Vec<StyleElement> {
+    // Mismo `\n` sintetico que `style_spans`: sin el, un bloque a medio tipear
+    // ("# T", "> cita") parsea como ERROR y no daria elemento. Recortamos al
+    // largo original despues (los offsets internos no se corren, solo se apendea).
+    let len = source.len();
+    let owned;
+    let parse_src: &str = if source.is_empty() || source.ends_with('\n') {
+        source
+    } else {
+        owned = format!("{source}\n");
+        &owned
+    };
+
+    let mut parser = MarkdownParser::default();
+    let Some(tree) = parser.parse(parse_src.as_bytes(), None) else {
+        return Vec::new();
+    };
+    let bytes = parse_src.as_bytes();
+
+    // DFS iterativo de corrido (block + inline), como `enclosing`. Junto los
+    // rangos en BYTES y los convierto a UTF-16 al final.
+    let mut cursor = tree.walk();
+    let mut byte_elems: Vec<(usize, usize, ElementKind)> = Vec::new();
+    loop {
+        let node = cursor.node();
+        if let Some(kind) = element_kind(node.kind()) {
+            let range = node.byte_range();
+            let start = range.start.min(len);
+            let mut end = range.end.min(len);
+            // Recortar el/los newline(s) finales del nodo (nodos de bloque los
+            // incluyen) para no pisar el arranque del bloque siguiente.
+            while end > start && bytes[end - 1] == b'\n' {
+                end -= 1;
+            }
+            if start < end {
+                byte_elems.push((start, end, kind));
+            }
+        }
+
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                // Volvimos a la raiz: convierto a UTF-16 y devuelvo.
+                let map = byte_to_utf16_map(source);
+                return byte_elems
+                    .into_iter()
+                    .map(|(start, end, kind)| StyleElement {
+                        start: map[start],
+                        end: map[end],
+                        kind,
+                    })
+                    .collect();
+            }
+        }
+    }
+}
+
+/// Devuelve en una sola pasada los tramos de estilo (Nivel 1) y los rangos de
+/// elementos (Nivel 2) del `source`. Es lo que consume el comando IPC de la GUI:
+/// una llamada, dos listas, sin dos round-trips.
+pub fn style_info(source: &str) -> StyleInfo {
+    StyleInfo {
+        spans: style_spans(source),
+        elements: style_elements(source),
+    }
 }
 
 #[cfg(test)]
@@ -729,5 +892,93 @@ mod tests {
         let spans = style_spans("# 中文");
         let h = first(&spans, SpanKind::Heading).expect("heading");
         assert_eq!((h.start, h.end), (2, 4));
+    }
+
+    // --- Rangos de elementos (Nivel 2 de la GUI) ---------------------------
+
+    /// Helper: primer elemento del kind dado.
+    fn first_el(els: &[StyleElement], kind: ElementKind) -> Option<&StyleElement> {
+        els.iter().find(|e| e.kind == kind)
+    }
+
+    #[test]
+    fn elements_negrita_cubre_los_marcadores() {
+        // "**hola**": el elemento Bold abarca los `**` y el contenido: 0..8.
+        let els = style_elements("**hola**");
+        let bold = first_el(&els, ElementKind::Bold).expect("bold");
+        assert_eq!((bold.start, bold.end), (0, 8));
+    }
+
+    #[test]
+    fn elements_bold_anidado_en_heading() {
+        // "## a **b** c": el heading cubre toda la linea (con su `##`) y la
+        // negrita, anidada, cubre solo `**b**`. Se contienen.
+        let src = "## a **b** c";
+        let els = style_elements(src);
+        let heading = first_el(&els, ElementKind::Heading).expect("heading");
+        assert_eq!((heading.start, heading.end), (0, src.chars().count()));
+        let bold = first_el(&els, ElementKind::Bold).expect("bold");
+        assert_eq!((bold.start, bold.end), (5, 10));
+        // Anidamiento: el heading contiene a la negrita.
+        assert!(heading.start <= bold.start && bold.end <= heading.end);
+    }
+
+    #[test]
+    fn elements_link_cubre_corchetes_y_destino() {
+        // "[txt](url)": el elemento Link abarca todo, corchetes y parentesis: 0..10.
+        let els = style_elements("[txt](url)");
+        let link = first_el(&els, ElementKind::Link).expect("link");
+        assert_eq!((link.start, link.end), (0, 10));
+    }
+
+    #[test]
+    fn elements_item_de_lista_multilinea() {
+        // "- one\n  two\n": un item con una continuacion indentada. El elemento
+        // ListItem abarca AMBAS lineas (sin el `\n` final): arranca en 0 y llega
+        // mas alla del primer salto de linea (offset 5).
+        let src = "- one\n  two\n";
+        let els = style_elements(src);
+        let item = first_el(&els, ElementKind::ListItem).expect("list item");
+        assert_eq!(item.start, 0);
+        assert!(
+            item.end > 6,
+            "el item deberia abarcar la segunda linea; els: {els:?}"
+        );
+        // No incluye el `\n` final.
+        assert!(item.end < src.chars().count());
+    }
+
+    #[test]
+    fn elements_blockquote_y_code_span() {
+        let cita = style_elements("> hola");
+        assert!(
+            first_el(&cita, ElementKind::Blockquote).is_some(),
+            "els: {cita:?}"
+        );
+        let code = style_elements("`x`");
+        let c = first_el(&code, ElementKind::Code).expect("code");
+        assert_eq!((c.start, c.end), (0, 3));
+    }
+
+    #[test]
+    fn elements_texto_plano_no_tiene_elementos() {
+        assert!(style_elements("hola mundo sin formato").is_empty());
+        assert!(style_elements("").is_empty());
+    }
+
+    #[test]
+    fn elements_offsets_utf16_con_emoji() {
+        // "**😀**": el emoji son 2 unidades UTF-16; el elemento Bold va 0..6.
+        let els = style_elements("**😀**");
+        let bold = first_el(&els, ElementKind::Bold).expect("bold");
+        assert_eq!((bold.start, bold.end), (0, 6));
+    }
+
+    #[test]
+    fn style_info_devuelve_spans_y_elementos_juntos() {
+        // Una sola llamada trae ambas listas coherentes.
+        let info = style_info("**hola**");
+        assert!(info.spans.iter().any(|s| s.kind == SpanKind::Bold));
+        assert!(info.elements.iter().any(|e| e.kind == ElementKind::Bold));
     }
 }

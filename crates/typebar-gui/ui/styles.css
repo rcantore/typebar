@@ -188,15 +188,29 @@ body {
   line-height: 1.4;
 }
 
-/* --- Tramos estilizados del Nivel 1 (clases md-<kind> que emite style_spans).
-   Marcadores VISIBLES pero atenuados (tinta ~40%), contenido con su enfasis. --- */
+/* --- Tramos estilizados del bloque activo (clases md-<kind> que arma applySpans
+   a partir de style_info). Contenido con su enfasis; marcadores atenuados y, en
+   Nivel 2, ocultados por .md-hidden salvo los del elemento bajo el caret. --- */
 
 /* Marcadores de sintaxis: #, **, *, backticks, cercas, pipes, corchetes/parentesis
-   de links. Como el Nivel 1 de la TUI, nunca se ocultan: solo se atenuan. */
+   de links. Se atenuan (tinta ~40%); en Nivel 2 se ocultan salvo los del
+   elemento bajo el caret (ver .md-hidden). */
 .md-marker,
 .md-list_marker,
 .md-blockquote {
   color: var(--ink-faint);
+}
+
+/* Nivel 2: marcador OCULTO. display:none lo saca del render pero NO del DOM, asi
+   el textContent sigue siendo el markdown exacto (los offsets, el undo y el copy
+   crudo dependen de eso). El JS togglea esta clase segun donde este el caret.
+   Aceptamos el reflow HORIZONTAL al revelar/ocultar (Typora tambien lo tiene);
+   como el prefijo de heading ya no escala la linea, no hay saltos verticales.
+   Si en algun WebView el caret se trabara al cruzar un nodo display:none, el
+   fallback documentado es colapsar el ancho (font-size:0 / letter-spacing) en vez
+   de display:none, que mantiene el nodo navegable por el caret. */
+.md-hidden {
+  display: none;
 }
 
 .md-heading,

@@ -81,21 +81,54 @@ struct GuiSpan {
     kind: &'static str,
 }
 
-/// Devuelve los tramos de estilo del `source` markdown para que el frontend
-/// pinte el bloque en edicion con el markdown crudo VISIBLE pero estilizado (el
-/// "Nivel 1" de la TUI: marcadores atenuados, contenido con su enfasis). Capa
-/// fina sobre `typebar_core::markdown::style_spans`: la logica de markdown vive
-/// en el nucleo; aca solo serializamos para el IPC.
+/// Rango COMPLETO de un elemento revelable (con sus marcadores adentro), en
+/// unidades UTF-16. Lo usa el "Nivel 2" del frontend para decidir que marcadores
+/// revelar segun donde este el caret. Espeja a
+/// `typebar_core::markdown::StyleElement`.
+#[derive(Serialize, Debug)]
+struct GuiElement {
+    start: usize,
+    end: usize,
+    kind: &'static str,
+}
+
+/// Respuesta unificada de estilo para el frontend: los tramos (Nivel 1) y los
+/// rangos de elementos (Nivel 2), en una sola llamada. Espeja a
+/// `typebar_core::markdown::StyleInfo`.
+#[derive(Serialize, Debug)]
+struct GuiStyleInfo {
+    spans: Vec<GuiSpan>,
+    elements: Vec<GuiElement>,
+}
+
+/// Devuelve, en UNA llamada, los tramos de estilo y los rangos de elementos del
+/// `source` markdown, para que el frontend pinte el bloque en edicion con el
+/// markdown crudo estilizado (Nivel 1) y oculte/revele marcadores segun el caret
+/// (Nivel 2). Capa fina sobre `typebar_core::markdown::style_info`: la logica de
+/// markdown vive en el nucleo; aca solo serializamos para el IPC.
 #[tauri::command]
-fn style_spans(source: String) -> Vec<GuiSpan> {
-    typebar_core::markdown::style_spans(&source)
-        .into_iter()
-        .map(|s| GuiSpan {
-            start: s.start,
-            end: s.end,
-            kind: s.kind.as_str(),
-        })
-        .collect()
+fn style_info(source: String) -> GuiStyleInfo {
+    let info = typebar_core::markdown::style_info(&source);
+    GuiStyleInfo {
+        spans: info
+            .spans
+            .into_iter()
+            .map(|s| GuiSpan {
+                start: s.start,
+                end: s.end,
+                kind: s.kind.as_str(),
+            })
+            .collect(),
+        elements: info
+            .elements
+            .into_iter()
+            .map(|e| GuiElement {
+                start: e.start,
+                end: e.end,
+                kind: e.kind.as_str(),
+            })
+            .collect(),
+    }
 }
 
 /// Abre el dialogo nativo para elegir un archivo a abrir. Devuelve la ruta
@@ -194,7 +227,7 @@ pub fn run() {
             save_file,
             render_html,
             render_blocks,
-            style_spans,
+            style_info,
             pick_open_path,
             pick_save_path,
             update_title,
@@ -275,19 +308,41 @@ mod tests {
     }
 
     #[test]
-    fn style_spans_delega_en_el_nucleo() {
-        // Debe devolver los tramos del nucleo con su kind como string estable.
-        let spans = style_spans("# Hola".to_string());
+    fn style_info_delega_en_el_nucleo() {
+        // Debe devolver los tramos del nucleo con su kind como string estable, y
+        // los rangos de elementos en la misma llamada.
+        let info = style_info("# Hola".to_string());
         assert!(
-            spans.iter().any(|s| s.kind == "heading"),
-            "esperaba un tramo heading; spans: {spans:?}"
+            info.spans.iter().any(|s| s.kind == "heading"),
+            "esperaba un tramo heading; spans: {:?}",
+            info.spans
         );
-        assert!(spans.iter().any(|s| s.kind == "marker"));
+        assert!(info.spans.iter().any(|s| s.kind == "marker"));
+        assert!(
+            info.elements.iter().any(|e| e.kind == "heading"),
+            "esperaba un elemento heading; elements: {:?}",
+            info.elements
+        );
     }
 
     #[test]
-    fn style_spans_texto_plano_no_da_tramos() {
-        assert!(style_spans("texto sin formato".to_string()).is_empty());
+    fn style_info_texto_plano_no_da_tramos_ni_elementos() {
+        let info = style_info("texto sin formato".to_string());
+        assert!(info.spans.is_empty());
+        assert!(info.elements.is_empty());
+    }
+
+    #[test]
+    fn style_info_negrita_da_elemento_que_cubre_marcadores() {
+        // "**hola**": el elemento Bold abarca los `**` (0..8) para que el Nivel 2
+        // sepa a que elemento pertenecen los marcadores.
+        let info = style_info("**hola**".to_string());
+        let bold = info
+            .elements
+            .iter()
+            .find(|e| e.kind == "bold")
+            .expect("elemento bold");
+        assert_eq!((bold.start, bold.end), (0, 8));
     }
 
     #[test]
