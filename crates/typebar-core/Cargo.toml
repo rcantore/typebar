@@ -6,6 +6,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
 
 [features]
 # Expone `document::test_support` a crates consumidores (p.ej. los tests de la

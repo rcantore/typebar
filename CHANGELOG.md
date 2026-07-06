@@ -16,6 +16,16 @@ How to maintain this file:
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-06
+
+### Fixed
+
+- The `typebar` and `typebar-core` crates now ship a README on crates.io. After
+  the move to a Cargo workspace, the README lived at the repository root, outside
+  each crate's directory, so the published packages had no README. Both crates
+  now point at a README via the `readme` field (the app README for `typebar`, a
+  dedicated one for `typebar-core`).
+
 ## [0.3.1] - 2026-07-03
 
 ### Changed
