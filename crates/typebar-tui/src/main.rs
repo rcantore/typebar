@@ -553,6 +553,12 @@ fn run(
                     state.theme_id = id.to_string();
                     state.light_on = false;
                     state.whitepaper = false;
+                    // Persistir la eleccion en el config para que sobreviva al
+                    // reinicio. Best-effort: si falla (sin dir de config, permisos)
+                    // se avisa en el flash, pero el theme ya cambio en vivo igual.
+                    if let Err(e) = config::persist_theme(id) {
+                        state.flash = Some(format!("theme not saved: {e}"));
+                    }
                 }
             }
             continue;
