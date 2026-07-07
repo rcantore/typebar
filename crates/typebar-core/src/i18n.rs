@@ -129,6 +129,13 @@ pub enum Key {
     SectionView,
     SectionNav,
     SectionMode,
+    /// Prompt del box del theme picker ("tema:" / "theme:").
+    ThemePickerPrompt,
+    /// Marcador del theme actualmente activo en el theme picker ("actual" /
+    /// "current").
+    ThemeCurrent,
+    /// Label del comando/submenu que abre el theme picker ("Tema…" / "Theme…").
+    HintTheme,
 
     // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
     ModeNormal,
@@ -260,6 +267,12 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::SectionNav) => "navigation",
         (Locale::Es, Key::SectionMode) => "modo",
         (Locale::En, Key::SectionMode) => "mode",
+        (Locale::Es, Key::ThemePickerPrompt) => "tema:",
+        (Locale::En, Key::ThemePickerPrompt) => "theme:",
+        (Locale::Es, Key::ThemeCurrent) => "actual",
+        (Locale::En, Key::ThemeCurrent) => "current",
+        (Locale::Es, Key::HintTheme) => "Tema…",
+        (Locale::En, Key::HintTheme) => "Theme…",
 
         // --- Status bar (nombres de modo) ---------------------------------
         (Locale::Es, Key::ModeNormal) => "NORMAL",

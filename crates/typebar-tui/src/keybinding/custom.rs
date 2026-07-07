@@ -339,6 +339,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "close-buffer" => Action::CloseBuffer,
         "open-switcher" => Action::OpenSwitcher,
         "open-palette" => Action::OpenPalette,
+        "open-theme-picker" => Action::OpenThemePicker,
         other => return Err(format!("accion desconocida: {other:?}")),
     };
     Ok(action)

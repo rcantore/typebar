@@ -110,6 +110,10 @@ pub enum Action {
     /// opera a nivel del loop (`run`): al aceptar, despacha el `Action` elegido
     /// por el mismo camino que el keymap.
     OpenPalette,
+    /// Abrir el theme picker (submenu view, `^O T` / `z t`): un overlay que lista
+    /// los themes built-in con preview en vivo. Opera a nivel del loop (`run`): al
+    /// aceptar, fija el theme elegido como base. Marca el theme actual.
+    OpenThemePicker,
     /// Togglear el theme claro (Catppuccin Latte) en runtime, desde el submenu
     /// "view" (`^O L` / `z l`). Es estado de la vista del loop, no del documento;
     /// alterna entre el theme configurado (oscuro) y Latte (claro).
@@ -408,6 +412,7 @@ fn resolve_view_second(second: KeyEvent) -> Resolve {
         'z' => Resolve::Action(Action::ToggleZen),
         'l' => Resolve::Action(Action::ToggleLightTheme),
         'w' => Resolve::Action(Action::ToggleWhitepaper),
+        't' => Resolve::Action(Action::OpenThemePicker),
         _ => Resolve::None,
     }
 }
@@ -420,6 +425,7 @@ fn view_hints() -> Vec<Hint> {
         Hint::new(Action::ToggleZen, "Z", t(Key::HintZen)),
         Hint::new(Action::ToggleLightTheme, "L", t(Key::HintLight)),
         Hint::new(Action::ToggleWhitepaper, "W", t(Key::HintWhitepaper)),
+        Hint::new(Action::OpenThemePicker, "T", t(Key::HintTheme)),
     ]
 }
 

@@ -17,6 +17,7 @@ mod render;
 mod switcher;
 mod tabs;
 mod theme;
+mod theme_picker;
 
 use typebar_core::document::{Document, Mode};
 use typebar_core::markdown::InlineKind;
@@ -27,6 +28,7 @@ use overlay::Overlay;
 use palette::{Palette, PaletteOutcome};
 use switcher::{Switcher, SwitcherOutcome};
 use theme::Theme;
+use theme_picker::{ThemeOutcome, ThemePicker};
 
 use ratatui::crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -245,6 +247,14 @@ fn main() -> std::io::Result<()> {
     } else {
         Theme::by_name(&config.ui.theme)
     };
+    // Id del theme BASE (oscuro) con el que arranca el theme picker: si el config
+    // ya es Latte, la base oscura cae a frappe (para que el toggle claro/oscuro
+    // tenga a donde ir), asi que el id base es "frappe".
+    let base_theme_id = if configured_is_light {
+        theme::DEFAULT_THEME.to_string()
+    } else {
+        config.ui.theme.clone()
+    };
     let wysiwyg_level = config.ui.resolved_wysiwyg_level();
 
     let mut document = Document::open(&args.path)?;
@@ -270,6 +280,7 @@ fn main() -> std::io::Result<()> {
             paper: Theme::paper(),
         },
         configured_is_light,
+        base_theme_id,
         wysiwyg_level,
     );
     if config.ui.mouse {
@@ -329,6 +340,14 @@ struct AppState {
     /// Paleta de comandos (fuzzy sobre los Action) activa (None = edicion normal).
     /// Al aceptar, despacha el Action por el mismo camino que el keymap.
     palette: Option<Palette>,
+    /// Theme picker activo (None = edicion normal). Mientras vive, `run` dibuja
+    /// cada frame con el theme resaltado (preview en vivo); al aceptar, fija el
+    /// elegido como base. Tapa el editor como los otros pickers.
+    theme_picker: Option<ThemePicker>,
+    /// Id del theme BASE (oscuro) activo, para marcar el "actual" al abrir el theme
+    /// picker y para saber que persistir. Lo actualiza el picker al aceptar; los
+    /// toggles de vista (claro/papel) no lo tocan (siguen siendo capas encima).
+    theme_id: String,
     /// Mensaje transitorio en la status bar (ej "save failed: ..."): se muestra en
     /// el proximo frame y se limpia al apretar la siguiente tecla. Evita que un
     /// error de guardado tumbe el editor (writing-first: nunca perder el buffer).
@@ -353,6 +372,10 @@ impl AppState {
             overlay: None,
             switcher: None,
             palette: None,
+            theme_picker: None,
+            // Se sobreescribe en `run` con el id realmente configurado; "frappe" es
+            // el default coherente con `DEFAULT_THEME`.
+            theme_id: theme::DEFAULT_THEME.to_string(),
             flash: None,
             confirm: None,
         }
@@ -372,8 +395,9 @@ fn run(
     terminal: &mut ratatui::DefaultTerminal,
     doc: Document,
     keymap: &dyn Keymap,
-    themes: Themes,
+    mut themes: Themes,
     light_on: bool,
+    theme_id: String,
     wysiwyg_level: u8,
 ) -> std::io::Result<()> {
     // Los buffers abiertos. El editor siempre opera sobre el activo
@@ -382,18 +406,29 @@ fn run(
     let mut workspace = buffers::Workspace::new(doc);
     // Estado de vista del loop (scroll, zen, overlay, pickers, etc.) agrupado.
     let mut state = AppState::new(light_on);
+    // El theme base configurado (para el marcador "actual" del theme picker y para
+    // la persistencia del theme elegido).
+    state.theme_id = theme_id;
 
     loop {
-        // Theme activo: el modo whitepaper usa su theme monocromo (tinta sobre
-        // papel) y gana sobre todo; si no, el claro (Latte) cuando el toggle `^O L`
-        // esta on; si no, el configurado (oscuro). Se recalcula cada frame.
-        let theme = if state.whitepaper {
-            &themes.paper
+        // Theme activo (owned; `Theme` es `Copy`, asi que copiarlo es barato). Base:
+        // el modo whitepaper usa su theme monocromo (tinta sobre papel) y gana sobre
+        // todo; si no, el claro (Latte) cuando el toggle `^O L` esta on; si no, el
+        // base (oscuro). Con el theme picker abierto, el theme RESALTADO pisa la base
+        // (preview en vivo: el editor entero se ve con el theme que estas mirando).
+        // Se recalcula cada frame.
+        let base = if state.whitepaper {
+            themes.paper
         } else if state.light_on {
-            &themes.light
+            themes.light
         } else {
-            &themes.dark
+            themes.dark
         };
+        let theme = state
+            .theme_picker
+            .as_ref()
+            .and_then(|tp| tp.highlighted_theme())
+            .unwrap_or(base);
         // Barra de tabs de los buffers abiertos (solo con >=2 y con el chrome
         // visible, es decir fuera de zen y de whitepaper). `tab_line` es lo que
         // dibuja `draw`; `tab_hits` mapea columna->buffer para el click del mouse.
@@ -406,7 +441,7 @@ fn run(
                         .unwrap_or_else(|| p.to_string_lossy().into_owned())
                 })
                 .collect();
-            let (line, hits) = tabs::build(&titles, workspace.active_index(), theme);
+            let (line, hits) = tabs::build(&titles, workspace.active_index(), &theme);
             (Some(line), hits)
         } else {
             (None, Vec::new())
@@ -416,14 +451,14 @@ fn run(
                 frame,
                 workspace.active(),
                 keymap,
-                theme,
+                &theme,
                 wysiwyg_level,
                 &mut state,
                 tab_line.clone(),
             );
             // Paperwhite: si el theme activo es claro, pinta fondo/texto sobre el
             // frame ya dibujado (editor, chrome y pickers de una). No-op en oscuros.
-            apply_theme_fill(frame, theme);
+            apply_theme_fill(frame, &theme);
         })?;
 
         let ev = event::read()?;
@@ -498,6 +533,26 @@ fn run(
                     if workspace.active_index() != before {
                         state.scroll = 0; // el buffer recien enfocado arranca arriba
                     }
+                }
+            }
+            continue;
+        }
+
+        // Con el theme picker abierto, las teclas las consume el picker (tipear
+        // filtra, flechas/Ctrl-N/P navegan y PREVIEWAN en vivo, Enter fija, Esc
+        // cancela volviendo al theme que estaba). Al aceptar, el elegido pasa a ser
+        // la base oscura y se apagan los toggles claro/papel para que se vea tal
+        // cual lo elegiste.
+        if let Some(tp) = state.theme_picker.as_mut() {
+            match tp.handle_key(key) {
+                ThemeOutcome::Stay => {}
+                ThemeOutcome::Cancel => state.theme_picker = None,
+                ThemeOutcome::Accept(id) => {
+                    state.theme_picker = None;
+                    themes.dark = Theme::by_name(id);
+                    state.theme_id = id.to_string();
+                    state.light_on = false;
+                    state.whitepaper = false;
                 }
             }
             continue;
@@ -644,6 +699,18 @@ fn dispatch_action(
         // Abrir la paleta de comandos. Como `OpenPalette` se excluye del catalogo
         // de comandos, no hay forma de recursar desde la propia paleta.
         Action::OpenPalette => state.palette = Some(Palette::new(keymap)),
+        // Abrir el theme picker. El "actual" que marca es lo que se ve ahora: papel
+        // o claro si algun toggle de vista esta activo, si no la base oscura.
+        Action::OpenThemePicker => {
+            let current = if state.whitepaper {
+                "paper"
+            } else if state.light_on {
+                "latte"
+            } else {
+                state.theme_id.as_str()
+            };
+            state.theme_picker = Some(ThemePicker::new(current));
+        }
         _ => return apply_action(workspace.active_mut(), action, state.viewport_height),
     }
     Ok(false)
@@ -708,7 +775,8 @@ fn draw(
     // montan ENCIMA del editor: primero se dibuja el editor normal (queda de fondo)
     // y al final el overlay lo atenua y pinta su box centrado. Mientras haya un
     // overlay abierto el editor no debe mostrar su cursor (lo tapa el popup).
-    let overlay_active = state.palette.is_some() || state.switcher.is_some();
+    let overlay_active =
+        state.palette.is_some() || state.switcher.is_some() || state.theme_picker.is_some();
 
     // Snapshot de los flags de vista que se leen varias veces aca; evita tener
     // `&state` vivo mientras mas abajo se mutan `state.scroll`/`viewport_height`.
@@ -938,12 +1006,15 @@ fn draw(
         }
     }
 
-    // Overlays flotantes (paleta / switcher): se montan al FINAL para quedar por
-    // encima del editor ya dibujado, atenuandolo de fondo. Mutuamente excluyentes.
+    // Overlays flotantes (paleta / switcher / theme picker): se montan al FINAL
+    // para quedar por encima del editor ya dibujado, atenuandolo de fondo.
+    // Mutuamente excluyentes.
     if let Some(pal) = state.palette.as_ref() {
         pal.render(frame, theme);
     } else if let Some(sw) = state.switcher.as_ref() {
         sw.render(frame, theme);
+    } else if let Some(tp) = state.theme_picker.as_ref() {
+        tp.render(frame, theme);
     }
 }
 
@@ -1150,7 +1221,8 @@ fn apply_action(
         | Action::PrevBuffer
         | Action::CloseBuffer
         | Action::OpenSwitcher
-        | Action::OpenPalette => {}
+        | Action::OpenPalette
+        | Action::OpenThemePicker => {}
     }
     Ok(false)
 }
