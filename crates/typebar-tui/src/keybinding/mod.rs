@@ -241,6 +241,115 @@ fn workspace_ctrl_command(key: KeyEvent) -> Option<Action> {
     }
 }
 
+/// Etiqueta legible de UN `KeyEvent`, con la misma notacion que la toolbar
+/// (`^S`, `⇧→`, `Home`): prefijo de modificadores + nombre de la tecla. Reusa
+/// `key_code_label` (que ya pone las letras en mayuscula, convencion `^S`).
+pub(crate) fn key_event_label(key: &KeyEvent) -> String {
+    let mut s = String::new();
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        s.push('^');
+    }
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        s.push('⇧');
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        s.push_str("M-");
+    }
+    s.push_str(&custom::key_code_label(key.code));
+    s
+}
+
+/// Etiqueta de una SECUENCIA de teclas (un chord), separando cada tecla por un
+/// espacio: ej `^P B`, `^K F`.
+pub(crate) fn key_seq_label(keys: &[KeyEvent]) -> String {
+    keys.iter()
+        .map(key_event_label)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Teclas candidatas que el prober prueba contra `resolve` para descubrir a que
+/// accion mapea cada una. Cubre lo que los presets bindean: el ascii imprimible
+/// PLANO primero, luego Ctrl+letra, y las teclas especiales (flechas, Home/End,
+/// PgUp/Dn, Enter, Esc, Tab, Bksp, Del) planas y con Ctrl. No pretende ser
+/// exhaustivo de TODO KeyEvent posible, solo del espacio que los presets usan;
+/// alcanza para poblar los atajos de la paleta.
+///
+/// El orden importa: las teclas PLANAS van antes que las Ctrl para que la segunda
+/// tecla de un chord se etiquete sin un `^` espurio. Los chords de formato/vista
+/// (`resolve_format_second`, `resolve_view_second`) matchean la letra ignorando el
+/// modificador, asi que tanto `i` como `^I` disparan italica; probando la plana
+/// primero, el chord queda como `^P I` (no `^P ^I`). Para la PRIMERA tecla no hay
+/// ambiguedad: los comandos de un solo atajo que importan van con Ctrl (`^S`), y la
+/// plana equivalente cae en tipeo (InsertChar), que no esta en el catalogo.
+fn candidate_keys() -> Vec<KeyEvent> {
+    let mut v = Vec::new();
+    for c in 0x20u8..=0x7e {
+        v.push(KeyEvent::new(KeyCode::Char(c as char), KeyModifiers::NONE));
+    }
+    for c in b'a'..=b'z' {
+        v.push(KeyEvent::new(
+            KeyCode::Char(c as char),
+            KeyModifiers::CONTROL,
+        ));
+    }
+    let specials = [
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Enter,
+        KeyCode::Esc,
+        KeyCode::Tab,
+        KeyCode::Backspace,
+        KeyCode::Delete,
+    ];
+    for code in specials {
+        v.push(KeyEvent::new(code, KeyModifiers::NONE));
+        v.push(KeyEvent::new(code, KeyModifiers::CONTROL));
+    }
+    v
+}
+
+/// Construye el mapa `Action -> etiqueta de atajo` PROBANDO el keymap: para cada
+/// tecla candidata (y cada chord de dos teclas cuyo prefijo quede `Pending`)
+/// pregunta `resolve` y anota que accion dispara. Asi el atajo sale del binding
+/// REAL y activo (refleja el preset y los remapeos del usuario), no de lo que este
+/// advertido en la toolbar; por eso la paleta puede mostrar el atajo de comandos
+/// que no viven en la barra (ir a archivo, undo, copiar/pegar, formato...). La
+/// PRIMERA ocurrencia gana, y como se prueban primero los Ctrl+letra, Guardar sale
+/// como `^S` y no como una tecla equivalente menos canonica.
+pub(crate) fn shortcut_map(keymap: &dyn Keymap) -> Vec<(Action, String)> {
+    // Anota `(action, label)` solo si la accion no estaba ya (la primera gana).
+    fn record(map: &mut Vec<(Action, String)>, action: Action, label: String) {
+        if !map.iter().any(|(a, _)| *a == action) {
+            map.push((action, label));
+        }
+    }
+    let cands = candidate_keys();
+    let mut map: Vec<(Action, String)> = Vec::new();
+    for mode in [Mode::Normal, Mode::Insert, Mode::Visual] {
+        for first in &cands {
+            match keymap.resolve(mode, std::slice::from_ref(first)) {
+                Resolve::Action(action) => record(&mut map, action, key_event_label(first)),
+                Resolve::Pending => {
+                    for second in &cands {
+                        if let Resolve::Action(action) = keymap.resolve(mode, &[*first, *second]) {
+                            record(&mut map, action, key_seq_label(&[*first, *second]));
+                        }
+                    }
+                }
+                Resolve::None => {}
+            }
+        }
+    }
+    map
+}
+
 /// Devuelve true si `key` es el prefijo de formato `Ctrl-P`. El chord `Ctrl-P`
 /// seguido de una letra (`b`/`i`/`c`) togglea negrita/italica/codigo, uniforme
 /// en los tres presets.

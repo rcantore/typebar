@@ -117,6 +117,18 @@ pub enum Key {
     HintPalette,
     /// Prompt del box de la paleta de comandos ("comando:" / "command:").
     PalettePrompt,
+    /// Footer de ayuda al pie de los pickers flotantes (paleta y switcher): las
+    /// teclas de navegacion, comunes a ambos ("↑↓ mover · Enter elegir · Esc
+    /// cerrar").
+    PickerHints,
+    /// Headers de las secciones de la paleta (con query vacia, los comandos se
+    /// agrupan por categoria). Se muestran en MAYUSCULA y tenues.
+    SectionFile,
+    SectionEdit,
+    SectionFormat,
+    SectionView,
+    SectionNav,
+    SectionMode,
 
     // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
     ModeNormal,
@@ -234,6 +246,20 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintPalette) => "Commands…",
         (Locale::Es, Key::PalettePrompt) => "comando:",
         (Locale::En, Key::PalettePrompt) => "command:",
+        (Locale::Es, Key::PickerHints) => "↑↓ mover · Enter elegir · Esc cerrar",
+        (Locale::En, Key::PickerHints) => "↑↓ move · Enter select · Esc close",
+        (Locale::Es, Key::SectionFile) => "archivo",
+        (Locale::En, Key::SectionFile) => "file",
+        (Locale::Es, Key::SectionEdit) => "edicion",
+        (Locale::En, Key::SectionEdit) => "edit",
+        (Locale::Es, Key::SectionFormat) => "formato",
+        (Locale::En, Key::SectionFormat) => "format",
+        (Locale::Es, Key::SectionView) => "vista",
+        (Locale::En, Key::SectionView) => "view",
+        (Locale::Es, Key::SectionNav) => "navegacion",
+        (Locale::En, Key::SectionNav) => "navigation",
+        (Locale::Es, Key::SectionMode) => "modo",
+        (Locale::En, Key::SectionMode) => "mode",
 
         // --- Status bar (nombres de modo) ---------------------------------
         (Locale::Es, Key::ModeNormal) => "NORMAL",

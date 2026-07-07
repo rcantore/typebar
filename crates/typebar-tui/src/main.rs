@@ -704,16 +704,11 @@ fn draw(
     state: &mut AppState,
     tabs: Option<Line<'static>>,
 ) {
-    // La paleta y el switcher (mutuamente excluyentes) tapan todo: cada uno se
-    // dibuja via su modulo y corta el draw. El render vive en el modulo respectivo.
-    if let Some(pal) = state.palette.as_ref() {
-        pal.render(frame, theme);
-        return;
-    }
-    if let Some(sw) = state.switcher.as_ref() {
-        sw.render(frame, theme);
-        return;
-    }
+    // La paleta y el switcher (mutuamente excluyentes) son popups flotantes que se
+    // montan ENCIMA del editor: primero se dibuja el editor normal (queda de fondo)
+    // y al final el overlay lo atenua y pinta su box centrado. Mientras haya un
+    // overlay abierto el editor no debe mostrar su cursor (lo tapa el popup).
+    let overlay_active = state.palette.is_some() || state.switcher.is_some();
 
     // Snapshot de los flags de vista que se leen varias veces aca; evita tener
     // `&state` vivo mientras mas abajo se mutan `state.scroll`/`viewport_height`.
@@ -909,8 +904,9 @@ fn draw(
     // Cursor: sumando el margen (`border` es 0 con el chrome minimal, pero se deja
     // en la formula por uniformidad) mas `pad_left`/`pad_top`, y restando scroll. La
     // X es la columna *visual* (celdas), no el indice de char: asi cae sobre el glifo
-    // que dibujo el render aunque haya CJK/emoji de doble ancho.
-    if doc.line >= scroll {
+    // que dibujo el render aunque haya CJK/emoji de doble ancho. Con un overlay
+    // abierto no se dibuja cursor de editor: lo tapa el popup y ratatui lo oculta.
+    if !overlay_active && doc.line >= scroll {
         // Si el cursor esta sobre una linea de bloque de codigo, el render le
         // aplico un margen izquierdo (`CODE_BOX_LEFT_PAD`) que corre el texto a
         // la derecha; sumamos lo mismo para que el cursor caiga sobre el glifo.
@@ -940,6 +936,14 @@ fn draw(
         } else {
             frame.set_cursor_position(Position::new(cursor_x, cursor_y));
         }
+    }
+
+    // Overlays flotantes (paleta / switcher): se montan al FINAL para quedar por
+    // encima del editor ya dibujado, atenuandolo de fondo. Mutuamente excluyentes.
+    if let Some(pal) = state.palette.as_ref() {
+        pal.render(frame, theme);
+    } else if let Some(sw) = state.switcher.as_ref() {
+        sw.render(frame, theme);
     }
 }
 
@@ -1176,7 +1180,9 @@ mod tests {
         let doc = doc_with("hola mundo");
         let km = StandardKeymap;
         let theme = Theme::frappe();
-        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        // 60x24: alto realista de terminal, con lugar para el chrome del popup
+        // (borde + padding + prompt + footer) y varias filas de resultados.
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
         let mut state = AppState::new(false);
         state.zen = zen;
         state.switcher = switcher;
@@ -1332,9 +1338,10 @@ mod tests {
     }
 
     #[test]
-    fn draw_switcher_tapa_el_editor_y_muestra_prompt_y_candidatos() {
-        // Con el switcher abierto: se ve el prompt (locale En por default) y los
-        // candidatos, y NO el texto del editor de fondo.
+    fn draw_switcher_monta_popup_sobre_el_editor_atenuado() {
+        // Con el switcher abierto: se ve el prompt (locale En por default), los
+        // candidatos, el borde redondeado del box y el footer de atajos. El editor
+        // de fondo NO se borra: queda visible (atenuado) detras del popup.
         let sw = Switcher::new(
             vec![
                 std::path::PathBuf::from("src/main.rs"),
@@ -1349,24 +1356,66 @@ mod tests {
         );
         assert!(screen.contains("main.rs"), "falta un candidato");
         assert!(screen.contains("README.md"), "falta un candidato");
+        assert!(screen.contains('╭'), "falta el borde redondeado del box");
+        assert!(screen.contains("Esc"), "falta el footer de atajos");
         assert!(
-            !screen.contains("hola mundo"),
-            "el editor de fondo no deberia verse con el switcher abierto"
+            screen.contains("hola mundo"),
+            "el documento de fondo deberia seguir visible (atenuado) detras del popup"
         );
     }
 
     #[test]
-    fn draw_palette_tapa_el_editor_y_muestra_prompt_y_comandos() {
-        // Con la paleta abierta: se ve el prompt (locale En por default) y algun
-        // comando, y NO el texto del editor de fondo.
+    fn draw_palette_monta_popup_sobre_el_editor_atenuado() {
+        // Con la paleta abierta: se ve el prompt (locale En por default), algun
+        // comando, el borde redondeado y el footer. El editor de fondo NO se borra:
+        // queda visible (atenuado) detras del popup.
         let km = keybinding::StandardKeymap;
         let pal = Palette::new(&km);
         let screen = render_to_string(false, None, Some(pal));
         assert!(screen.contains("command:"), "falta el prompt de la paleta");
         assert!(screen.contains("Save"), "falta algun comando");
+        assert!(screen.contains('╭'), "falta el borde redondeado del box");
+        assert!(screen.contains("Esc"), "falta el footer de atajos");
         assert!(
-            !screen.contains("hola mundo"),
-            "el editor de fondo no deberia verse con la paleta abierta"
+            screen.contains("hola mundo"),
+            "el documento de fondo deberia seguir visible (atenuado) detras del popup"
+        );
+    }
+
+    #[test]
+    fn draw_overlay_atenua_el_fondo_pero_no_el_popup() {
+        // El punto clave del pulido: el editor detras del popup queda ATENUADO
+        // (Modifier::DIM), no borrado. La 'h' de "hola mundo" (fila 1, col 2, fuera
+        // del popup centrado) debe llevar DIM; una celda de adentro del box, no.
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let doc = doc_with("hola mundo");
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        let mut state = AppState::new(false);
+        state.palette = Some(Palette::new(&km));
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        // 'h' del documento, fuera del popup (que arranca en x=9, y=2): atenuada.
+        let h = &buf[(2, 1)];
+        assert_eq!(
+            h.symbol(),
+            "h",
+            "deberia verse la 'h' del documento de fondo"
+        );
+        assert!(
+            h.modifier.contains(Modifier::DIM),
+            "el documento de fondo deberia quedar atenuado"
+        );
+        // Centro del popup (col 30, fila 6): dentro del box, sin DIM (nitido).
+        assert!(
+            !buf[(30, 6)].modifier.contains(Modifier::DIM),
+            "el interior del popup no deberia estar atenuado"
         );
     }
 

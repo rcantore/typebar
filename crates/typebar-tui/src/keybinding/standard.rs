@@ -115,13 +115,17 @@ impl Keymap for StandardKeymap {
 
     fn hints(&self, _mode: Mode) -> Vec<Hint> {
         use typebar_core::i18n::{Key, t};
-        // Toolbar "lean": solo lo esencial mas los dos submenus. El resto de los
-        // comandos (nuevo, ir a archivo, undo, copiar/pegar, reemplazar, negrita)
-        // se descubre por la paleta (`^A`) y por sus teclas; antes la barra se
-        // desbordaba y cortaba el Quit. La negrita vive bajo Formato (`^P`).
+        // Toolbar "lean": lo esencial mas "ir a archivo" (`^E`, tan de uso diario
+        // que gana su lugar) y los dos submenus. El resto (nuevo, undo, copiar/
+        // pegar, reemplazar, negrita) se descubre por la paleta (`^A`) y por sus
+        // teclas. Tener `^E` aca ademas hace que la paleta muestre su atajo (lo
+        // resuelve por reverse-lookup contra estos hints). La negrita vive bajo
+        // Formato (`^P`). Nota de ancho: son 7 botones (~89 columnas); en terminales
+        // mas angostas que eso el ultimo (Salir) se recorta.
         vec![
             Hint::new(Action::Save, "^S", t(Key::HintSave)),
             Hint::new(Action::OpenPalette, "^A", t(Key::HintPalette)),
+            Hint::new(Action::OpenSwitcher, "^E", t(Key::HintSwitcher)),
             Hint::new(Action::Search, "^F", t(Key::HintSearch)),
             // Prefijos de chord de formato y vista: avisan que `^P`/`^O` abren un
             // submenu. No son acciones: no se remapean.

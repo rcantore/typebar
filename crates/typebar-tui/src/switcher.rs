@@ -4,11 +4,12 @@
 //! `run` lo maneja y, al aceptar, abre el path elegido en el `Workspace`.
 
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -16,6 +17,117 @@ use std::path::PathBuf;
 use crate::theme::Theme;
 use typebar_core::fuzzy;
 use typebar_core::i18n;
+
+/// Padding interno del box: aire entre el borde y el contenido. Es el detalle que
+/// separa un popup "apretado" (texto pegado al borde) de uno que respira, como en
+/// editxr. `X` a los lados, `Y` arriba/abajo.
+pub(crate) const PICKER_PAD_X: u16 = 2;
+pub(crate) const PICKER_PAD_Y: u16 = 1;
+/// Filas de "chrome" del contenido (fuera de los resultados): prompt + linea en
+/// blanco + linea en blanco + footer de atajos. Se usa para calcular el alto del
+/// box y para saber cuantas filas quedan para resultados.
+pub(crate) const PICKER_CHROME_ROWS: u16 = 4;
+
+/// Geometria del popup del picker. Dado el `area` total y cuantos resultados hay,
+/// devuelve `(rect centrado, ancho util del contenido, filas de resultados a
+/// mostrar)`. El box se AJUSTA al contenido (como editxr): su alto es el de las
+/// filas visibles + chrome + padding + borde, con tope ~80% de la pantalla. Con
+/// pocos resultados el box queda chico y elegante; con muchos, scrollea dentro del
+/// tope. El ancho es ~70%, acotado a un minimo usable y al ancho disponible.
+pub(crate) fn picker_popup(area: Rect, result_count: usize) -> (Rect, usize, usize) {
+    let w = (area.width * 7 / 10).clamp(40.min(area.width), area.width);
+    // Overhead vertical fijo: borde (2) + padding (2*PAD_Y) + chrome (prompt/
+    // blanks/footer). Lo que sobre del box es para resultados.
+    let overhead = 2 + 2 * PICKER_PAD_Y + PICKER_CHROME_ROWS;
+    // El box no pasa del ~80% del alto; dentro de eso caben tantos resultados como
+    // permita el overhead (al menos 1, para el "(sin resultados)").
+    let max_h = (area.height * 8 / 10).max(overhead + 1);
+    let cap = max_h.saturating_sub(overhead).max(1) as usize;
+    let shown = result_count.clamp(1, cap);
+    let h = (shown as u16 + overhead).min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    };
+    let inner_width = w.saturating_sub(2 + 2 * PICKER_PAD_X) as usize;
+    (popup, inner_width, shown)
+}
+
+/// Box comun de los pickers flotantes (paleta y switcher): borde redondeado con el
+/// color de acento del theme y padding interno. Sin titulo ni footer en el borde:
+/// el prompt y los atajos van como filas de contenido (ver `picker_content`), asi
+/// el borde queda limpio. El acento reusa `heading_2` (el mismo azul/cian que ya
+/// resalta el match del fuzzy), asi borde y resaltado leen como una sola
+/// identidad; en los themes monocromos (papel) cae al color de tinta y el borde
+/// queda sobrio, sin acento fuera de lugar.
+pub(crate) fn picker_block(theme: &Theme) -> Block<'static> {
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.heading_2))
+        .padding(Padding::new(
+            PICKER_PAD_X,
+            PICKER_PAD_X,
+            PICKER_PAD_Y,
+            PICKER_PAD_Y,
+        ))
+}
+
+/// Fila de prompt del picker: la etiqueta en acento, lo tipeado en normal con un
+/// cursor `_`, y el conteo de resultados atenuado a la derecha. La comparten los
+/// dos pickers para que el encabezado se vea igual (solo cambia el `label`).
+pub(crate) fn picker_prompt(
+    theme: &Theme,
+    label: &str,
+    query: &str,
+    count: usize,
+) -> Line<'static> {
+    let accent = Style::default()
+        .fg(theme.heading_2)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    Line::from(vec![
+        Span::styled(format!("{label} "), accent),
+        Span::raw(query.to_string()),
+        Span::styled("_", dim),
+        Span::styled(format!("   ({count})"), dim),
+    ])
+}
+
+/// Ensambla el contenido del box a partir del `prompt` (ya estilado) y las `rows`
+/// de resultados: prompt · blank · resultados · blank · footer de atajos (tenue).
+/// Lo comparten paleta y switcher para tener el mismo ritmo vertical. El caller
+/// dimensiona `rows` para que el total llene el box (footer al pie).
+pub(crate) fn picker_content(
+    prompt: Line<'static>,
+    mut rows: Vec<Line<'static>>,
+) -> Vec<Line<'static>> {
+    let hint = Line::from(Span::styled(
+        i18n::t(i18n::Key::PickerHints).to_string(),
+        Style::default().add_modifier(Modifier::DIM),
+    ));
+    let mut out = Vec::with_capacity(rows.len() + 3);
+    out.push(prompt);
+    out.push(Line::from(""));
+    out.append(&mut rows);
+    out.push(Line::from(""));
+    out.push(hint);
+    out
+}
+
+/// Atenua (DIM) todas las celdas de `area` YA dibujadas en `buf`. Lo usan los
+/// pickers para dejar el documento visible pero apagado detras de su popup, en
+/// vez de borrarlo a negro con `Clear`. `set_style` con solo `add_modifier`
+/// mergea: agrega el DIM sin tocar el fg/bg ni el simbolo de cada celda.
+pub(crate) fn dim_area(buf: &mut Buffer, area: Rect) {
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            buf[(x, y)].set_style(dim);
+        }
+    }
+}
 
 /// Ventana de scroll de un picker: el rango `[start, end)` de filas a dibujar
 /// para que el item `selected` siempre entre dentro de `max_rows`, dado un total
@@ -267,44 +379,40 @@ impl Switcher {
         lines
     }
 
-    /// Dibuja el switcher como un popup CENTRADO flotante: limpia toda la pantalla
-    /// (afuera del box queda en blanco) y pinta un box con borde en el centro, con
-    /// el prompt + lo tipeado (con `_` de cursor) + el conteo en el titulo y la
-    /// lista rankeada adentro. Al no setear cursor, ratatui lo oculta; el `_` del
-    /// prompt marca donde se tipea.
+    /// Dibuja el switcher como un popup CENTRADO flotante montado SOBRE el editor
+    /// ya dibujado: atenua (DIM) todo el fondo para que el documento se vea apagado
+    /// detras, y pinta en el centro un box con borde redondeado (acento del theme)
+    /// con el prompt + lo tipeado (con `_` de cursor) + el conteo en el titulo, la
+    /// lista rankeada adentro y un footer de atajos al pie. Al no setear cursor,
+    /// ratatui lo oculta; el `_` del prompt marca donde se tipea.
     pub fn render(&self, frame: &mut Frame, theme: &Theme) {
         let area = frame.area();
-        // Popup centrado: ~70% del ancho/alto, acotado a la terminal (y a un minimo
-        // usable). En pantallas chicas cae al tamano disponible.
-        let w = (area.width * 7 / 10).clamp(40.min(area.width), area.width);
-        let h = (area.height * 7 / 10).clamp(3.min(area.height), area.height);
-        let popup = Rect {
-            x: area.x + (area.width - w) / 2,
-            y: area.y + (area.height - h) / 2,
-            width: w,
-            height: h,
-        };
-
-        let prompt = i18n::t(i18n::Key::SwitcherPrompt);
-        let title = format!(" {prompt} {}_   ({}) ", self.query(), self.result_count());
-        let block = Block::bordered().title(title);
-        // Alto/ancho utiles dentro del borde del box (restan 2: ambos lados).
-        let rows = popup.height.saturating_sub(2) as usize;
-        let inner_width = popup.width.saturating_sub(2) as usize;
-        // Sin matches: una linea atenuada en vez de un box vacio.
-        let lines = if self.result_count() == 0 {
+        // Geometria compartida: el box se ajusta al contenido (ancho ~70%, alto
+        // segun cuantos resultados entren), centrado.
+        let (popup, inner_width, shown) = picker_popup(area, self.result_count());
+        // Filas de resultados (exactamente `shown`): sin matches, una linea tenue.
+        let rows = if self.result_count() == 0 {
             vec![Line::from(Span::styled(
                 i18n::t(i18n::Key::SwitcherEmpty).to_string(),
                 Style::default().add_modifier(Modifier::DIM),
             ))]
         } else {
-            // Ancho real del box (no el del contenido) para que la barra de
-            // seleccion llegue al borde derecho.
-            self.result_lines_padded(theme, rows, inner_width)
+            // `inner_width` es el ancho util (descontando borde y padding), para
+            // que la barra de seleccion llegue justo al borde interno.
+            self.result_lines_padded(theme, shown, inner_width)
         };
-        // `Clear` borra TODA la pantalla (el editor de fondo); despues el box.
-        frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new(lines).block(block), popup);
+        let prompt = picker_prompt(
+            theme,
+            i18n::t(i18n::Key::SwitcherPrompt),
+            self.query(),
+            self.result_count(),
+        );
+        let content = picker_content(prompt, rows);
+        // Atenuar el editor de fondo (ya dibujado) en vez de borrarlo; despues
+        // limpiar SOLO el rect del popup para que el box quede nitido encima.
+        dim_area(frame.buffer_mut(), area);
+        frame.render_widget(Clear, popup);
+        frame.render_widget(Paragraph::new(content).block(picker_block(theme)), popup);
     }
 }
 
@@ -488,6 +596,47 @@ mod tests {
         // Sin filas o sin resultados, rango vacio.
         assert_eq!(scroll_window(0, 0, 5), 0..0);
         assert_eq!(scroll_window(3, 10, 0), 0..0);
+    }
+
+    #[test]
+    fn dim_area_atenua_sin_borrar_el_contenido() {
+        // `dim_area` agrega DIM a cada celda del area PERO no borra: el simbolo
+        // (el editor de fondo ya dibujado) sigue ahi, solo apagado. Asi el popup
+        // deja ver el documento atenuado en vez de un fondo negro.
+        let area = Rect::new(0, 0, 3, 2);
+        let mut buf = Buffer::empty(area);
+        buf[(1, 1)].set_symbol("x");
+        dim_area(&mut buf, area);
+        for y in 0..2 {
+            for x in 0..3 {
+                assert!(
+                    buf[(x, y)].modifier.contains(Modifier::DIM),
+                    "toda celda del area deberia quedar atenuada"
+                );
+            }
+        }
+        assert_eq!(buf[(1, 1)].symbol(), "x", "no deberia borrar el contenido");
+    }
+
+    #[test]
+    fn picker_block_borde_redondeado_con_acento() {
+        // El box de los pickers usa borde REDONDEADO (esquina `╭`) y lo pinta con
+        // el color de acento del theme (heading_2), no el fg plano.
+        use ratatui::widgets::Widget;
+        let theme = Theme::frappe();
+        let area = Rect::new(0, 0, 12, 3);
+        let mut buf = Buffer::empty(area);
+        picker_block(&theme).render(area, &mut buf);
+        assert_eq!(
+            buf[(0, 0)].symbol(),
+            "╭",
+            "la esquina deberia ser redondeada"
+        );
+        assert_eq!(
+            buf[(0, 0)].style().fg,
+            Some(theme.heading_2),
+            "el borde deberia llevar el color de acento"
+        );
     }
 
     #[test]
