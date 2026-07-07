@@ -167,7 +167,7 @@ fn render_one_key(spec: &KeySpec) -> String {
 
 /// Nombre corto de un `KeyCode` para la barra de atajos. Las letras bajo Ctrl se
 /// muestran en mayuscula (convencion `^S`).
-fn key_code_label(code: KeyCode) -> String {
+pub(crate) fn key_code_label(code: KeyCode) -> String {
     match code {
         KeyCode::Char(c) => c.to_ascii_uppercase().to_string(),
         KeyCode::Left => "←".to_string(),
@@ -339,6 +339,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "close-buffer" => Action::CloseBuffer,
         "open-switcher" => Action::OpenSwitcher,
         "open-palette" => Action::OpenPalette,
+        "open-theme-picker" => Action::OpenThemePicker,
         other => return Err(format!("accion desconocida: {other:?}")),
     };
     Ok(action)

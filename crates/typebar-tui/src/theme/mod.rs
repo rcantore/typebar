@@ -144,17 +144,132 @@ impl Theme {
         }
     }
 
+    /// Dracula: uno de los themes oscuros mas populares. A diferencia de los
+    /// Catppuccin oscuros (transparentes), los themes "de marca" que se suman aca
+    /// (Dracula, Tokyo Night, Nord, Gruvbox, Solarized) SI pintan su fondo
+    /// caracteristico: su identidad es justamente su paleta completa, y el theme
+    /// picker se luce mostrando cada uno "de verdad". `apply_theme_fill` los pinta
+    /// (fondo + texto) igual que a los claros.
+    pub fn dracula() -> Self {
+        Theme {
+            heading_1: Color::Rgb(0xbd, 0x93, 0xf9),         // purple
+            heading_2: Color::Rgb(0x8b, 0xe9, 0xfd),         // cyan (acento)
+            heading_n: Color::Rgb(0x50, 0xfa, 0x7b),         // green
+            code_fg: Color::Rgb(0xff, 0x55, 0x55),           // red
+            code_bg: Color::Rgb(0x44, 0x47, 0x5a),           // current line
+            marker: Color::Rgb(0x62, 0x72, 0xa4),            // comment
+            selection_bg: Color::Rgb(0x44, 0x47, 0x5a),      // current line
+            search_match_bg: Color::Rgb(0x72, 0x6c, 0x3f),   // yellow apagado (match)
+            search_current_bg: Color::Rgb(0xf1, 0xfa, 0x8c), // yellow vivo (actual)
+            toolbar_button_bg: Color::Rgb(0x44, 0x47, 0x5a), // current line (surface)
+            background: Some(Color::Rgb(0x28, 0x2a, 0x36)),  // bg
+            text: Some(Color::Rgb(0xf8, 0xf8, 0xf2)),        // foreground
+        }
+    }
+
+    /// Tokyo Night: theme oscuro azulado muy popular (variante "night").
+    pub fn tokyo_night() -> Self {
+        Theme {
+            heading_1: Color::Rgb(0xbb, 0x9a, 0xf7),         // magenta
+            heading_2: Color::Rgb(0x7d, 0xcf, 0xff),         // cyan (acento)
+            heading_n: Color::Rgb(0x9e, 0xce, 0x6a),         // green
+            code_fg: Color::Rgb(0xf7, 0x76, 0x8e),           // red
+            code_bg: Color::Rgb(0x29, 0x2e, 0x42),           // bg highlight
+            marker: Color::Rgb(0x56, 0x5f, 0x89),            // comment
+            selection_bg: Color::Rgb(0x33, 0x46, 0x7c),      // selection
+            search_match_bg: Color::Rgb(0x6b, 0x5a, 0x34),   // yellow apagado
+            search_current_bg: Color::Rgb(0xe0, 0xaf, 0x68), // yellow vivo
+            toolbar_button_bg: Color::Rgb(0x29, 0x2e, 0x42), // surface
+            background: Some(Color::Rgb(0x1a, 0x1b, 0x26)),  // bg
+            text: Some(Color::Rgb(0xc0, 0xca, 0xf5)),        // fg
+        }
+    }
+
+    /// Nord: theme oscuro frio (polar night + frost + aurora), muy usado.
+    pub fn nord() -> Self {
+        Theme {
+            heading_1: Color::Rgb(0xb4, 0x8e, 0xad), // aurora purple (nord15)
+            heading_2: Color::Rgb(0x88, 0xc0, 0xd0), // frost (nord8, acento)
+            heading_n: Color::Rgb(0xa3, 0xbe, 0x8c), // aurora green (nord14)
+            code_fg: Color::Rgb(0xbf, 0x61, 0x6a),   // aurora red (nord11)
+            code_bg: Color::Rgb(0x3b, 0x42, 0x52),   // polar night (nord1)
+            marker: Color::Rgb(0x4c, 0x56, 0x6a),    // polar night (nord3)
+            selection_bg: Color::Rgb(0x43, 0x4c, 0x5e), // polar night (nord2)
+            search_match_bg: Color::Rgb(0x7d, 0x6f, 0x4a), // yellow apagado
+            search_current_bg: Color::Rgb(0xeb, 0xcb, 0x8b), // aurora yellow (nord13)
+            toolbar_button_bg: Color::Rgb(0x43, 0x4c, 0x5e), // polar night (nord2)
+            background: Some(Color::Rgb(0x2e, 0x34, 0x40)), // polar night (nord0)
+            text: Some(Color::Rgb(0xd8, 0xde, 0xe9)), // snow storm (nord4)
+        }
+    }
+
+    /// Gruvbox (variante oscura): calido, alto contraste, retro. Muy popular.
+    pub fn gruvbox() -> Self {
+        Theme {
+            heading_1: Color::Rgb(0xd3, 0x86, 0x9b),         // purple
+            heading_2: Color::Rgb(0x83, 0xa5, 0x98),         // blue (acento)
+            heading_n: Color::Rgb(0xb8, 0xbb, 0x26),         // green
+            code_fg: Color::Rgb(0xfb, 0x49, 0x34),           // red
+            code_bg: Color::Rgb(0x3c, 0x38, 0x36),           // bg1
+            marker: Color::Rgb(0x92, 0x83, 0x74),            // gray
+            selection_bg: Color::Rgb(0x50, 0x49, 0x45),      // bg2
+            search_match_bg: Color::Rgb(0x7c, 0x6f, 0x1a),   // yellow apagado
+            search_current_bg: Color::Rgb(0xfa, 0xbd, 0x2f), // yellow vivo
+            toolbar_button_bg: Color::Rgb(0x50, 0x49, 0x45), // bg2
+            background: Some(Color::Rgb(0x28, 0x28, 0x28)),  // bg0
+            text: Some(Color::Rgb(0xeb, 0xdb, 0xb2)),        // fg
+        }
+    }
+
+    /// Solarized (variante oscura): la paleta clasica de Ethan Schoonover.
+    pub fn solarized() -> Self {
+        Theme {
+            heading_1: Color::Rgb(0x6c, 0x71, 0xc4),         // violet
+            heading_2: Color::Rgb(0x26, 0x8b, 0xd2),         // blue (acento)
+            heading_n: Color::Rgb(0x85, 0x99, 0x00),         // green
+            code_fg: Color::Rgb(0xdc, 0x32, 0x2f),           // red
+            code_bg: Color::Rgb(0x07, 0x36, 0x42),           // base02
+            marker: Color::Rgb(0x58, 0x6e, 0x75),            // base01
+            selection_bg: Color::Rgb(0x0d, 0x4a, 0x57),      // base02 algo mas claro (resalte)
+            search_match_bg: Color::Rgb(0x7a, 0x5f, 0x1a),   // yellow apagado
+            search_current_bg: Color::Rgb(0xb5, 0x89, 0x00), // yellow vivo
+            toolbar_button_bg: Color::Rgb(0x07, 0x36, 0x42), // base02
+            background: Some(Color::Rgb(0x00, 0x2b, 0x36)),  // base03
+            text: Some(Color::Rgb(0x83, 0x94, 0x96)),        // base0
+        }
+    }
+
     /// Resuelve un theme built-in por nombre. Cae a `frappe` ante un nombre
     /// desconocido: el config nunca debe poder romper el arranque del editor.
     pub fn by_name(name: &str) -> Theme {
         match name {
             "mocha" => Theme::mocha(),
             "latte" => Theme::latte(),
+            "dracula" => Theme::dracula(),
+            "tokyo-night" | "tokyonight" => Theme::tokyo_night(),
+            "nord" => Theme::nord(),
+            "gruvbox" => Theme::gruvbox(),
+            "solarized" => Theme::solarized(),
             // `frappe` y cualquier otro nombre (incluido invalido) -> default.
             _ => Theme::frappe(),
         }
     }
 }
+
+/// Catalogo de themes que ofrece el theme picker en runtime, como `(id, nombre
+/// visible)`. El `id` es el que entiende `by_name` y el que se persiste en el
+/// config `[ui] theme`. Excluye `paper` a proposito: no es un theme suelto sino el
+/// theme del MODO whitepaper (`^O W`), que orquesta ademas zen + columna centrada.
+pub const PICKER_THEMES: &[(&str, &str)] = &[
+    ("frappe", "Frappé"),
+    ("mocha", "Mocha"),
+    ("latte", "Latte"),
+    ("dracula", "Dracula"),
+    ("tokyo-night", "Tokyo Night"),
+    ("nord", "Nord"),
+    ("gruvbox", "Gruvbox"),
+    ("solarized", "Solarized"),
+];
 
 /// El default del `Theme` es `frappe`, coherente con `DEFAULT_THEME`.
 impl Default for Theme {
@@ -223,6 +338,48 @@ mod tests {
         assert!(p.background.is_some(), "el papel deberia pintar fondo");
         // Y los markers NO son tinta plena: quedan mas tenues que el cuerpo.
         assert_ne!(p.marker, ink, "los markers deberian quedar atenuados");
+    }
+
+    #[test]
+    fn by_name_resuelve_los_themes_de_marca() {
+        // Los themes populares que suma la card 237 resuelven por su id, difieren
+        // del default y pintan su fondo (son opacos, a diferencia de los Catppuccin
+        // oscuros que dejan pasar el fondo del terminal).
+        for (id, ctor) in [
+            ("dracula", Theme::dracula as fn() -> Theme),
+            ("tokyo-night", Theme::tokyo_night),
+            ("nord", Theme::nord),
+            ("gruvbox", Theme::gruvbox),
+            ("solarized", Theme::solarized),
+        ] {
+            assert_eq!(Theme::by_name(id), ctor(), "by_name({id}) deberia matchear");
+            assert_ne!(ctor(), Theme::frappe(), "{id} deberia diferir del default");
+            assert!(ctor().background.is_some(), "{id} deberia pintar fondo");
+            assert!(ctor().text.is_some(), "{id} deberia pintar texto");
+        }
+        // Alias sin guion.
+        assert_eq!(Theme::by_name("tokyonight"), Theme::tokyo_night());
+    }
+
+    #[test]
+    fn picker_themes_todos_resuelven() {
+        // Todo id del catalogo del picker tiene que resolver a un theme built-in
+        // real (no caer al fallback por un id mal escrito) y no repetirse.
+        use std::collections::HashSet;
+        let mut ids = HashSet::new();
+        for (id, display) in PICKER_THEMES {
+            assert!(ids.insert(*id), "id repetido en PICKER_THEMES: {id}");
+            assert!(!display.is_empty(), "{id} sin nombre visible");
+            // frappe es el fallback; para el resto, un id que cae a frappe estaria
+            // mal escrito. frappe se testea con su propio id.
+            if *id != "frappe" {
+                assert_ne!(
+                    Theme::by_name(id),
+                    Theme::frappe(),
+                    "el id '{id}' del picker cae al fallback: no resuelve"
+                );
+            }
+        }
     }
 
     #[test]

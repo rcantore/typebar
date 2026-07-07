@@ -174,6 +174,98 @@ pub fn is_known_preset(name: &str) -> bool {
     keymap_from_name(name).name() == name
 }
 
+/// Persiste el theme elegido en el theme picker en el config del usuario,
+/// editando SOLO la clave `[ui] theme` y dejando el resto del archivo intacto
+/// (keybindings, comentarios, formato, otras claves). Crea el archivo (y su dir)
+/// si no existe. Best-effort: devuelve `Err` si no hay dir de config o falla el
+/// IO (permisos), y el caller lo muestra en el flash sin romper nada.
+pub fn persist_theme(id: &str) -> std::io::Result<PathBuf> {
+    let path = config_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no hay directorio de config conocido",
+        )
+    })?;
+    persist_theme_to(&path, id)?;
+    Ok(path)
+}
+
+/// Nucleo de `persist_theme` parametrizado por `path` (asi se testea el ciclo
+/// read-modify-write completo sin tocar el config real del usuario). Lee el
+/// archivo (o arranca de vacio si no existe), le fija el theme y lo reescribe,
+/// creando el directorio padre si hace falta.
+fn persist_theme_to(path: &Path, id: &str) -> std::io::Result<()> {
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let updated = set_ui_theme(&existing, id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, updated)
+}
+
+/// Devuelve el contenido TOML de `raw` con `theme = "<id>"` bajo la seccion
+/// `[ui]`, tocando lo MINIMO: si la clave ya existe en `[ui]` reemplaza su valor;
+/// si existe la seccion `[ui]` pero no la clave, la inserta tras el header; si no
+/// hay `[ui]`, la agrega al final. El resto del archivo (otras secciones,
+/// comentarios, formato) queda igual. Trabaja por lineas para no depender de un
+/// editor TOML format-preserving.
+fn set_ui_theme(raw: &str, id: &str) -> String {
+    let new_line = format!("theme = \"{id}\"");
+    let mut out: Vec<String> = Vec::new();
+    let mut in_ui = false;
+    let mut ui_header_idx: Option<usize> = None;
+    let mut replaced = false;
+
+    for line in raw.lines() {
+        let trimmed = line.trim_start();
+        // Header de seccion: `[algo]` (no `[[algo]]`, que es array-of-tables).
+        if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
+            in_ui = trimmed.trim_end() == "[ui]";
+            if in_ui {
+                ui_header_idx = Some(out.len());
+            }
+        }
+        // Dentro de `[ui]`, una clave `theme =` (no comentada) se reemplaza.
+        if in_ui
+            && !replaced
+            && !trimmed.starts_with('#')
+            && trimmed
+                .split_once('=')
+                .is_some_and(|(k, _)| k.trim() == "theme")
+        {
+            // Preservar la indentacion original de la linea.
+            let indent = &line[..line.len() - trimmed.len()];
+            out.push(format!("{indent}{new_line}"));
+            replaced = true;
+            continue;
+        }
+        out.push(line.to_string());
+    }
+
+    if !replaced {
+        match ui_header_idx {
+            // Hay `[ui]` pero sin `theme`: insertar la clave justo tras el header.
+            Some(idx) => out.insert(idx + 1, new_line),
+            // No hay `[ui]`: agregar la seccion al final (con una linea en blanco
+            // de separacion si el archivo no estaba vacio).
+            None => {
+                if !out.is_empty() && out.last().is_some_and(|l| !l.trim().is_empty()) {
+                    out.push(String::new());
+                }
+                out.push("[ui]".to_string());
+                out.push(new_line);
+            }
+        }
+    }
+
+    let mut result = out.join("\n");
+    // Terminar en newline (convencion de archivos de texto).
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +278,120 @@ mod tests {
         "#;
         let config = parse_config(raw, "<test>");
         assert_eq!(config.keybindings.preset.as_deref(), Some("vim"));
+    }
+
+    /// Cada resultado de `set_ui_theme` debe seguir parseando al theme esperado.
+    fn theme_de(raw: &str) -> String {
+        parse_config(raw, "<test>").ui.theme
+    }
+
+    #[test]
+    fn set_theme_en_archivo_vacio_crea_la_seccion() {
+        let out = set_ui_theme("", "dracula");
+        assert_eq!(out, "[ui]\ntheme = \"dracula\"\n");
+        assert_eq!(theme_de(&out), "dracula");
+    }
+
+    #[test]
+    fn set_theme_reemplaza_la_clave_existente() {
+        let raw = "[ui]\ntheme = \"frappe\"\nwysiwyg_level = 1\n";
+        let out = set_ui_theme(raw, "nord");
+        // Se cambio el theme y NO se toco wysiwyg_level.
+        assert_eq!(theme_de(&out), "nord");
+        assert!(
+            out.contains("wysiwyg_level = 1"),
+            "no debia tocar otras claves"
+        );
+        // Una sola linea de theme (no duplico).
+        assert_eq!(out.matches("theme =").count(), 1);
+    }
+
+    #[test]
+    fn set_theme_inserta_en_ui_sin_theme() {
+        let raw = "[ui]\nwysiwyg_level = 2\n";
+        let out = set_ui_theme(raw, "gruvbox");
+        assert_eq!(theme_de(&out), "gruvbox");
+        assert!(out.contains("wysiwyg_level = 2"));
+    }
+
+    #[test]
+    fn set_theme_preserva_otras_secciones_y_agrega_ui() {
+        // Con [keybindings] pero sin [ui]: se agrega [ui] sin tocar keybindings.
+        let raw = "[keybindings]\npreset = \"vim\"\n";
+        let out = set_ui_theme(raw, "tokyo-night");
+        let config = parse_config(&out, "<test>");
+        assert_eq!(config.ui.theme, "tokyo-night");
+        assert_eq!(config.keybindings.preset.as_deref(), Some("vim"));
+        assert!(out.contains("[ui]"));
+    }
+
+    #[test]
+    fn set_theme_no_matchea_una_linea_comentada() {
+        // Un `# theme = ...` comentado NO cuenta: se inserta la clave real y el
+        // comentario queda intacto.
+        let raw = "[ui]\n# theme = \"frappe\"\n";
+        let out = set_ui_theme(raw, "solarized");
+        assert_eq!(theme_de(&out), "solarized");
+        assert!(
+            out.contains("# theme = \"frappe\""),
+            "el comentario debia quedar"
+        );
+    }
+
+    #[test]
+    fn set_theme_solo_toca_la_clave_theme_de_la_seccion_ui() {
+        // Un `theme` en OTRA seccion no debe confundirse con el de [ui].
+        let raw = "[otra]\ntheme = \"x\"\n\n[ui]\ntheme = \"frappe\"\n";
+        let out = set_ui_theme(raw, "mocha");
+        assert!(
+            out.contains("[otra]\ntheme = \"x\""),
+            "no debia tocar [otra]"
+        );
+        assert_eq!(theme_de(&out), "mocha");
+    }
+
+    #[test]
+    fn persist_y_recargar_devuelve_el_theme_guardado() {
+        // El escenario del usuario: cambiar el theme, "salir" y volver a cargar el
+        // config debe devolver el theme elegido (persiste el ciclo completo). Se
+        // guarda en un archivo temporal propio para no tocar el config real.
+        let dir = std::env::temp_dir().join("typebar-test-persist-theme");
+        let _ = std::fs::remove_dir_all(&dir); // limpiar restos de corridas previas
+        let path = dir.join("config.toml");
+
+        // Sin archivo previo: se crea con el theme.
+        persist_theme_to(&path, "nord").unwrap();
+        assert_eq!(load_from_path(&path).ui.theme, "nord");
+
+        // Segundo cambio: reemplaza (no duplica) y sigue cargando bien.
+        persist_theme_to(&path, "dracula").unwrap();
+        assert_eq!(load_from_path(&path).ui.theme, "dracula");
+        assert_eq!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .matches("theme =")
+                .count(),
+            1
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persist_preserva_keybindings_del_usuario() {
+        // Persistir el theme NO debe pisar la config de keybindings del usuario.
+        let dir = std::env::temp_dir().join("typebar-test-persist-kb");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "[keybindings]\npreset = \"vim\"\n").unwrap();
+
+        persist_theme_to(&path, "gruvbox").unwrap();
+        let config = load_from_path(&path);
+        assert_eq!(config.ui.theme, "gruvbox");
+        assert_eq!(config.keybindings.preset.as_deref(), Some("vim"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
