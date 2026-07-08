@@ -16,6 +16,16 @@ How to maintain this file:
 
 ## [Unreleased]
 
+### Added
+
+- Soft wrap: lines longer than the viewport now wrap visually at the available
+  width (word-aware, grapheme-safe, CJK/emoji never split) in every mode, with
+  the cursor, scroll, selection and search highlights following the wrapped
+  rows. This fixes text typed past the whitepaper column (or in a narrow
+  terminal) becoming invisible: typebar previously had neither wrap nor
+  horizontal scroll. Table grids clip instead of wrapping, and the file on disk
+  is untouched (purely visual, no hard line breaks inserted).
+
 ## [0.4.0] - 2026-07-08
 
 ### Added

@@ -1,8 +1,11 @@
 //! typebar: editor de Markdown WYSIWYG para terminal (milestone editable minimo).
 //!
 //! Render "soft WYSIWYG": los marcadores (`**`, `*`, backticks, `#`) siempre
-//! quedan visibles y dimmeados, asi el cursor se mueve 1:1 sobre el texto y la
-//! posicion (linea, col) del buffer mapea directo a la columna en pantalla.
+//! quedan visibles y dimmeados. El mapeo cursor->pantalla YA NO es 1:1 linea a
+//! linea: `draw` corre `render::render` (una `Line` por linea del documento,
+//! ver `render.rs`) a traves de la capa de soft wrap (`crate::wrap`), que la
+//! parte en filas visuales segun el ancho del viewport. Scroll y cursor
+//! razonan en esas filas visuales via `WrapLayout::row_and_x`.
 //!
 //! El teclado se maneja por presets intercambiables (ver `keybinding`): por
 //! default `standard` (modeless, flechas), con `vim` (modal) y `wordstar`
@@ -18,6 +21,7 @@ mod switcher;
 mod tabs;
 mod theme;
 mod theme_picker;
+mod wrap;
 
 use typebar_core::document::{Document, Mode};
 use typebar_core::markdown::InlineKind;
@@ -373,8 +377,10 @@ enum Confirm {
 /// estos campos en un struct evita threadear 8-9 params sueltos por `draw` y
 /// `dispatch_action`. Lo posee `run`.
 struct AppState {
-    /// Offset vertical de scroll: primera linea visible del documento. `draw` lo
-    /// ajusta para mantener el cursor dentro del viewport.
+    /// Offset vertical de scroll: primera FILA VISUAL visible (post soft wrap,
+    /// ver `crate::wrap`), no linea del documento. `draw` lo ajusta para
+    /// mantener el cursor dentro del viewport, y lo clampea contra el total de
+    /// filas visuales del layout (una edicion puede haber achicado el doc).
     scroll: usize,
     /// Alto del area de edicion (en lineas) tras el ultimo draw. Lo escribe
     /// `draw`; lo leen las acciones que dependen del viewport (PageUp/PageDown).
@@ -987,20 +993,11 @@ fn draw(
     let pad_top: u16 = if whitepaper { 2 } else { 1 };
     // Alto util dentro del borde del Block y del margen superior.
     let viewport_height = editor_area.height.saturating_sub(2 * border + pad_top) as usize;
-    // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover.
+    // Lo exponemos al loop para que PageUp/PageDown sepan cuanto mover. Sigue
+    // razonando en LINEAS del documento (no en filas visuales post-wrap): es
+    // una aproximacion aceptable para paginar, no vale la pena el layout completo
+    // solo para eso.
     state.viewport_height = viewport_height.max(1);
-
-    // Ajustar scroll para que el cursor quede dentro del viewport.
-    if viewport_height > 0 {
-        if doc.line < state.scroll {
-            state.scroll = doc.line;
-        } else if doc.line >= state.scroll + viewport_height {
-            state.scroll = doc.line + 1 - viewport_height;
-        }
-    }
-    // Tras reclampar, lo leemos en un local: simplifica los usos de abajo y
-    // evita re-tomar `&state` mientras se sigue dibujando.
-    let scroll = state.scroll;
 
     // Coincidencias a resaltar segun el overlay (busqueda incremental o el
     // termino de busqueda del reemplazo). Sin overlay, no hay resaltado. La
@@ -1031,7 +1028,7 @@ fn draw(
     // ajustarse al contenido. Padding derecho del Block es 0, por eso no se resta.
     let text_width = editor_area.width.saturating_sub(2 * border + pad_left) as usize;
     let code_box_width = text_width.saturating_sub(render::CODE_BOX_RIGHT_MARGIN);
-    let lines = render::render(
+    let (lines, no_wrap) = render::render(
         &text,
         doc.selection_byte_range(),
         &matches,
@@ -1041,7 +1038,46 @@ fn draw(
         wysiwyg_level,
         code_box_width,
     );
-    let paragraph = Paragraph::new(lines)
+
+    // Layout de soft wrap sobre las lineas pre-wrap que devuelve `render`
+    // (una por linea del documento): parte cada linea, salvo las de grilla de
+    // tabla (`no_wrap`), en filas visuales segun `text_width`. De aca en mas
+    // scroll y cursor razonan en FILAS VISUALES, no en lineas del documento.
+    let layout = wrap::layout(&lines, &no_wrap, text_width);
+
+    // Columna visual del cursor sobre su linea renderizada: si esta sobre una
+    // linea de bloque de codigo, el render le aplico un margen izquierdo
+    // (`CODE_BOX_LEFT_PAD`) que corre el texto a la derecha, asi que lo sumamos
+    // antes de mapear a fila/x (la linea activa siempre se renderiza Level 1
+    // cruda, asi que el mapeo sigue valiendo).
+    let code_indent = if render::code_line_flags(&text)
+        .get(doc.line)
+        .copied()
+        .unwrap_or(false)
+    {
+        render::CODE_BOX_LEFT_PAD
+    } else {
+        0
+    };
+    let (cursor_row, x_in_row) = layout.row_and_x(doc.line, code_indent + doc.display_col());
+
+    // Clamp defensivo: tras ediciones que achican el documento, el scroll
+    // viejo puede haber quedado mas alla del final del layout nuevo.
+    state.scroll = state.scroll.min(layout.total_rows().saturating_sub(1));
+    // Ajustar scroll para que el cursor quede dentro del viewport (en filas
+    // visuales: una linea envuelta puede ocupar mas de una).
+    if viewport_height > 0 {
+        if cursor_row < state.scroll {
+            state.scroll = cursor_row;
+        } else if cursor_row >= state.scroll + viewport_height {
+            state.scroll = cursor_row + 1 - viewport_height;
+        }
+    }
+    // Tras reclampar, lo leemos en un local: simplifica los usos de abajo y
+    // evita re-tomar `&state` mientras se sigue dibujando.
+    let scroll = state.scroll;
+
+    let paragraph = Paragraph::new(wrap::visual_lines(lines, &layout))
         .block(block)
         .scroll((scroll as u16, 0));
     frame.render_widget(paragraph, editor_area);
@@ -1085,25 +1121,14 @@ fn draw(
     }
 
     // Cursor: sumando el margen (`border` es 0 con el chrome minimal, pero se deja
-    // en la formula por uniformidad) mas `pad_left`/`pad_top`, y restando scroll. La
-    // X es la columna *visual* (celdas), no el indice de char: asi cae sobre el glifo
-    // que dibujo el render aunque haya CJK/emoji de doble ancho. Con un overlay
-    // abierto no se dibuja cursor de editor: lo tapa el popup y ratatui lo oculta.
-    if !overlay_active && doc.line >= scroll {
-        // Si el cursor esta sobre una linea de bloque de codigo, el render le
-        // aplico un margen izquierdo (`CODE_BOX_LEFT_PAD`) que corre el texto a
-        // la derecha; sumamos lo mismo para que el cursor caiga sobre el glifo.
-        let code_indent = if render::code_line_flags(&text)
-            .get(doc.line)
-            .copied()
-            .unwrap_or(false)
-        {
-            render::CODE_BOX_LEFT_PAD as u16
-        } else {
-            0
-        };
-        let cursor_x = editor_area.x + border + pad_left + code_indent + doc.display_col() as u16;
-        let cursor_y = editor_area.y + border + pad_top + (doc.line - scroll) as u16;
+    // en la formula por uniformidad) mas `pad_left`/`pad_top`, y restando scroll
+    // (ya en filas visuales). `x_in_row` es la columna *visual* dentro de la fila
+    // (celdas, no indice de char), resuelta por `layout.row_and_x` mas arriba: ya
+    // incluye `code_indent`, no sumarlo de nuevo. Con un overlay abierto no se
+    // dibuja cursor de editor: lo tapa el popup y ratatui lo oculta.
+    if !overlay_active && cursor_row >= scroll && cursor_row < scroll + viewport_height {
+        let cursor_x = editor_area.x + border + pad_left + x_in_row as u16;
+        let cursor_y = editor_area.y + border + pad_top + (cursor_row - scroll) as u16;
         if whitepaper {
             // En papel el cursor real del terminal usa un color fijo que sobre el
             // fondo claro suele quedar invisible. En vez de depender de el,
@@ -1524,6 +1549,391 @@ mod tests {
             }
         }
         assert!(found, "deberia encontrarse la celda del cursor (la 'h')");
+    }
+
+    #[test]
+    fn draw_envuelve_una_linea_mas_larga_que_el_viewport_en_dos_filas() {
+        // El bug real (typebar sin wrap ni scroll horizontal): una linea mas
+        // larga que el viewport se recortaba y el sobrante quedaba invisible.
+        // Con el soft wrap integrado, el sobrante baja a la fila visual
+        // siguiente en vez de perderse.
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use typebar_core::document::test_support::doc_with;
+
+        // Terminal de 60 columnas, sin marco, pad_left=2 => text_width = 58.
+        // 58 'a' (sin espacios, para forzar corte duro exacto en el ancho) mas
+        // "OVERFLOW": no entra en una sola fila.
+        let long_line = format!("{}OVERFLOW", "a".repeat(58));
+        let doc = doc_with(&long_line);
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut state = AppState::new(false);
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        let rows: Vec<String> = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+        // Fila visual 0 (pad_top=1 => pantalla y=1): las 58 'a'.
+        assert!(
+            rows[1].contains(&"a".repeat(58)),
+            "la primera fila visual deberia mostrar las 58 'a': {:?}",
+            rows[1]
+        );
+        assert!(
+            !rows[1].contains("OVERFLOW"),
+            "el sobrante NO deberia verse todavia en la primera fila: {:?}",
+            rows[1]
+        );
+        // Fila visual 1 (pantalla y=2): el sobrante, visible (no recortado).
+        assert!(
+            rows[2].contains("OVERFLOW"),
+            "el sobrante deberia bajar visible a la fila visual siguiente: {:?}",
+            rows[2]
+        );
+    }
+
+    #[test]
+    fn draw_con_cursor_al_final_de_una_linea_larga_lo_ubica_en_la_segunda_fila() {
+        // Con el cursor al FINAL de una linea que envuelve, el cursor debe
+        // quedar posicionado en la SEGUNDA fila visual (donde cae realmente
+        // el glifo), no en la primera fila del documento como antes de
+        // integrar el wrap. Igual que `draw_whitepaper_dibuja_cursor_sintetico_visible`,
+        // usamos whitepaper para poder assertar la celda REVERSED sin
+        // depender del cursor real del terminal.
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use typebar_core::document::test_support::doc_with;
+
+        // Whitepaper con terminal de 120 columnas: columna centrada de ancho
+        // WHITEPAPER_WIDTH=72, pad_left=2 => text_width = 70. 70 'a' + 'Z'
+        // (71 chars, sin espacios): la 'Z' no entra en la primera fila y cae
+        // sola en la segunda.
+        let long_line = format!("{}Z", "a".repeat(70));
+        let mut doc = doc_with(&long_line);
+        doc.line = 0;
+        doc.col = 70; // cursor sobre la 'Z' (justo al final de la linea)
+        let km = StandardKeymap;
+        let theme = Theme::paper();
+        let mut terminal = Terminal::new(TestBackend::new(120, 8)).unwrap();
+        let mut state = AppState::new(false);
+        state.whitepaper = true;
+        terminal
+            .draw(|f| {
+                draw(f, &doc, &km, &theme, 2, &mut state, None);
+                apply_theme_fill(f, &theme);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        // La 'Z' (unico caracter de la segunda fila visual) debe llevar el
+        // cursor sintetico REVERSED.
+        let mut found = false;
+        let mut z_row = None;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == "Z" {
+                    assert!(
+                        cell.modifier.contains(Modifier::REVERSED),
+                        "la celda de la 'Z' (cursor) deberia estar REVERSED"
+                    );
+                    z_row = Some(y);
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "deberia encontrarse la celda de la 'Z'");
+        // La fila de la 'Z' es la SEGUNDA fila visual: distinta (posterior) a
+        // la fila donde arrancan las 70 'a'.
+        let a_row = (0..area.height)
+            .find(|&y| (0..area.width).any(|x| buf[(x, y)].symbol() == "a"))
+            .expect("deberia encontrarse alguna 'a' de la primera fila visual");
+        assert!(
+            z_row.unwrap() > a_row,
+            "la 'Z' deberia quedar en una fila visual posterior a la de las 'a' (a_row={a_row}, z_row={z_row:?})"
+        );
+    }
+
+    #[test]
+    fn draw_seleccion_que_cruza_el_corte_de_wrap_pinta_ambas_filas() {
+        // Edge case del wrap: una seleccion que abarca el limite entre dos
+        // filas visuales debe pintar el bg de seleccion en AMBAS, no solo en
+        // la fila donde arranca. Misma geometria que el smoke test de wrap:
+        // terminal 60x24, pad_left=2 => text_width=58, "a"*58 + "OVERFLOW" se
+        // envuelve en fila 0 = "a"*58 (chars [0,58)) y fila 1 = "OVERFLOW"
+        // (chars [58,66)).
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use typebar_core::document::test_support::doc_with;
+
+        let long_line = format!("{}OVERFLOW", "a".repeat(58));
+        let mut doc = doc_with(&long_line);
+        // Seleccion [50,62): cruza el limite en 58 (col 50..58 en fila 0,
+        // col 58..62 en fila 1). ASCII puro: char idx == byte idx.
+        doc.line = 0;
+        doc.col = 50;
+        doc.start_selection();
+        doc.col = 62;
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut state = AppState::new(false);
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+
+        // Fila 0 (pantalla y=1): char 49 ('a', fuera de la seleccion, x=51) sin
+        // bg de seleccion; char 50 (primer char seleccionado, x=52) y char 57
+        // (ultimo char seleccionado de la fila, x=59) SI.
+        assert_ne!(
+            buf[(51, 1)].bg,
+            theme.selection_bg,
+            "char antes de la seleccion no deberia estar resaltado"
+        );
+        assert_eq!(
+            buf[(52, 1)].bg,
+            theme.selection_bg,
+            "primer char seleccionado de la fila 0 deberia estar resaltado"
+        );
+        assert_eq!(
+            buf[(59, 1)].bg,
+            theme.selection_bg,
+            "ultimo char seleccionado de la fila 0 (justo antes del corte) deberia estar resaltado"
+        );
+
+        // Fila 1 (pantalla y=2): char 58 ('O', x=2) y char 61 ('R', x=5) SI
+        // resaltados (siguen en la seleccion tras el corte); char 62 ('F',
+        // x=6, fuera de la seleccion) no.
+        assert_eq!(
+            buf[(2, 2)].bg,
+            theme.selection_bg,
+            "el sobrante de la seleccion deberia seguir resaltado en la fila 1"
+        );
+        assert_eq!(
+            buf[(5, 2)].bg,
+            theme.selection_bg,
+            "ultimo char seleccionado de la fila 1 deberia estar resaltado"
+        );
+        assert_ne!(
+            buf[(6, 2)].bg,
+            theme.selection_bg,
+            "char justo despues de la seleccion en la fila 1 no deberia estar resaltado"
+        );
+    }
+
+    #[test]
+    fn draw_tabla_mas_ancha_que_el_viewport_se_clipea_sin_desbordar_a_la_fila_siguiente() {
+        // Una tabla mas ancha que el viewport se dibuja como grilla (no_wrap)
+        // y ratatui la CLIPEA a lo ancho del area, sin envolverla: el sobrante
+        // no debe aparecer en la fila visual siguiente (que pertenece a otra
+        // linea de la grilla, ej la fila delimitadora).
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use typebar_core::document::test_support::doc_with;
+
+        // Celda de 80 'a': con el padding/bordes de la grilla la fila mide
+        // bastante mas que el text_width (58) de una terminal de 60 columnas.
+        let long_cell = "a".repeat(80);
+        let source = format!("cursor\n| {long_cell} |\n| --- |\n| x |\n");
+        let doc = doc_with(&source);
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut state = AppState::new(false);
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        let rows: Vec<String> = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect();
+
+        // Fila visual 1 (pantalla y=2): el header de la tabla, clipeado: no
+        // deberian verse las 80 'a' completas.
+        assert!(
+            !rows[2].contains(&"a".repeat(80)),
+            "la fila de header deberia estar clipeada, no mostrar las 80 'a': {:?}",
+            rows[2]
+        );
+        assert!(
+            rows[2].contains('a'),
+            "algo del contenido deberia seguir visible antes del clip: {:?}",
+            rows[2]
+        );
+        // Fila visual siguiente (pantalla y=3, la delimitadora de la grilla):
+        // el sobrante de la fila anterior NO debe filtrarse aca.
+        assert!(
+            !rows[3].contains('a'),
+            "el sobrante de la tabla no deberia aparecer en la fila siguiente: {:?}",
+            rows[3]
+        );
+    }
+
+    #[test]
+    fn draw_whitepaper_envuelve_dentro_de_la_columna_centrada() {
+        // En whitepaper (terminal ancha, columna centrada de WHITEPAPER_WIDTH)
+        // una linea que envuelve debe seguir arrancando su segunda fila en el
+        // MISMO x que la primera (la columna centrada), no pegada al borde
+        // izquierdo del terminal.
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use typebar_core::document::test_support::doc_with;
+
+        // Terminal de 120 columnas: columna centrada de ancho WHITEPAPER_WIDTH=72,
+        // pad_left=2 => text_width=70. 70 'a' + "OVERFLOW" (sin espacios): la
+        // primera fila son las 70 'a', la segunda "OVERFLOW".
+        let long_line = format!("{}OVERFLOW", "a".repeat(70));
+        let doc = doc_with(&long_line);
+        let km = StandardKeymap;
+        let theme = Theme::latte();
+        let mut terminal = Terminal::new(TestBackend::new(120, 8)).unwrap();
+        let mut state = AppState::new(false);
+        state.whitepaper = true;
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+
+        // x esperado de la columna centrada: (120-72)/2 = 24, mas pad_left=2 => 26.
+        let expected_x = 26u16;
+        assert_eq!(
+            buf[(expected_x, 2)].symbol(),
+            "a",
+            "la primera fila deberia arrancar en la columna centrada (x={expected_x})"
+        );
+        assert_eq!(
+            buf[(expected_x, 3)].symbol(),
+            "O",
+            "la segunda fila (el sobrante 'OVERFLOW') deberia arrancar EN EL MISMO x que la primera, no pegada al borde"
+        );
+        // Y no deberia estar pegada al borde izquierdo del terminal (x=0).
+        assert_ne!(
+            buf[(0, 3)].symbol(),
+            "O",
+            "la continuacion no deberia arrancar pegada al borde del terminal"
+        );
+    }
+
+    #[test]
+    fn draw_scroll_en_filas_visuales_mantiene_visible_la_fila_del_cursor() {
+        // Doc de una sola linea (corto en LINEAS) pero larga en caracteres, que
+        // genera mas filas visuales que el viewport. Con el cursor al final del
+        // doc, el scroll debe adelantarse en FILAS VISUALES para mantenerlo
+        // visible: el texto del final aparece, el del principio scrollea afuera.
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use typebar_core::document::test_support::doc_with;
+
+        // Terminal 60x24: text_width=58, viewport_height=19 filas. Sin espacios
+        // (palabra unica): corte duro cada 58 celdas. 5+1200+3=1208 chars =>
+        // ceil(1208/58)=21 filas visuales, bastante mas que el viewport (19).
+        let content = format!("START{}END", "x".repeat(1200));
+        let mut doc = doc_with(&content);
+        doc.line = 0;
+        doc.col = content.chars().count() - 1; // cursor sobre la ultima 'D' de "END"
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut state = AppState::new(false);
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let area = *buf.area();
+        let screen: String = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            !screen.contains("START"),
+            "el principio del doc deberia haber scrolleado fuera de vista"
+        );
+        assert!(
+            screen.contains("END"),
+            "el final del doc (donde esta el cursor) deberia seguir visible"
+        );
+    }
+
+    #[test]
+    fn wrap_unicode_cjk_no_parte_ni_duplica_caracteres_entre_filas() {
+        // Linea larga de caracteres CJK (ancho 2 cada uno): ninguna fila
+        // visual debe exceder el ancho del viewport, y la concatenacion de
+        // todas las filas debe reconstruir el texto original exacto (sin
+        // caracteres partidos ni duplicados en el corte).
+        let theme = Theme::frappe();
+        let text_width = 58;
+        let original = "中".repeat(40); // 40 * ancho 2 = 80 celdas
+        let (lines, no_wrap) = render::render(&original, None, &[], None, &theme, Some(0), 1, 0);
+        let layout = wrap::layout(&lines, &no_wrap, text_width);
+        let rows = wrap::visual_lines(lines, &layout);
+
+        assert!(rows.len() > 1, "80 celdas con ancho 58 deberia envolver");
+        for row in &rows {
+            let row_text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+            let w = typebar_core::text::display_width(&row_text);
+            assert!(
+                w <= text_width,
+                "ninguna fila deberia exceder el ancho del viewport (fila {row_text:?} mide {w})"
+            );
+        }
+        // Reconstruir el texto de todas las filas: exactamente el original,
+        // sin perdidas ni duplicados en los cortes.
+        let joined: String = rows
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert_eq!(joined, original);
+    }
+
+    #[test]
+    fn wrap_nivel2_envuelve_segun_el_texto_contraido_no_el_crudo() {
+        // Linea INACTIVA con markers ocultos (negrita larga): el wrap debe
+        // operar sobre el texto YA CONTRAIDO (Nivel 2, sin los `**`), no sobre
+        // el crudo. 56 'a' + los 4 bytes de `**...**` (60 crudos) no entran en
+        // un ancho de 58 si se envolviera el crudo, pero los 56 contraidos SI
+        // entran en una sola fila.
+        let theme = Theme::frappe();
+        let text_width = 58;
+        let raw = format!("**{}**", "a".repeat(56));
+        assert!(
+            typebar_core::text::display_width(&raw) > text_width,
+            "el crudo (con marcadores) debe exceder el ancho para que el caso sea significativo"
+        );
+        // Una unica linea, `active_line: None` => en Nivel 2 se contrae (ver
+        // `nivel2_oculta_aunque_active_line_sea_none` en render.rs).
+        let (lines, no_wrap) = render::render(&raw, None, &[], None, &theme, None, 2, 0);
+        assert_eq!(lines.len(), 1);
+        let layout = wrap::layout(&lines, &no_wrap, text_width);
+        assert_eq!(
+            layout.total_rows(),
+            1,
+            "el texto contraido (56 'a') entra en una sola fila de ancho 58"
+        );
+        let rows = wrap::visual_lines(lines, &layout);
+        let text: String = rows[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(
+            text,
+            "a".repeat(56),
+            "sin asteriscos: se envolvio el texto ya contraido"
+        );
     }
 
     #[test]
