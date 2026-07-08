@@ -41,7 +41,9 @@ and your text rendered as you type.
     the cursor always renders as Level 1, so the cursor mapping never shifts.
     During an active selection or search, the whole view falls back to Level 1
     so highlights land on real cells.
-- **Three keybinding presets**, swappable at launch or via config:
+- **Three keybinding presets**, swappable at launch, via config, or live from
+  inside the editor with the *Cycle keybindings* command (`Ctrl-O K`, or `z k`
+  in vim), which persists the choice to config:
   - `standard`: modeless, arrow-key navigation (default).
   - `vim`: modal (Normal / Insert / Visual).
   - `wordstar`: modeless with classic chords (`Ctrl-K S`, `Ctrl-Q S`, …).
@@ -71,9 +73,14 @@ and your text rendered as you type.
   `notes.html` (CommonMark via pulldown-cmark) without opening the editor — or
   export the current buffer from inside the editor with the *Export HTML* command
   (command palette), which shows the result in the status bar.
-- **Themeable** for ricing: `frappe` (default), `mocha`, and the light `latte`
-  Catppuccin palettes, with a runtime light/dark toggle (`Ctrl-O L`, or `z l` in
-  vim).
+- **PDF export**: the *Export PDF* command (command palette) writes a print-ready
+  HTML to the system temp dir and opens it in your default browser with the print
+  dialog up; save it as PDF from there. No embedded browser, no new dependencies.
+- **Themeable** for ricing, with eight built-in themes: Catppuccin `frappe`
+  (default), `mocha`, the light `latte`, plus `dracula`, `tokyo-night`, `nord`,
+  `gruvbox`, and `solarized`. Pick one live with the theme picker (`Ctrl-O T`,
+  or `z t` in vim), which previews as you browse and persists your choice; the
+  light/dark toggle stays on `Ctrl-O L` (`z l` in vim).
 - **Internationalized UI**: English by default, Spanish auto-detected from
   `$LANG`, both overridable in config.
 
@@ -181,7 +188,8 @@ built-in defaults apply. A starting point lives in
 ```toml
 [keybindings]
 # "standard" (default) | "vim" | "wordstar".
-# The --keys CLI flag overrides this.
+# The --keys CLI flag overrides this. The *Cycle keybindings* command
+# (Ctrl-O K) switches presets live and saves the choice here.
 preset = "standard"
 
 # Per-key overrides, layered on top of the preset. `mode` is optional
@@ -191,7 +199,9 @@ keys = "ctrl-s"
 action = "save"
 
 [ui]
-# "frappe" (default) | "mocha" | "latte" (light). Unknown names fall back to frappe.
+# "frappe" (default) | "mocha" | "latte" (light) | "dracula" | "tokyo-night"
+# | "nord" | "gruvbox" | "solarized". Unknown names fall back to frappe.
+# The theme picker (Ctrl-O T) saves your choice here.
 theme = "frappe"
 
 # UI language: "en" | "es". Defaults to English, or to your $LANG if Spanish.

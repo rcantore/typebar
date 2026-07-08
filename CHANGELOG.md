@@ -16,6 +16,26 @@ How to maintain this file:
 
 ## [Unreleased]
 
+### Added
+
+- Cycle keybinding presets at runtime: the *Cycle keybindings* command
+  (`Ctrl-O K`, or `z k` in vim; also in the command palette) rotates between
+  standard, vim, and wordstar without restarting, re-applies your per-key
+  overrides, and persists the choice to the config file.
+- PDF export: the *Export PDF* command (command palette) writes a print-ready
+  HTML (print CSS plus an automatic `window.print()`) to the system temp dir
+  and opens it in the default browser; save it as PDF from the print dialog.
+  New `export::to_html_print` in typebar-core. No new dependencies.
+- Runtime theme picker (`Ctrl-O T`, or `z t` in vim) with fuzzy search and
+  live preview; the chosen theme persists to the config file.
+- Five new built-in themes: Dracula, Tokyo Night, Nord, Gruvbox, and Solarized.
+
+### Changed
+
+- Overlay polish (command palette and switcher): rounded borders, accent-colored
+  border from the theme, hint footers, and a dimmed backdrop that keeps the
+  document visible instead of clearing to black.
+
 ## [0.3.2] - 2026-07-06
 
 ### Fixed

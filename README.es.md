@@ -41,7 +41,9 @@ texto renderizado mientras escribís.
     texto. La línea bajo el cursor siempre se renderiza como Nivel 1, así que el
     mapeo del cursor no se corre. Con una selección o búsqueda activa, toda la
     vista vuelve a Nivel 1 para que los resaltados caigan sobre celdas reales.
-- **Tres presets de teclado**, intercambiables al iniciar o por config:
+- **Tres presets de teclado**, intercambiables al iniciar, por config, o en vivo
+  desde el editor con el comando *Ciclar keybindings* (`Ctrl-O K`, o `z k` en
+  vim), que persiste la elección en el config:
   - `standard`: modeless, navegación con flechas (default).
   - `vim`: modal (Normal / Insert / Visual).
   - `wordstar`: modeless con chords clásicos (`Ctrl-K S`, `Ctrl-Q S`, …).
@@ -75,9 +77,15 @@ texto renderizado mientras escribís.
   standalone (CommonMark vía pulldown-cmark) sin abrir el editor — o exportá el
   buffer actual desde adentro del editor con el comando *Export HTML* (paleta de
   comandos), que muestra el resultado en la status bar.
-- **Themeable** para ricing: paletas Catppuccin `frappe` (default), `mocha` y la
-  clara `latte`, con un toggle claro/oscuro en runtime (`Ctrl-O L`, o `z l` en
-  vim).
+- **Export a PDF**: el comando *Exportar PDF* (paleta de comandos) escribe un
+  HTML print-ready en el directorio temporal del sistema y lo abre en tu
+  navegador default con el diálogo de impresión listo; guardalo como PDF desde
+  ahí. Sin navegador embebido, sin dependencias nuevas.
+- **Themeable** para ricing, con ocho themes built-in: Catppuccin `frappe`
+  (default), `mocha`, la clara `latte`, más `dracula`, `tokyo-night`, `nord`,
+  `gruvbox` y `solarized`. Se eligen en vivo con el theme picker (`Ctrl-O T`,
+  o `z t` en vim), que previsualiza mientras navegás y persiste tu elección;
+  el toggle claro/oscuro sigue en `Ctrl-O L` (`z l` en vim).
 - **UI internacionalizada**: inglés por defecto, español autodetectado desde
   `$LANG`, ambos configurables.
 
@@ -186,7 +194,8 @@ defaults. Hay un punto de partida en
 ```toml
 [keybindings]
 # "standard" (default) | "vim" | "wordstar".
-# El flag --keys de la CLI tiene prioridad sobre esto.
+# El flag --keys de la CLI tiene prioridad sobre esto. El comando *Ciclar
+# keybindings* (Ctrl-O K) cambia el preset en vivo y guarda la elección acá.
 preset = "standard"
 
 # Overrides por tecla, aplicados encima del preset. `mode` es opcional
@@ -196,7 +205,9 @@ keys = "ctrl-s"
 action = "save"
 
 [ui]
-# "frappe" (default) | "mocha" | "latte" (claro). Nombres desconocidos caen a frappe.
+# "frappe" (default) | "mocha" | "latte" (claro) | "dracula" | "tokyo-night"
+# | "nord" | "gruvbox" | "solarized". Nombres desconocidos caen a frappe.
+# El theme picker (Ctrl-O T) guarda tu elección acá.
 theme = "frappe"
 
 # Idioma de la UI: "en" | "es". Default inglés, o tu $LANG si es español.

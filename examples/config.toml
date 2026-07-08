@@ -13,4 +13,7 @@
 #
 # El flag de linea de comandos `--keys <preset>` tiene prioridad sobre este
 # valor. Si el preset es invalido, typebar avisa por stderr y usa "standard".
+#
+# El comando *Ciclar keybindings* (Ctrl-O K) cambia el preset en vivo y
+# actualiza este valor.
 preset = "standard"
