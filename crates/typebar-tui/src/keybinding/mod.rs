@@ -140,6 +140,12 @@ pub enum Action {
     /// `--export-html`, exporta el contenido en memoria (cambios sin guardar
     /// incluidos). Lo maneja `run` (escribe el archivo y setea el flash).
     ExportHtml,
+    /// Ciclar el preset de keybindings activo (standard -> vim -> wordstar ->
+    /// standard...), desde el submenu "view" (`^O K` / `z k`). Reconstruye el
+    /// keymap en runtime (con los overrides del usuario reaplicados), refleja
+    /// el nuevo preset en la status bar/toolbar y lo persiste en el config. Es
+    /// estado de la vista del loop, no del documento; lo maneja `run`.
+    CycleKeymapPreset,
 }
 
 /// Resultado de resolver una secuencia de teclas contra un keymap.
@@ -413,6 +419,7 @@ fn resolve_view_second(second: KeyEvent) -> Resolve {
         'l' => Resolve::Action(Action::ToggleLightTheme),
         'w' => Resolve::Action(Action::ToggleWhitepaper),
         't' => Resolve::Action(Action::OpenThemePicker),
+        'k' => Resolve::Action(Action::CycleKeymapPreset),
         _ => Resolve::None,
     }
 }
@@ -426,6 +433,7 @@ fn view_hints() -> Vec<Hint> {
         Hint::new(Action::ToggleLightTheme, "L", t(Key::HintLight)),
         Hint::new(Action::ToggleWhitepaper, "W", t(Key::HintWhitepaper)),
         Hint::new(Action::OpenThemePicker, "T", t(Key::HintTheme)),
+        Hint::new(Action::CycleKeymapPreset, "K", t(Key::HintCycleKeymap)),
     ]
 }
 
@@ -436,6 +444,23 @@ pub fn keymap_from_name(name: &str) -> Box<dyn Keymap> {
         "vim" => Box::new(VimKeymap),
         "wordstar" => Box::new(WordstarKeymap),
         _ => Box::new(StandardKeymap),
+    }
+}
+
+/// Presets de keybindings conocidos, en el orden en que `CycleKeymapPreset` los
+/// recorre. Nombres canonicos: coinciden con los que reconoce `keymap_from_name`
+/// y con los que valida `config::is_known_preset`.
+pub const PRESETS: &[&str] = &["standard", "vim", "wordstar"];
+
+/// Devuelve el preset SIGUIENTE a `current` en `PRESETS`, con wrap-around (tras
+/// el ultimo vuelve al primero). Si `current` no es un preset conocido (por
+/// ejemplo porque el keymap activo es un `CustomKeymap`, cuyo `name()` delega al
+/// preset base pero podria no calzar si se llama con otra cosa), arranca desde
+/// el primero de la lista en vez de fallar.
+pub fn next_preset(current: &str) -> &'static str {
+    match PRESETS.iter().position(|p| *p == current) {
+        Some(i) => PRESETS[(i + 1) % PRESETS.len()],
+        None => PRESETS[0],
     }
 }
 
@@ -470,6 +495,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::crossterm::event::KeyCode;
 
     #[test]
     fn nombre_desconocido_cae_a_standard() {
@@ -477,5 +503,45 @@ mod tests {
         assert_eq!(keymap_from_name("vim").name(), "vim");
         assert_eq!(keymap_from_name("standard").name(), "standard");
         assert_eq!(keymap_from_name("wordstar").name(), "wordstar");
+    }
+
+    #[test]
+    fn next_preset_cicla_con_wraparound() {
+        assert_eq!(next_preset("standard"), "vim");
+        assert_eq!(next_preset("vim"), "wordstar");
+        assert_eq!(next_preset("wordstar"), "standard");
+    }
+
+    #[test]
+    fn next_preset_desconocido_arranca_del_primero() {
+        // Un preset_id que no matchea ninguno conocido (config corrupto, o el
+        // name() de un CustomKeymap) no debe fallar: arranca desde el primero.
+        assert_eq!(next_preset("loquesea"), PRESETS[0]);
+    }
+
+    #[test]
+    fn submenu_view_k_cicla_keymap_en_los_tres_presets() {
+        // La segunda tecla del submenu "view" (`k`) es compartida por los tres
+        // presets via `resolve_view_second`: alcanza con probarla una vez aca en
+        // vez de repetirla en cada submodulo.
+        assert_eq!(
+            resolve_view_second(test_support::key(KeyCode::Char('k'))),
+            Resolve::Action(Action::CycleKeymapPreset)
+        );
+        // Case-insensitive, como el resto del submenu.
+        assert_eq!(
+            resolve_view_second(test_support::key(KeyCode::Char('K'))),
+            Resolve::Action(Action::CycleKeymapPreset)
+        );
+    }
+
+    #[test]
+    fn view_hints_incluye_ciclar_keymap() {
+        let hints = view_hints();
+        let hint = hints
+            .iter()
+            .find(|h| h.action == Some(Action::CycleKeymapPreset))
+            .expect("deberia haber un hint de CycleKeymapPreset");
+        assert_eq!(hint.keys, "K");
     }
 }

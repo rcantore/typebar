@@ -81,6 +81,7 @@ const CATALOG: &[(Key, &[(Action, Key)])] = &[
             (Action::OpenThemePicker, Key::HintTheme),
             (Action::ToggleZen, Key::HintZen),
             (Action::ToggleWhitepaper, Key::HintWhitepaper),
+            (Action::CycleKeymapPreset, Key::HintCycleKeymap),
         ],
     ),
     (
