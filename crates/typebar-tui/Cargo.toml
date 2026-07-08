@@ -11,7 +11,7 @@ repository.workspace = true
 readme = "../../README.md"
 
 [dependencies]
-typebar-core = { path = "../typebar-core", version = "0.3.2" }
+typebar-core = { path = "../typebar-core", version = "0.4.0" }
 crossterm = "0.29"
 dirs = "6.0.0"
 ratatui = "0.30"
@@ -24,6 +24,6 @@ unicode-width = "0.2.2"
 [dev-dependencies]
 # Los tests de la TUI construyen `Document`s de prueba con
 # `typebar_core::document::test_support`, que solo se compila con esta feature.
-typebar-core = { path = "../typebar-core", version = "0.3.2", features = [
+typebar-core = { path = "../typebar-core", version = "0.4.0", features = [
     "test-support",
 ] }
