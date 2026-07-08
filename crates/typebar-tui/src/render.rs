@@ -14,6 +14,12 @@
 //!
 //! Pipeline: texto crudo -> tree-sitter-md (block + inline) -> mapa de estilos
 //! por byte + mapa de bytes ocultables -> `ratatui::Line`s.
+//!
+//! El mapeo 1:1 de `render()` es con las lineas del documento ANTES del soft
+//! wrap: una `Line` de salida por linea de `source.split('\n')`. La capa
+//! `crate::wrap` parte esas lineas en filas visuales despues, usando el
+//! `Vec<bool>` de no-wrap que `render()` devuelve junto a las `Line`s (marca
+//! las filas que se emiten como grilla de tabla, que no deben envolverse).
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -615,6 +621,14 @@ fn render_table_line(info: &TableLine, theme: &Theme) -> Vec<Span<'static>> {
 /// un margen. `0` desactiva el ensanchado y la caja se ajusta al contenido (lo
 /// usan los tests que no dependen del ancho del viewport). Si el contenido es mas
 /// ancho que `code_box_width`, gana el contenido (no se recorta).
+///
+/// Devuelve, junto a las `Line`s, un `Vec<bool>` paralelo `no_wrap`: `true`
+/// exactamente en las lineas que se emitieron como grilla de tabla (el branch
+/// de abajo que llama a `render_table_line`), porque esas filas ya son un
+/// dibujo de ancho fijo (box-drawing) que no tiene sentido envolver; `false`
+/// en todo el resto, incluida la fila activa de una tabla (que se renderiza
+/// cruda). Lo consume `crate::wrap::layout` para decidir que lineas quedan
+/// exentas del soft wrap.
 // Los argumentos son todos contexto de render (texto, theme, estado del
 // overlay/seleccion, modo WYSIWYG); agrupar en una struct intermedia anadiria
 // indireccion sin claridad.
@@ -628,7 +642,7 @@ pub fn render(
     active_line: Option<usize>,
     level: u8,
     code_box_width: usize,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, Vec<bool>) {
     let (spans, hide_byte, replace_byte, code_pad) = collect_styles(source, theme);
     // Layout de grilla por linea para las tablas (None si la linea no es tabla).
     let table_lines = collect_tables(source);
@@ -683,6 +697,7 @@ pub fn render(
     //   - los bytes en `replace_byte` se emiten como un Span propio con el
     //     char de reemplazo y el estilo del byte original.
     let mut lines = Vec::new();
+    let mut no_wrap = Vec::new();
     let mut offset = 0;
     for (line_idx, line_str) in source.split('\n').enumerate() {
         let line_start = offset;
@@ -697,8 +712,10 @@ pub fn render(
         // cruda, para que el highlight quede sobre celdas reales.
         if !show_markers && let Some(info) = table_lines.get(line_idx).and_then(|o| o.as_ref()) {
             lines.push(Line::from(render_table_line(info, theme)));
+            no_wrap.push(true);
             continue;
         }
+        no_wrap.push(false);
 
         let mut line_spans: Vec<Span<'static>> = Vec::new();
 
@@ -763,7 +780,7 @@ pub fn render(
 
         lines.push(Line::from(line_spans));
     }
-    lines
+    (lines, no_wrap)
 }
 
 /// Marca, por linea (0-based, indexando como `source.split('\n')`), si pertenece
@@ -858,7 +875,7 @@ mod tests {
         let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/sample.md");
         let source = std::fs::read_to_string(fixture).expect("falta examples/sample.md");
         // Nivel 1 (volcado simple, sin ocultar markers).
-        let lines = render(&source, None, &[], None, &theme, None, 1, 0);
+        let (lines, _no_wrap) = render(&source, None, &[], None, &theme, None, 1, 0);
         println!(
             "\n--- volcado de estilos (.=plano B=bold I=italic C=code H=heading m=marker) ---"
         );
@@ -888,7 +905,7 @@ mod tests {
         let source = "# T\n\nplano **negrita** fin\n";
         // Nivel 1 explicito: el test verifica que los `**` esten dimmeados pero
         // visibles (mapeo cursor 1:1 en todas las lineas).
-        let lines = render(source, None, &[], None, &theme, None, 1, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, None, 1, 0);
         // Linea 2 (indice 2): "plano **negrita** fin"
         let line = &lines[2];
         // Reconstruir el estilo por char y chequear que los '*' esten dimmeados
@@ -923,7 +940,7 @@ mod tests {
         // el bg de seleccion; el resto no.
         let theme = test_theme();
         let source = "hola mundo";
-        let lines = render(source, Some(0..4), &[], None, &theme, None, 1, 0);
+        let (lines, _no_wrap) = render(source, Some(0..4), &[], None, &theme, None, 1, 0);
         // Reconstruir el bg por char.
         let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
         for span in &lines[0].spans {
@@ -952,7 +969,7 @@ mod tests {
         let theme = test_theme();
         let source = "ab ab ab";
         let matches = vec![0..2, 3..5, 6..8];
-        let lines = render(source, None, &matches, Some(1), &theme, None, 1, 0);
+        let (lines, _no_wrap) = render(source, None, &matches, Some(1), &theme, None, 1, 0);
         let mut per_char: Vec<(char, Option<Color>)> = Vec::new();
         for span in &lines[0].spans {
             for ch in span.content.chars() {
@@ -1001,7 +1018,7 @@ mod tests {
         // hasta el ancho de la caja. Cursor afuera (linea 0), Nivel 2.
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         // El texto visible (sin contar los margenes) queda intacto.
         assert_eq!(line_text(&lines, 2).trim(), "let x = 1;");
         // Ancho de caja = margen_izq + max(7, 10, 3) + margen_der.
@@ -1023,7 +1040,7 @@ mod tests {
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
         let wide = 60;
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, wide);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, wide);
         for idx in [1, 2, 3] {
             assert_eq!(line_width(&lines, idx), wide);
         }
@@ -1037,7 +1054,7 @@ mod tests {
         // la caja nunca recorta el codigo.
         let theme = test_theme();
         let source = "antes\n```\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 3);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 3);
         let box_w = box_width("let x = 1;".len());
         assert_eq!(line_width(&lines, 2), box_w);
     }
@@ -1050,7 +1067,7 @@ mod tests {
         // asi que las cercas (lineas 1 y 3) estan inactivas.
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1).trim(), "");
         assert_eq!(line_text(&lines, 3).trim(), "");
         // Aun ocultas, las lineas de cerca conservan el ancho de caja y el fondo
@@ -1070,7 +1087,7 @@ mod tests {
         // poder editarlas: el cursor en la linea 1 (apertura ```rust).
         let theme = test_theme();
         let source = "antes\n```rust\nlet x = 1;\n```\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1).trim(), "```rust");
         // La cerca de cierre (linea 3) sigue inactiva => oculta.
         assert_eq!(line_text(&lines, 3).trim(), "");
@@ -1082,7 +1099,7 @@ mod tests {
         // los margenes de caja.
         let theme = test_theme();
         let source = "antes\n\n    let y = 2;\n\ndespues\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 2).trim(), "let y = 2;");
         let box_w = box_width("    let y = 2;".len());
         assert_eq!(line_width(&lines, 2), box_w);
@@ -1128,7 +1145,7 @@ mod tests {
         let theme = test_theme();
         let source = "| Name | Age |\n|------|-----|\n| Ada  | 36  |\n";
         // Cursor en el header (linea 0): esa fila va cruda.
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 0), "| Name | Age |");
         assert!(
             span_of(&lines, 0, "Name ")
@@ -1152,7 +1169,7 @@ mod tests {
         let theme = test_theme();
         let source = "| A | B |\n| :--- | ---: |\n| x | y |\n";
         // Cursor en la delimitadora (linea 1): va cruda.
-        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "| :--- | ---: |");
         assert_eq!(
             span_of(&lines, 1, ":").unwrap().style.fg,
@@ -1174,7 +1191,7 @@ mod tests {
         let theme = test_theme();
         let source = "| a | bbbb |\n| --- | --- |\n| cc | d |\n\nx\n";
         // Cursor en la linea 4 ('x'), fuera de la tabla.
-        let lines = render(source, None, &[], None, &theme, Some(4), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(4), 2, 0);
         let header = line_text(&lines, 0);
         let body = line_text(&lines, 2);
         // Bordes box-drawing, sin pipes ASCII.
@@ -1195,7 +1212,7 @@ mod tests {
         // 0="", 1=header, 2=delim, 3=body, 4="", 5="x", 6=""
         let source = "\n| a | b |\n| --- | --- |\n| cc | dd |\n\nx\n";
         // Cursor en la linea 5 ('x'), fuera de la tabla y de las blancas adyacentes.
-        let lines = render(source, None, &[], None, &theme, Some(5), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(5), 2, 0);
         // Marco superior (linea 0, la blanca de arriba): `╭┬╮`.
         let top = line_text(&lines, 0);
         assert!(
@@ -1219,7 +1236,7 @@ mod tests {
         let theme = test_theme();
         let source = "\n| a | b |\n| --- | --- |\n| cc | dd |\n\nx\n";
         // Cursor en la linea 0 (la blanca de arriba): activa -> cruda.
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(
             line_text(&lines, 0),
             "",
@@ -1228,12 +1245,43 @@ mod tests {
     }
 
     #[test]
+    fn no_wrap_marca_solo_las_filas_de_grilla_de_tabla() {
+        // `no_wrap[i]` debe ser exactamente el branch de render.rs que emite
+        // `render_table_line` (grilla): la fila activa (cruda) y todo lo que
+        // no es tabla quedan en `false`; el marco/header/delimitador/cuerpo
+        // inactivos quedan en `true`.
+        let theme = test_theme();
+        // 0="" (marco sup), 1=header, 2=delim, 3=body, 4="" (marco inf), 5="x", 6=""
+        let source = "\n| a | b |\n| --- | --- |\n| cc | dd |\n\nx\n";
+        let (_lines, no_wrap) = render(source, None, &[], None, &theme, Some(5), 2, 0);
+        assert_eq!(
+            no_wrap,
+            vec![true, true, true, true, true, false, false],
+            "las lineas de la grilla (marco/header/delim/body) van no_wrap=true, el resto false"
+        );
+    }
+
+    #[test]
+    fn no_wrap_de_tabla_es_false_en_la_fila_activa_cruda() {
+        // La fila con el cursor se renderiza cruda (rama del if no tomada),
+        // asi que no_wrap es false ahi aunque sea parte de la tabla.
+        let theme = test_theme();
+        let source = "| Name | Age |\n|------|-----|\n| Ada  | 36  |\n";
+        let (_lines, no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        // El `source` termina en '\n', asi que `split('\n')` agrega una linea
+        // vacia final: al ser adyacente a la tabla, tambien se dibuja como
+        // marco inferior de la grilla (ver `tabla_cierra_el_marco_en_las_lineas_en_blanco`),
+        // asi que tambien queda no_wrap=true.
+        assert_eq!(no_wrap, vec![false, true, true, true]);
+    }
+
+    #[test]
     fn tabla_grilla_respeta_alignment_a_la_derecha() {
         // Columna right-aligned (`--:`): el padding va a la IZQUIERDA del contenido.
         let theme = test_theme();
         let source = "| num |\n| --: |\n| 7 |\n\nx\n";
         // Cursor fuera de la tabla (linea 4).
-        let lines = render(source, None, &[], None, &theme, Some(4), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(4), 2, 0);
         // Ancho de columna = max("num"=3, "7"=1) = 3. El "7" right-aligned queda
         // pegado a la derecha: tres espacios antes del 7 dentro de la celda.
         let body = line_text(&lines, 2);
@@ -1249,7 +1297,7 @@ mod tests {
         // `**` de la linea 1 no se renderean.
         let theme = test_theme();
         let source = "linea activa\nplano **negrita** fin\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 0), "linea activa");
         assert_eq!(line_text(&lines, 1), "plano negrita fin");
     }
@@ -1260,7 +1308,7 @@ mod tests {
         // no cambia respecto a Nivel 1.
         let theme = test_theme();
         let source = "linea activa\nplano **negrita** fin\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "plano **negrita** fin");
     }
 
@@ -1270,7 +1318,7 @@ mod tests {
         // inactivas.
         let theme = test_theme();
         let source = "cursor\nun *it* y `cod` aca\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "un it y cod aca");
     }
 
@@ -1281,7 +1329,7 @@ mod tests {
         // `inline` hijo del `atx_heading`).
         let theme = test_theme();
         let source = "# Titular\n\notra linea\n";
-        let lines = render(source, None, &[], None, &theme, Some(2), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(2), 2, 0);
         assert_eq!(line_text(&lines, 0), "Titular");
     }
 
@@ -1291,7 +1339,7 @@ mod tests {
         // posterior aunque tree-sitter no lo incluya en el rango del marker).
         let theme = test_theme();
         let source = "linea\n## H2\n### H3\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "H2");
         assert_eq!(line_text(&lines, 2), "H3");
     }
@@ -1301,7 +1349,7 @@ mod tests {
         // En la linea activa el `#` se ve, como en Nivel 1.
         let theme = test_theme();
         let source = "antes\n# Activa\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "# Activa");
     }
 
@@ -1311,7 +1359,7 @@ mod tests {
         // sustituye por bullet, el espacio se mantiene). Igual para `*` y `+`.
         let theme = test_theme();
         let source = "cursor\n- uno\n* dos\n+ tres\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "• uno");
         assert_eq!(line_text(&lines, 2), "• dos");
         assert_eq!(line_text(&lines, 3), "• tres");
@@ -1322,7 +1370,7 @@ mod tests {
         // `1. ordn` queda igual: el numero es informativo, no se reemplaza.
         let theme = test_theme();
         let source = "cursor\n1. ordn\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "1. ordn");
     }
 
@@ -1332,7 +1380,7 @@ mod tests {
         // sorprender al usuario que esta editando.
         let theme = test_theme();
         let source = "antes\n- activo\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "- activo");
     }
 
@@ -1342,7 +1390,7 @@ mod tests {
         // siguiente (`> linea 2`) tambien se sustituye.
         let theme = test_theme();
         let source = "antes\n> cita\n> linea 2\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "│ cita");
         assert_eq!(line_text(&lines, 2), "│ linea 2");
     }
@@ -1352,7 +1400,7 @@ mod tests {
         // `[texto](url)` queda como `texto` en linea inactiva.
         let theme = test_theme();
         let source = "cursor\nun [hola](https://x.com) link\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "un hola link");
     }
 
@@ -1361,7 +1409,7 @@ mod tests {
         // `![alt](pic.png)` queda como `alt` en linea inactiva.
         let theme = test_theme();
         let source = "cursor\nver ![logo](pic.png) abajo\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "ver logo abajo");
     }
 
@@ -1370,7 +1418,7 @@ mod tests {
         // En la linea activa el link se ve crudo (la activa renderiza Nivel 1).
         let theme = test_theme();
         let source = "antes\n[ver](https://x.com)\n";
-        let lines = render(source, None, &[], None, &theme, Some(1), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(1), 2, 0);
         assert_eq!(line_text(&lines, 1), "[ver](https://x.com)");
     }
 
@@ -1380,7 +1428,7 @@ mod tests {
         // `active_line`.
         let theme = test_theme();
         let source = "cursor\nplano **neg** fin\n";
-        let lines = render(source, None, &[], None, &theme, Some(0), 1, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(0), 1, 0);
         assert_eq!(line_text(&lines, 1), "plano **neg** fin");
     }
 
@@ -1392,7 +1440,7 @@ mod tests {
         let theme = test_theme();
         let source = "cursor\nplano **neg** fin\n";
         // Seleccion sobre la linea 0 ("cur" => bytes 0..3).
-        let lines = render(source, Some(0..3), &[], None, &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, Some(0..3), &[], None, &theme, Some(0), 2, 0);
         // La linea 1, que seria inactiva, conserva los `**`.
         assert_eq!(line_text(&lines, 1), "plano **neg** fin");
     }
@@ -1407,7 +1455,7 @@ mod tests {
         // Un solo rango: pasamos el slice tipado para evitar la ambiguedad
         // de clippy sobre arrays de un elemento.
         let matches: Vec<std::ops::Range<usize>> = vec![0..3, 5..6];
-        let lines = render(source, None, &matches, Some(0), &theme, Some(0), 2, 0);
+        let (lines, _no_wrap) = render(source, None, &matches, Some(0), &theme, Some(0), 2, 0);
         assert_eq!(line_text(&lines, 1), "plano **neg** fin");
     }
 
@@ -1418,7 +1466,7 @@ mod tests {
         // o por un futuro modo preview.
         let theme = test_theme();
         let source = "uno **dos** tres\n";
-        let lines = render(source, None, &[], None, &theme, None, 2, 0);
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, None, 2, 0);
         assert_eq!(line_text(&lines, 0), "uno dos tres");
     }
 }

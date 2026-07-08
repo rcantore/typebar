@@ -51,6 +51,14 @@ pub fn display_width(s: &str) -> usize {
     s.graphemes(true).map(grapheme_width).sum()
 }
 
+/// Itera los grafemas de `s` junto con su ancho en celdas (`grapheme_width`).
+/// Evita que cada consumidor (ej el motor de soft wrap de la TUI) tenga que
+/// agregar `unicode-segmentation` como dependencia propia solo para volver a
+/// segmentar: el core ya expone la segmentacion + el ancho juntos.
+pub fn graphemes_with_width(s: &str) -> impl Iterator<Item = (&str, usize)> {
+    s.graphemes(true).map(|g| (g, grapheme_width(g)))
+}
+
 /// Cuenta palabras segun los limites de palabra de Unicode (UAX #29): cuenta
 /// palabras reales, no espacios ni puntuacion, y anda en español, CJK, etc. sin
 /// reglas ad-hoc. Apoyado en `unicode-segmentation`, que ya es dependencia.
@@ -207,6 +215,22 @@ mod tests {
         assert_eq!(g.col_for_display(2), 1); // inicio del 2do glifo
         assert_eq!(g.col_for_display(3), 1);
         assert_eq!(g.col_for_display(99), 2); // mas alla -> fin de linea
+    }
+
+    #[test]
+    fn graphemes_with_width_empareja_cluster_y_ancho() {
+        // "a中b": grafemas y anchos emparejados en orden, sin partir el CJK.
+        let pairs: Vec<(&str, usize)> = graphemes_with_width("a中b").collect();
+        assert_eq!(pairs, vec![("a", 1), ("中", 2), ("b", 1)]);
+    }
+
+    #[test]
+    fn graphemes_with_width_no_parte_clusters_extendidos() {
+        // Familia con ZWJ: un solo item, no uno por char interno.
+        let familia = "👨\u{200D}👩\u{200D}👧";
+        let pairs: Vec<(&str, usize)> = graphemes_with_width(familia).collect();
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, familia);
     }
 
     #[test]
