@@ -50,12 +50,36 @@ const STYLE: &str = "\
     table { border-collapse: collapse; }\n\
     th, td { border: 1px solid #ccc; padding: 0.4rem 0.7rem; }\n\
     img { max-width: 100%; }\n\
-    a { color: #2563eb; }";
+    a { color: #2563eb; }\n\
+    @page { margin: 2cm; }\n\
+    @media print {\n\
+      * { color: #000 !important; background: #fff !important; }\n\
+      body { max-width: none; width: 100%; margin: 0; padding: 0; }\n\
+      a { color: #000 !important; text-decoration: none; }\n\
+      pre, blockquote, table { page-break-inside: avoid; }\n\
+    }";
 
 /// Convierte `markdown` a un documento HTML completo y standalone. `title` es
 /// el titulo de la pagina (va en `<title>`, escapado). El body lleva el HTML
 /// renderizado por pulldown-cmark con las extensiones utiles activadas.
 pub fn to_html(markdown: &str, title: &str) -> String {
+    render_html(markdown, title, false)
+}
+
+/// Igual que [`to_html`], pero pensado para "exportar a PDF via el
+/// navegador": el HTML resultante inyecta, antes de `</body>`, un `<script>`
+/// que dispara `window.print()` al cargar la pagina. Asi, al abrirlo en el
+/// navegador aparece directo el dialogo de impresion (donde el usuario elige
+/// "Guardar como PDF"), aprovechando los estilos de `@media print` de
+/// [`STYLE`].
+pub fn to_html_print(markdown: &str, title: &str) -> String {
+    render_html(markdown, title, true)
+}
+
+/// Genera el HTML standalone compartido por [`to_html`] y [`to_html_print`].
+/// `with_print_script` controla si se agrega el script de `window.print()`
+/// antes de `</body>`.
+fn render_html(markdown: &str, title: &str, with_print_script: bool) -> String {
     // Activar las extensiones utiles mas alla de CommonMark base.
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -69,6 +93,12 @@ pub fn to_html(markdown: &str, title: &str) -> String {
 
     let escaped_title = escape_html(title);
 
+    let print_script = if with_print_script {
+        "<script>window.onload = function () { window.print(); };</script>\n"
+    } else {
+        ""
+    };
+
     format!(
         "<!DOCTYPE html>\n\
 <html lang=\"en\">\n\
@@ -78,7 +108,7 @@ pub fn to_html(markdown: &str, title: &str) -> String {
   <title>{escaped_title}</title>\n\
   <style>\n{STYLE}\n  </style>\n\
 </head>\n\
-<body>\n{body}</body>\n\
+<body>\n{body}{print_script}</body>\n\
 </html>\n"
     )
 }
@@ -158,5 +188,35 @@ mod tests {
         let md = "| a | b |\n|---|---|\n| 1 | 2 |";
         let html = to_html(md, "t");
         assert!(html.contains("<table>"), "html: {html}");
+    }
+
+    #[test]
+    fn estilos_incluyen_media_print() {
+        // El HTML debe traer reglas de impresion (forzar B/N, @page, etc).
+        let html = to_html("x", "t");
+        assert!(html.contains("@media print"), "html: {html}");
+    }
+
+    #[test]
+    fn to_html_print_incluye_script_de_window_print() {
+        let html = to_html_print("x", "t");
+        assert!(html.contains("window.print"), "html: {html}");
+    }
+
+    #[test]
+    fn to_html_no_incluye_script_de_window_print() {
+        // to_html (sin el sufijo _print) no debe disparar el print dialog.
+        let html = to_html("x", "t");
+        assert!(!html.contains("window.print"), "html: {html}");
+    }
+
+    #[test]
+    fn to_html_print_sigue_siendo_standalone() {
+        let html = to_html_print("x", "a & b <c>");
+        assert!(html.contains("<!DOCTYPE html>"), "html: {html}");
+        assert!(
+            html.contains("<title>a &amp; b &lt;c&gt;</title>"),
+            "html: {html}"
+        );
     }
 }

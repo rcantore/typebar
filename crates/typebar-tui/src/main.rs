@@ -198,6 +198,60 @@ fn export_doc_to_html(doc: &Document) -> std::io::Result<std::path::PathBuf> {
     Ok(out)
 }
 
+/// Calcula el path del HTML print-ready para "exportar a PDF via el
+/// navegador": el stem del archivo del doc (ej `notes.md` -> `notes`) mas el
+/// sufijo `.print.html`, bajo el directorio temporal del sistema (para no
+/// ensuciar el directorio del usuario, a diferencia del HTML de
+/// `export_doc_to_html` que va al lado del archivo). Si el doc no tiene stem
+/// (ej path vacio), cae a `untitled`.
+fn pdf_temp_path(doc_path: &std::path::Path) -> std::path::PathBuf {
+    let stem = doc_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("untitled");
+    std::env::temp_dir().join(format!("{stem}.print.html"))
+}
+
+/// Exporta el buffer activo (su texto en memoria, con cambios sin guardar) a un
+/// HTML print-ready para "exportar a PDF via el navegador": igual que
+/// `export_doc_to_html`, pero con el script de auto-print
+/// (`export::to_html_print`) y escrito bajo el directorio temporal (ver
+/// `pdf_temp_path`), no al lado del archivo. Devuelve el path escrito; el
+/// caller lo abre en el navegador.
+fn export_doc_to_pdf(doc: &Document) -> std::io::Result<std::path::PathBuf> {
+    let title = doc.path.to_string_lossy();
+    let html = export::to_html_print(&doc.text(), &title);
+    let out = pdf_temp_path(&doc.path);
+    std::fs::write(&out, html)?;
+    Ok(out)
+}
+
+/// Abre `path` en el navegador default del sistema sin esperar a que el
+/// proceso termine (`spawn`, no `status`/`output`): el editor sigue andando
+/// mientras el usuario ve/imprime la pagina. Un comando distinto por
+/// plataforma, todos ya presentes en el sistema (sin dependencias nuevas).
+#[cfg(target_os = "macos")]
+fn open_in_browser(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(path).spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn open_in_browser(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open").arg(path).spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_in_browser(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", ""])
+        .arg(path)
+        .spawn()?;
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     // Saltar argv[0] (nombre del binario).
     let args = parse_args(std::env::args().skip(1));
@@ -705,6 +759,19 @@ fn dispatch_action(
         Action::ExportHtml => {
             state.flash = Some(match export_doc_to_html(workspace.active()) {
                 Ok(out) => i18n::exported_to(&out),
+                Err(e) => i18n::export_failed(e),
+            });
+        }
+        // Exportar a PDF "via el navegador": HTML print-ready en el directorio
+        // temporal, abierto en el navegador default para que el usuario guarde
+        // como PDF desde el dialogo de impresion. Cualquier falla (export o
+        // apertura) va al flash, no tumba el editor.
+        Action::ExportPdf => {
+            state.flash = Some(match export_doc_to_pdf(workspace.active()) {
+                Ok(out) => match open_in_browser(&out) {
+                    Ok(()) => i18n::exported_to(&out),
+                    Err(e) => i18n::export_failed(e),
+                },
                 Err(e) => i18n::export_failed(e),
             });
         }
@@ -1262,6 +1329,7 @@ fn apply_action(
         | Action::ToggleWhitepaper
         | Action::ToggleLightTheme
         | Action::ExportHtml
+        | Action::ExportPdf
         | Action::NewBuffer
         | Action::NextBuffer
         | Action::PrevBuffer
@@ -1782,6 +1850,26 @@ mod tests {
             html_output_path("notes"),
             std::path::PathBuf::from("notes.html")
         );
+    }
+
+    #[test]
+    fn pdf_temp_path_usa_el_stem_y_vive_en_temp_dir() {
+        let out = pdf_temp_path(std::path::Path::new("notes.md"));
+        assert_eq!(out, std::env::temp_dir().join("notes.print.html"));
+    }
+
+    #[test]
+    fn pdf_temp_path_sin_extension_agrega_el_sufijo() {
+        let out = pdf_temp_path(std::path::Path::new("notes"));
+        assert_eq!(out, std::env::temp_dir().join("notes.print.html"));
+    }
+
+    #[test]
+    fn pdf_temp_path_sin_stem_cae_a_untitled() {
+        // Un path sin nombre de archivo (ej vacio) no tiene stem: cae a
+        // "untitled" en vez de producir un path invalido/vacio.
+        let out = pdf_temp_path(std::path::Path::new(""));
+        assert_eq!(out, std::env::temp_dir().join("untitled.print.html"));
     }
 
     #[test]

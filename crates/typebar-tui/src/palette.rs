@@ -54,6 +54,7 @@ const CATALOG: &[(Key, &[(Action, Key)])] = &[
             (Action::OpenSwitcher, Key::HintSwitcher),
             (Action::CloseBuffer, Key::HintCloseBuffer),
             (Action::ExportHtml, Key::HintExportHtml),
+            (Action::ExportPdf, Key::HintExportPdf),
         ],
     ),
     (

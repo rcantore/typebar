@@ -140,6 +140,12 @@ pub enum Action {
     /// `--export-html`, exporta el contenido en memoria (cambios sin guardar
     /// incluidos). Lo maneja `run` (escribe el archivo y setea el flash).
     ExportHtml,
+    /// Exportar el buffer ACTUAL a PDF "via el navegador": genera un HTML
+    /// print-ready (con `window.print()` al cargar) en el directorio temporal
+    /// del sistema y lo abre en el navegador default; el usuario guarda como
+    /// PDF desde el dialogo de impresion. Palette-only, como `ExportHtml`. Lo
+    /// maneja `run` (escribe el archivo, lo abre y setea el flash).
+    ExportPdf,
     /// Ciclar el preset de keybindings activo (standard -> vim -> wordstar ->
     /// standard...), desde el submenu "view" (`^O K` / `z k`). Reconstruye el
     /// keymap en runtime (con los overrides del usuario reaplicados), refleja

@@ -102,6 +102,9 @@ pub enum Key {
     HintWhitepaper,
     /// Exportar el buffer actual a HTML (paleta de comandos).
     HintExportHtml,
+    /// Exportar el buffer actual a PDF: abre un HTML print-ready en el
+    /// navegador (paleta de comandos).
+    HintExportPdf,
     /// Nuevo archivo / buffer vacio ("Nuevo" / "New").
     HintNew,
     /// Cerrar el buffer activo ("Cerrar buffer" / "Close buffer").
@@ -242,6 +245,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintWhitepaper) => "Paper",
         (Locale::Es, Key::HintExportHtml) => "Exportar HTML",
         (Locale::En, Key::HintExportHtml) => "Export HTML",
+        (Locale::Es, Key::HintExportPdf) => "Exportar PDF…",
+        (Locale::En, Key::HintExportPdf) => "Export PDF…",
         (Locale::Es, Key::HintNew) => "Nuevo",
         (Locale::En, Key::HintNew) => "New",
         (Locale::Es, Key::HintCloseBuffer) => "Cerrar buffer",
@@ -463,6 +468,8 @@ mod tests {
             t_for(Locale::En, Key::MinibufferReplaceHelp),
             "Tab switches field · Enter replaces all"
         );
+        assert_eq!(t_for(Locale::Es, Key::HintExportPdf), "Exportar PDF…");
+        assert_eq!(t_for(Locale::En, Key::HintExportPdf), "Export PDF…");
         assert_eq!(
             t_for(Locale::Es, Key::HintCycleKeymap),
             "Ciclar keybindings"
