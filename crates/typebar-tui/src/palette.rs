@@ -54,6 +54,7 @@ const CATALOG: &[(Key, &[(Action, Key)])] = &[
             (Action::OpenSwitcher, Key::HintSwitcher),
             (Action::CloseBuffer, Key::HintCloseBuffer),
             (Action::ExportHtml, Key::HintExportHtml),
+            (Action::ExportPdf, Key::HintExportPdf),
         ],
     ),
     (
@@ -81,6 +82,7 @@ const CATALOG: &[(Key, &[(Action, Key)])] = &[
             (Action::OpenThemePicker, Key::HintTheme),
             (Action::ToggleZen, Key::HintZen),
             (Action::ToggleWhitepaper, Key::HintWhitepaper),
+            (Action::CycleKeymapPreset, Key::HintCycleKeymap),
         ],
     ),
     (

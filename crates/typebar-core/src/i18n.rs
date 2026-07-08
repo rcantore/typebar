@@ -102,6 +102,9 @@ pub enum Key {
     HintWhitepaper,
     /// Exportar el buffer actual a HTML (paleta de comandos).
     HintExportHtml,
+    /// Exportar el buffer actual a PDF: abre un HTML print-ready en el
+    /// navegador (paleta de comandos).
+    HintExportPdf,
     /// Nuevo archivo / buffer vacio ("Nuevo" / "New").
     HintNew,
     /// Cerrar el buffer activo ("Cerrar buffer" / "Close buffer").
@@ -136,6 +139,9 @@ pub enum Key {
     ThemeCurrent,
     /// Label del comando/submenu que abre el theme picker ("Tema…" / "Theme…").
     HintTheme,
+    /// Ciclar el preset de keybindings activo en runtime (paleta de
+    /// comandos).
+    HintCycleKeymap,
 
     // --- Status bar: nombres de modo (en MAYUSCULAS) -----------------------
     ModeNormal,
@@ -239,6 +245,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::HintWhitepaper) => "Paper",
         (Locale::Es, Key::HintExportHtml) => "Exportar HTML",
         (Locale::En, Key::HintExportHtml) => "Export HTML",
+        (Locale::Es, Key::HintExportPdf) => "Exportar PDF…",
+        (Locale::En, Key::HintExportPdf) => "Export PDF…",
         (Locale::Es, Key::HintNew) => "Nuevo",
         (Locale::En, Key::HintNew) => "New",
         (Locale::Es, Key::HintCloseBuffer) => "Cerrar buffer",
@@ -273,6 +281,8 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         (Locale::En, Key::ThemeCurrent) => "current",
         (Locale::Es, Key::HintTheme) => "Tema…",
         (Locale::En, Key::HintTheme) => "Theme…",
+        (Locale::Es, Key::HintCycleKeymap) => "Ciclar keybindings",
+        (Locale::En, Key::HintCycleKeymap) => "Cycle keybindings",
 
         // --- Status bar (nombres de modo) ---------------------------------
         (Locale::Es, Key::ModeNormal) => "NORMAL",
@@ -382,6 +392,16 @@ pub fn export_failed(err: impl std::fmt::Display) -> String {
     }
 }
 
+/// "Keybindings: {name}": confirmacion en el flash de que se ciclo al preset
+/// `name` (mismo texto en ambos locales: es el nombre propio del preset, no
+/// hay nada que traducir alrededor).
+pub fn keymap_set_to(name: &str) -> String {
+    match locale() {
+        Locale::Es => format!("Keybindings: {name}"),
+        Locale::En => format!("Keybindings: {name}"),
+    }
+}
+
 // --- Contador de palabras (status bar) --------------------------------------
 
 /// Label "word(s)" / "palabra(s)" segun locale y singular/plural. Privado: el
@@ -448,6 +468,19 @@ mod tests {
             t_for(Locale::En, Key::MinibufferReplaceHelp),
             "Tab switches field · Enter replaces all"
         );
+        assert_eq!(t_for(Locale::Es, Key::HintExportPdf), "Exportar PDF…");
+        assert_eq!(t_for(Locale::En, Key::HintExportPdf), "Export PDF…");
+        assert_eq!(
+            t_for(Locale::Es, Key::HintCycleKeymap),
+            "Ciclar keybindings"
+        );
+        assert_eq!(t_for(Locale::En, Key::HintCycleKeymap), "Cycle keybindings");
+    }
+
+    #[test]
+    fn keymap_set_to_arma_el_mensaje_con_el_nombre_del_preset() {
+        assert_eq!(keymap_set_to("vim"), "Keybindings: vim");
+        assert_eq!(keymap_set_to("emacs"), "Keybindings: emacs");
     }
 
     #[test]

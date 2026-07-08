@@ -23,7 +23,9 @@ use typebar_core::document::{Document, Mode};
 use typebar_core::markdown::InlineKind;
 use typebar_core::{buffers, export, files, i18n};
 
-use keybinding::{Action, Binding, CustomKeymap, Keymap, Resolve, keymap_from_name, parse_binding};
+use keybinding::{
+    Action, Binding, CustomKeymap, Keymap, Resolve, keymap_from_name, next_preset, parse_binding,
+};
 use overlay::Overlay;
 use palette::{Palette, PaletteOutcome};
 use switcher::{Switcher, SwitcherOutcome};
@@ -196,6 +198,60 @@ fn export_doc_to_html(doc: &Document) -> std::io::Result<std::path::PathBuf> {
     Ok(out)
 }
 
+/// Calcula el path del HTML print-ready para "exportar a PDF via el
+/// navegador": el stem del archivo del doc (ej `notes.md` -> `notes`) mas el
+/// sufijo `.print.html`, bajo el directorio temporal del sistema (para no
+/// ensuciar el directorio del usuario, a diferencia del HTML de
+/// `export_doc_to_html` que va al lado del archivo). Si el doc no tiene stem
+/// (ej path vacio), cae a `untitled`.
+fn pdf_temp_path(doc_path: &std::path::Path) -> std::path::PathBuf {
+    let stem = doc_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("untitled");
+    std::env::temp_dir().join(format!("{stem}.print.html"))
+}
+
+/// Exporta el buffer activo (su texto en memoria, con cambios sin guardar) a un
+/// HTML print-ready para "exportar a PDF via el navegador": igual que
+/// `export_doc_to_html`, pero con el script de auto-print
+/// (`export::to_html_print`) y escrito bajo el directorio temporal (ver
+/// `pdf_temp_path`), no al lado del archivo. Devuelve el path escrito; el
+/// caller lo abre en el navegador.
+fn export_doc_to_pdf(doc: &Document) -> std::io::Result<std::path::PathBuf> {
+    let title = doc.path.to_string_lossy();
+    let html = export::to_html_print(&doc.text(), &title);
+    let out = pdf_temp_path(&doc.path);
+    std::fs::write(&out, html)?;
+    Ok(out)
+}
+
+/// Abre `path` en el navegador default del sistema sin esperar a que el
+/// proceso termine (`spawn`, no `status`/`output`): el editor sigue andando
+/// mientras el usuario ve/imprime la pagina. Un comando distinto por
+/// plataforma, todos ya presentes en el sistema (sin dependencias nuevas).
+#[cfg(target_os = "macos")]
+fn open_in_browser(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(path).spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn open_in_browser(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open").arg(path).spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_in_browser(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", ""])
+        .arg(path)
+        .spawn()?;
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     // Saltar argv[0] (nombre del binario).
     let args = parse_args(std::env::args().skip(1));
@@ -231,8 +287,12 @@ fn main() -> std::io::Result<()> {
     i18n::init(locale);
 
     let preset = resolve_preset(args.preset, &config);
+    // Overrides del usuario: se sacan de `config` aca (no solo se piden prestados)
+    // porque `run` los necesita enteros para poder reconstruir el keymap si el
+    // usuario cicla de preset en runtime (`CycleKeymapPreset`).
+    let binds = config.keybindings.bind;
     // Preset base + overrides del usuario encima (si los hay).
-    let keymap = apply_overrides(keymap_from_name(&preset), &config.keybindings.bind);
+    let keymap = apply_overrides(keymap_from_name(&preset), &binds);
 
     // Themes para el toggle `^O L` (claro <-> oscuro en runtime). El claro es
     // siempre Latte; el oscuro es el configurado, salvo que el config YA sea Latte
@@ -273,7 +333,7 @@ fn main() -> std::io::Result<()> {
     let result = run(
         &mut terminal,
         document,
-        keymap.as_ref(),
+        keymap,
         Themes {
             dark: dark_theme,
             light: light_theme,
@@ -282,6 +342,8 @@ fn main() -> std::io::Result<()> {
         configured_is_light,
         base_theme_id,
         wysiwyg_level,
+        preset,
+        binds,
     );
     if config.ui.mouse {
         let _ = ratatui::crossterm::execute!(
@@ -348,6 +410,11 @@ struct AppState {
     /// picker y para saber que persistir. Lo actualiza el picker al aceptar; los
     /// toggles de vista (claro/papel) no lo tocan (siguen siendo capas encima).
     theme_id: String,
+    /// Id del preset de keybindings activo (`standard`/`vim`/`wordstar`), para
+    /// saber cual sigue al ciclar (`CycleKeymapPreset`) y que persistir. NO se lee
+    /// de `keymap.name()`: un `CustomKeymap` delega el nombre al preset base y
+    /// podria no calzar con este id.
+    preset_id: String,
     /// Mensaje transitorio en la status bar (ej "save failed: ..."): se muestra en
     /// el proximo frame y se limpia al apretar la siguiente tecla. Evita que un
     /// error de guardado tumbe el editor (writing-first: nunca perder el buffer).
@@ -376,6 +443,9 @@ impl AppState {
             // Se sobreescribe en `run` con el id realmente configurado; "frappe" es
             // el default coherente con `DEFAULT_THEME`.
             theme_id: theme::DEFAULT_THEME.to_string(),
+            // Se sobreescribe en `run` con el preset realmente resuelto; coherente
+            // con `DEFAULT_PRESET`.
+            preset_id: DEFAULT_PRESET.to_string(),
             flash: None,
             confirm: None,
         }
@@ -394,11 +464,13 @@ struct Themes {
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
     doc: Document,
-    keymap: &dyn Keymap,
+    mut keymap: Box<dyn Keymap>,
     mut themes: Themes,
     light_on: bool,
     theme_id: String,
     wysiwyg_level: u8,
+    preset_id: String,
+    binds: Vec<config::BindEntry>,
 ) -> std::io::Result<()> {
     // Los buffers abiertos. El editor siempre opera sobre el activo
     // (`workspace.active*`); el multi-archivo es transparente para draw/acciones/
@@ -409,6 +481,10 @@ fn run(
     // El theme base configurado (para el marcador "actual" del theme picker y para
     // la persistencia del theme elegido).
     state.theme_id = theme_id;
+    // El preset activo (para saber cual sigue al ciclar `CycleKeymapPreset`; NO se
+    // lee de `keymap.name()` porque un `CustomKeymap` delega el nombre al preset
+    // base y podria no calzar).
+    state.preset_id = preset_id;
 
     loop {
         // Theme activo (owned; `Theme` es `Copy`, asi que copiarlo es barato). Base:
@@ -450,7 +526,7 @@ fn run(
             draw(
                 frame,
                 workspace.active(),
-                keymap,
+                keymap.as_ref(),
                 &theme,
                 wysiwyg_level,
                 &mut state,
@@ -524,7 +600,7 @@ fn run(
                 PaletteOutcome::Accept(action) => {
                     state.palette = None;
                     let before = workspace.active_index();
-                    match dispatch_action(action, &mut workspace, keymap, &mut state) {
+                    match dispatch_action(action, &mut workspace, &mut keymap, &mut state, &binds) {
                         Ok(true) => return Ok(()),
                         Ok(false) => {}
                         // Un error (de guardado) NO tumba el editor: se muestra y sigue.
@@ -616,7 +692,7 @@ fn run(
                 // Un error (de guardado) NO tumba el editor: se muestra y sigue. Si
                 // la accion cambio de buffer, se resetea el scroll compartido.
                 let before = workspace.active_index();
-                match dispatch_action(action, &mut workspace, keymap, &mut state) {
+                match dispatch_action(action, &mut workspace, &mut keymap, &mut state, &binds) {
                     Ok(true) => return Ok(()),
                     Ok(false) => {}
                     Err(e) => state.flash = Some(format!("save failed: {e}")),
@@ -646,8 +722,9 @@ fn run(
 fn dispatch_action(
     action: Action,
     workspace: &mut buffers::Workspace,
-    keymap: &dyn Keymap,
+    keymap: &mut Box<dyn Keymap>,
     state: &mut AppState,
+    binds: &[config::BindEntry],
 ) -> std::io::Result<bool> {
     match action {
         // Estas acciones tocan estado de la vista del loop, no el doc.
@@ -660,11 +737,41 @@ fn dispatch_action(
         Action::ToggleWhitepaper => state.whitepaper = !state.whitepaper,
         // Togglear el theme claro (Latte) <-> oscuro en runtime (submenu view).
         Action::ToggleLightTheme => state.light_on = !state.light_on,
+        // Ciclar el preset de keybindings activo (submenu view): reconstruye el
+        // keymap con el preset siguiente (los overrides del usuario se reaplican
+        // encima), refleja el cambio en la status bar/toolbar (se recalculan cada
+        // frame a partir de `keymap`) y lo persiste en el config. `preset_id` (no
+        // `keymap.name()`) es la fuente de verdad del preset actual, porque un
+        // `CustomKeymap` delega el nombre al preset base.
+        Action::CycleKeymapPreset => {
+            let next = next_preset(&state.preset_id);
+            *keymap = apply_overrides(keymap_from_name(next), binds);
+            state.preset_id = next.to_string();
+            state.flash = Some(i18n::keymap_set_to(next));
+            // Persistir best-effort, igual que el theme picker: si falla se avisa
+            // en el flash, pero el keymap ya cambio en vivo de todos modos.
+            if let Err(e) = config::persist_preset(next) {
+                state.flash = Some(format!("keymap not saved: {e}"));
+            }
+        }
         // Exportar el buffer actual a HTML sin salir; el resultado (path o error)
         // va al flash, no tumba el editor. Escribe a `<archivo>.html` al lado.
         Action::ExportHtml => {
             state.flash = Some(match export_doc_to_html(workspace.active()) {
                 Ok(out) => i18n::exported_to(&out),
+                Err(e) => i18n::export_failed(e),
+            });
+        }
+        // Exportar a PDF "via el navegador": HTML print-ready en el directorio
+        // temporal, abierto en el navegador default para que el usuario guarde
+        // como PDF desde el dialogo de impresion. Cualquier falla (export o
+        // apertura) va al flash, no tumba el editor.
+        Action::ExportPdf => {
+            state.flash = Some(match export_doc_to_pdf(workspace.active()) {
+                Ok(out) => match open_in_browser(&out) {
+                    Ok(()) => i18n::exported_to(&out),
+                    Err(e) => i18n::export_failed(e),
+                },
                 Err(e) => i18n::export_failed(e),
             });
         }
@@ -704,7 +811,7 @@ fn dispatch_action(
         }
         // Abrir la paleta de comandos. Como `OpenPalette` se excluye del catalogo
         // de comandos, no hay forma de recursar desde la propia paleta.
-        Action::OpenPalette => state.palette = Some(Palette::new(keymap)),
+        Action::OpenPalette => state.palette = Some(Palette::new(keymap.as_ref())),
         // Abrir el theme picker. El "actual" que marca es lo que se ve ahora: papel
         // o claro si algun toggle de vista esta activo, si no la base oscura.
         Action::OpenThemePicker => {
@@ -1222,13 +1329,15 @@ fn apply_action(
         | Action::ToggleWhitepaper
         | Action::ToggleLightTheme
         | Action::ExportHtml
+        | Action::ExportPdf
         | Action::NewBuffer
         | Action::NextBuffer
         | Action::PrevBuffer
         | Action::CloseBuffer
         | Action::OpenSwitcher
         | Action::OpenPalette
-        | Action::OpenThemePicker => {}
+        | Action::OpenThemePicker
+        | Action::CycleKeymapPreset => {}
     }
     Ok(false)
 }
@@ -1741,6 +1850,26 @@ mod tests {
             html_output_path("notes"),
             std::path::PathBuf::from("notes.html")
         );
+    }
+
+    #[test]
+    fn pdf_temp_path_usa_el_stem_y_vive_en_temp_dir() {
+        let out = pdf_temp_path(std::path::Path::new("notes.md"));
+        assert_eq!(out, std::env::temp_dir().join("notes.print.html"));
+    }
+
+    #[test]
+    fn pdf_temp_path_sin_extension_agrega_el_sufijo() {
+        let out = pdf_temp_path(std::path::Path::new("notes"));
+        assert_eq!(out, std::env::temp_dir().join("notes.print.html"));
+    }
+
+    #[test]
+    fn pdf_temp_path_sin_stem_cae_a_untitled() {
+        // Un path sin nombre de archivo (ej vacio) no tiene stem: cae a
+        // "untitled" en vez de producir un path invalido/vacio.
+        let out = pdf_temp_path(std::path::Path::new(""));
+        assert_eq!(out, std::env::temp_dir().join("untitled.print.html"));
     }
 
     #[test]

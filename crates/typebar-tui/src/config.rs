@@ -203,35 +203,67 @@ fn persist_theme_to(path: &Path, id: &str) -> std::io::Result<()> {
     std::fs::write(path, updated)
 }
 
-/// Devuelve el contenido TOML de `raw` con `theme = "<id>"` bajo la seccion
-/// `[ui]`, tocando lo MINIMO: si la clave ya existe en `[ui]` reemplaza su valor;
-/// si existe la seccion `[ui]` pero no la clave, la inserta tras el header; si no
-/// hay `[ui]`, la agrega al final. El resto del archivo (otras secciones,
-/// comentarios, formato) queda igual. Trabaja por lineas para no depender de un
-/// editor TOML format-preserving.
-fn set_ui_theme(raw: &str, id: &str) -> String {
-    let new_line = format!("theme = \"{id}\"");
+/// Persiste el preset de keybindings elegido (paleta / switcher de keymaps) en
+/// el config del usuario, editando SOLO la clave `[keybindings] preset` y
+/// dejando el resto del archivo intacto (theme, comentarios, formato, otras
+/// claves). Crea el archivo (y su dir) si no existe. Best-effort: devuelve
+/// `Err` si no hay dir de config o falla el IO (permisos), y el caller lo
+/// muestra en el flash sin romper nada.
+pub fn persist_preset(id: &str) -> std::io::Result<PathBuf> {
+    let path = config_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no hay directorio de config conocido",
+        )
+    })?;
+    persist_preset_to(&path, id)?;
+    Ok(path)
+}
+
+/// Nucleo de `persist_preset` parametrizado por `path` (asi se testea el ciclo
+/// read-modify-write completo sin tocar el config real del usuario). Lee el
+/// archivo (o arranca de vacio si no existe), le fija el preset y lo reescribe,
+/// creando el directorio padre si hace falta.
+fn persist_preset_to(path: &Path, id: &str) -> std::io::Result<()> {
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let updated = set_keybindings_preset(&existing, id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, updated)
+}
+
+/// Nucleo compartido de edicion TOML por lineas: devuelve `raw` con
+/// `key = value` bajo `[section]`, tocando lo MINIMO. Si la clave ya existe en
+/// la seccion reemplaza su valor; si existe la seccion pero no la clave, la
+/// inserta tras el header; si no existe la seccion, la agrega al final. El
+/// resto del archivo (otras secciones, comentarios, formato) queda igual.
+/// Trabaja por lineas para no depender de un editor TOML format-preserving.
+/// `value` va ya formateado (ej. `"\"dracula\""` para un string TOML).
+fn set_toml_key(raw: &str, section: &str, key: &str, value: &str) -> String {
+    let new_line = format!("{key} = {value}");
+    let section_header = format!("[{section}]");
     let mut out: Vec<String> = Vec::new();
-    let mut in_ui = false;
-    let mut ui_header_idx: Option<usize> = None;
+    let mut in_section = false;
+    let mut section_header_idx: Option<usize> = None;
     let mut replaced = false;
 
     for line in raw.lines() {
         let trimmed = line.trim_start();
         // Header de seccion: `[algo]` (no `[[algo]]`, que es array-of-tables).
         if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
-            in_ui = trimmed.trim_end() == "[ui]";
-            if in_ui {
-                ui_header_idx = Some(out.len());
+            in_section = trimmed.trim_end() == section_header;
+            if in_section {
+                section_header_idx = Some(out.len());
             }
         }
-        // Dentro de `[ui]`, una clave `theme =` (no comentada) se reemplaza.
-        if in_ui
+        // Dentro de la seccion, la clave buscada (no comentada) se reemplaza.
+        if in_section
             && !replaced
             && !trimmed.starts_with('#')
             && trimmed
                 .split_once('=')
-                .is_some_and(|(k, _)| k.trim() == "theme")
+                .is_some_and(|(k, _)| k.trim() == key)
         {
             // Preservar la indentacion original de la linea.
             let indent = &line[..line.len() - trimmed.len()];
@@ -243,16 +275,16 @@ fn set_ui_theme(raw: &str, id: &str) -> String {
     }
 
     if !replaced {
-        match ui_header_idx {
-            // Hay `[ui]` pero sin `theme`: insertar la clave justo tras el header.
+        match section_header_idx {
+            // Hay seccion pero sin la clave: insertarla justo tras el header.
             Some(idx) => out.insert(idx + 1, new_line),
-            // No hay `[ui]`: agregar la seccion al final (con una linea en blanco
+            // No hay la seccion: agregarla al final (con una linea en blanco
             // de separacion si el archivo no estaba vacio).
             None => {
                 if !out.is_empty() && out.last().is_some_and(|l| !l.trim().is_empty()) {
                     out.push(String::new());
                 }
-                out.push("[ui]".to_string());
+                out.push(section_header);
                 out.push(new_line);
             }
         }
@@ -264,6 +296,18 @@ fn set_ui_theme(raw: &str, id: &str) -> String {
         result.push('\n');
     }
     result
+}
+
+/// Devuelve el contenido TOML de `raw` con `theme = "<id>"` bajo la seccion
+/// `[ui]` (ver `set_toml_key`).
+fn set_ui_theme(raw: &str, id: &str) -> String {
+    set_toml_key(raw, "ui", "theme", &format!("\"{id}\""))
+}
+
+/// Devuelve el contenido TOML de `raw` con `preset = "<id>"` bajo la seccion
+/// `[keybindings]` (ver `set_toml_key`).
+fn set_keybindings_preset(raw: &str, id: &str) -> String {
+    set_toml_key(raw, "keybindings", "preset", &format!("\"{id}\""))
 }
 
 #[cfg(test)]
@@ -390,6 +434,90 @@ mod tests {
         let config = load_from_path(&path);
         assert_eq!(config.ui.theme, "gruvbox");
         assert_eq!(config.keybindings.preset.as_deref(), Some("vim"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Cada resultado de `set_keybindings_preset` debe seguir parseando al
+    /// preset esperado.
+    fn preset_de(raw: &str) -> Option<String> {
+        parse_config(raw, "<test>").keybindings.preset
+    }
+
+    #[test]
+    fn set_preset_en_archivo_vacio_crea_la_seccion() {
+        let out = set_keybindings_preset("", "vim");
+        assert_eq!(out, "[keybindings]\npreset = \"vim\"\n");
+        assert_eq!(preset_de(&out).as_deref(), Some("vim"));
+    }
+
+    #[test]
+    fn set_preset_reemplaza_la_clave_existente() {
+        let raw = "[keybindings]\npreset = \"vim\"\n";
+        let out = set_keybindings_preset(raw, "wordstar");
+        assert_eq!(preset_de(&out).as_deref(), Some("wordstar"));
+        // Una sola linea de preset (no duplico).
+        assert_eq!(out.matches("preset =").count(), 1);
+    }
+
+    #[test]
+    fn set_preset_preserva_la_seccion_ui_del_usuario() {
+        // Con [ui] pero sin [keybindings]: se agrega [keybindings] sin tocar [ui].
+        let raw = "[ui]\ntheme = \"nord\"\n";
+        let out = set_keybindings_preset(raw, "wordstar");
+        let config = parse_config(&out, "<test>");
+        assert_eq!(config.keybindings.preset.as_deref(), Some("wordstar"));
+        assert_eq!(config.ui.theme, "nord");
+        assert!(out.contains("[keybindings]"));
+    }
+
+    #[test]
+    fn persist_y_recargar_devuelve_el_preset_guardado() {
+        // El escenario del usuario: cambiar el preset de keybindings, "salir" y
+        // volver a cargar el config debe devolver el preset elegido (persiste el
+        // ciclo completo). Se guarda en un archivo temporal propio para no tocar
+        // el config real del usuario.
+        let dir = std::env::temp_dir().join("typebar-test-persist-preset");
+        let _ = std::fs::remove_dir_all(&dir); // limpiar restos de corridas previas
+        let path = dir.join("config.toml");
+
+        // Sin archivo previo: se crea con el preset.
+        persist_preset_to(&path, "vim").unwrap();
+        assert_eq!(
+            load_from_path(&path).keybindings.preset.as_deref(),
+            Some("vim")
+        );
+
+        // Segundo cambio: reemplaza (no duplica) y sigue cargando bien.
+        persist_preset_to(&path, "wordstar").unwrap();
+        assert_eq!(
+            load_from_path(&path).keybindings.preset.as_deref(),
+            Some("wordstar")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .matches("preset =")
+                .count(),
+            1
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persist_preset_preserva_ui_del_usuario() {
+        // Persistir el preset NO debe pisar la config de UI del usuario.
+        let dir = std::env::temp_dir().join("typebar-test-persist-preset-ui");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("config.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "[ui]\ntheme = \"nord\"\n").unwrap();
+
+        persist_preset_to(&path, "wordstar").unwrap();
+        let config = load_from_path(&path);
+        assert_eq!(config.keybindings.preset.as_deref(), Some("wordstar"));
+        assert_eq!(config.ui.theme, "nord");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
