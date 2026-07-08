@@ -288,8 +288,8 @@ fn main() -> std::io::Result<()> {
 
     let preset = resolve_preset(args.preset, &config);
     // Overrides del usuario: se sacan de `config` aca (no solo se piden prestados)
-    // porque `run` los necesita enteros para poder reconstruir el keymap si el
-    // usuario cicla de preset en runtime (`CycleKeymapPreset`).
+    // porque `run` los necesita enteros, via `KeymapState`, para poder reconstruir
+    // el keymap si el usuario cicla de preset en runtime (`CycleKeymapPreset`).
     let binds = config.keybindings.bind;
     // Preset base + overrides del usuario encima (si los hay).
     let keymap = apply_overrides(keymap_from_name(&preset), &binds);
@@ -333,7 +333,11 @@ fn main() -> std::io::Result<()> {
     let result = run(
         &mut terminal,
         document,
-        keymap,
+        KeymapState {
+            keymap,
+            preset_id: preset,
+            binds,
+        },
         Themes {
             dark: dark_theme,
             light: light_theme,
@@ -342,8 +346,6 @@ fn main() -> std::io::Result<()> {
         configured_is_light,
         base_theme_id,
         wysiwyg_level,
-        preset,
-        binds,
     );
     if config.ui.mouse {
         let _ = ratatui::crossterm::execute!(
@@ -410,11 +412,6 @@ struct AppState {
     /// picker y para saber que persistir. Lo actualiza el picker al aceptar; los
     /// toggles de vista (claro/papel) no lo tocan (siguen siendo capas encima).
     theme_id: String,
-    /// Id del preset de keybindings activo (`standard`/`vim`/`wordstar`), para
-    /// saber cual sigue al ciclar (`CycleKeymapPreset`) y que persistir. NO se lee
-    /// de `keymap.name()`: un `CustomKeymap` delega el nombre al preset base y
-    /// podria no calzar con este id.
-    preset_id: String,
     /// Mensaje transitorio en la status bar (ej "save failed: ..."): se muestra en
     /// el proximo frame y se limpia al apretar la siguiente tecla. Evita que un
     /// error de guardado tumbe el editor (writing-first: nunca perder el buffer).
@@ -443,9 +440,6 @@ impl AppState {
             // Se sobreescribe en `run` con el id realmente configurado; "frappe" es
             // el default coherente con `DEFAULT_THEME`.
             theme_id: theme::DEFAULT_THEME.to_string(),
-            // Se sobreescribe en `run` con el preset realmente resuelto; coherente
-            // con `DEFAULT_PRESET`.
-            preset_id: DEFAULT_PRESET.to_string(),
             flash: None,
             confirm: None,
         }
@@ -461,16 +455,29 @@ struct Themes {
     paper: Theme,
 }
 
+/// El keymap activo junto con lo necesario para reconstruirlo en runtime
+/// (`CycleKeymapPreset`): el id del preset actual y los overrides del usuario.
+/// Agrupar estos tres campos evita threadearlos como params sueltos por `run` y
+/// `dispatch_action`.
+struct KeymapState {
+    keymap: Box<dyn Keymap>,
+    /// Id del preset activo (standard/vim/wordstar). NO se lee de `keymap.name()`:
+    /// un `CustomKeymap` delega el nombre al preset base y podria no calzar con
+    /// este id.
+    preset_id: String,
+    /// Overrides del usuario (config), para reaplicarlos encima del preset nuevo
+    /// al ciclar (`CycleKeymapPreset`).
+    binds: Vec<config::BindEntry>,
+}
+
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
     doc: Document,
-    mut keymap: Box<dyn Keymap>,
+    mut keys: KeymapState,
     mut themes: Themes,
     light_on: bool,
     theme_id: String,
     wysiwyg_level: u8,
-    preset_id: String,
-    binds: Vec<config::BindEntry>,
 ) -> std::io::Result<()> {
     // Los buffers abiertos. El editor siempre opera sobre el activo
     // (`workspace.active*`); el multi-archivo es transparente para draw/acciones/
@@ -481,10 +488,6 @@ fn run(
     // El theme base configurado (para el marcador "actual" del theme picker y para
     // la persistencia del theme elegido).
     state.theme_id = theme_id;
-    // El preset activo (para saber cual sigue al ciclar `CycleKeymapPreset`; NO se
-    // lee de `keymap.name()` porque un `CustomKeymap` delega el nombre al preset
-    // base y podria no calzar).
-    state.preset_id = preset_id;
 
     loop {
         // Theme activo (owned; `Theme` es `Copy`, asi que copiarlo es barato). Base:
@@ -526,7 +529,7 @@ fn run(
             draw(
                 frame,
                 workspace.active(),
-                keymap.as_ref(),
+                keys.keymap.as_ref(),
                 &theme,
                 wysiwyg_level,
                 &mut state,
@@ -572,7 +575,7 @@ fn run(
                     // queda abierto, intacto.
                     match workspace.active_mut().save() {
                         Ok(()) => {
-                            workspace.close_active(keymap.initial_mode());
+                            workspace.close_active(keys.keymap.initial_mode());
                             state.scroll = 0;
                         }
                         Err(e) => state.flash = Some(format!("save failed: {e}")),
@@ -580,7 +583,7 @@ fn run(
                 }
                 KeyCode::Char('d') => {
                     state.confirm = None;
-                    workspace.close_active(keymap.initial_mode());
+                    workspace.close_active(keys.keymap.initial_mode());
                     state.scroll = 0;
                 }
                 KeyCode::Char('c') | KeyCode::Esc => state.confirm = None,
@@ -600,7 +603,7 @@ fn run(
                 PaletteOutcome::Accept(action) => {
                     state.palette = None;
                     let before = workspace.active_index();
-                    match dispatch_action(action, &mut workspace, &mut keymap, &mut state, &binds) {
+                    match dispatch_action(action, &mut workspace, &mut keys, &mut state) {
                         Ok(true) => return Ok(()),
                         Ok(false) => {}
                         // Un error (de guardado) NO tumba el editor: se muestra y sigue.
@@ -651,7 +654,7 @@ fn run(
                     // Abrir o cambiar al buffer. Si el archivo no se puede abrir,
                     // lo ignoramos y seguimos en el buffer actual.
                     if workspace
-                        .open_or_switch(&path, keymap.initial_mode())
+                        .open_or_switch(&path, keys.keymap.initial_mode())
                         .is_ok()
                     {
                         state.scroll = 0; // el buffer recien enfocado arranca arriba
@@ -675,7 +678,7 @@ fn run(
         // garantizado de los modos focus (con el chrome oculto el toggle no se ve).
         // Limpia ambos flags. En Vim NO lo interceptamos: `Esc` tiene semantica
         // (volver a Normal); ahi se sale con el mismo `z z`/`z w` que entro.
-        if (state.zen || state.whitepaper) && key.code == KeyCode::Esc && !keymap.is_modal() {
+        if (state.zen || state.whitepaper) && key.code == KeyCode::Esc && !keys.keymap.is_modal() {
             state.zen = false;
             state.whitepaper = false;
             state.pending.clear();
@@ -683,7 +686,7 @@ fn run(
         }
 
         state.pending.push(key);
-        match keymap.resolve(workspace.active().mode, &state.pending) {
+        match keys.keymap.resolve(workspace.active().mode, &state.pending) {
             Resolve::Action(action) => {
                 state.pending.clear();
                 // Despachamos por el mismo helper que usa la paleta, asi un action
@@ -692,7 +695,7 @@ fn run(
                 // Un error (de guardado) NO tumba el editor: se muestra y sigue. Si
                 // la accion cambio de buffer, se resetea el scroll compartido.
                 let before = workspace.active_index();
-                match dispatch_action(action, &mut workspace, &mut keymap, &mut state, &binds) {
+                match dispatch_action(action, &mut workspace, &mut keys, &mut state) {
                     Ok(true) => return Ok(()),
                     Ok(false) => {}
                     Err(e) => state.flash = Some(format!("save failed: {e}")),
@@ -722,9 +725,8 @@ fn run(
 fn dispatch_action(
     action: Action,
     workspace: &mut buffers::Workspace,
-    keymap: &mut Box<dyn Keymap>,
+    keys: &mut KeymapState,
     state: &mut AppState,
-    binds: &[config::BindEntry],
 ) -> std::io::Result<bool> {
     match action {
         // Estas acciones tocan estado de la vista del loop, no el doc.
@@ -740,13 +742,13 @@ fn dispatch_action(
         // Ciclar el preset de keybindings activo (submenu view): reconstruye el
         // keymap con el preset siguiente (los overrides del usuario se reaplican
         // encima), refleja el cambio en la status bar/toolbar (se recalculan cada
-        // frame a partir de `keymap`) y lo persiste en el config. `preset_id` (no
-        // `keymap.name()`) es la fuente de verdad del preset actual, porque un
+        // frame a partir de `keys.keymap`) y lo persiste en el config. `preset_id`
+        // (no `keymap.name()`) es la fuente de verdad del preset actual, porque un
         // `CustomKeymap` delega el nombre al preset base.
         Action::CycleKeymapPreset => {
-            let next = next_preset(&state.preset_id);
-            *keymap = apply_overrides(keymap_from_name(next), binds);
-            state.preset_id = next.to_string();
+            let next = next_preset(&keys.preset_id);
+            keys.keymap = apply_overrides(keymap_from_name(next), &keys.binds);
+            keys.preset_id = next.to_string();
             state.flash = Some(i18n::keymap_set_to(next));
             // Persistir best-effort, igual que el theme picker: si falla se avisa
             // en el flash, pero el keymap ya cambio en vivo de todos modos.
@@ -777,7 +779,7 @@ fn dispatch_action(
         }
         // Nuevo archivo: crea un buffer vacio y lo enfoca. El draw reclampa el
         // scroll solo (el cursor del buffer nuevo arranca arriba).
-        Action::NewBuffer => workspace.new_buffer(keymap.initial_mode()),
+        Action::NewBuffer => workspace.new_buffer(keys.keymap.initial_mode()),
         // Cambiar de buffer (cycle). El draw reclampa el scroll al nuevo buffer.
         Action::NextBuffer => workspace.next_buffer(),
         Action::PrevBuffer => workspace.prev_buffer(),
@@ -788,7 +790,7 @@ fn dispatch_action(
             if workspace.active().dirty {
                 state.confirm = Some(Confirm::CloseBuffer);
             } else {
-                workspace.close_active(keymap.initial_mode());
+                workspace.close_active(keys.keymap.initial_mode());
             }
         }
         Action::OpenSwitcher => {
@@ -811,7 +813,7 @@ fn dispatch_action(
         }
         // Abrir la paleta de comandos. Como `OpenPalette` se excluye del catalogo
         // de comandos, no hay forma de recursar desde la propia paleta.
-        Action::OpenPalette => state.palette = Some(Palette::new(keymap.as_ref())),
+        Action::OpenPalette => state.palette = Some(Palette::new(keys.keymap.as_ref())),
         // Abrir el theme picker. El "actual" que marca es lo que se ve ahora: papel
         // o claro si algun toggle de vista esta activo, si no la base oscura.
         Action::OpenThemePicker => {
