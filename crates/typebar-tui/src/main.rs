@@ -362,13 +362,19 @@ fn main() -> std::io::Result<()> {
 }
 
 /// Prompt de confirmacion modal: mientras vive, `run` le entrega las teclas al
-/// prompt (no al documento) hasta que el usuario resuelve. Por ahora la unica
-/// variante es cerrar un buffer con cambios sin guardar; es un enum para que el
-/// Quit (que hoy sale sin preguntar) pueda reusar el mismo patron mas adelante.
+/// prompt (no al documento) hasta que el usuario resuelve. Las dos variantes son
+/// las dos formas de perder trabajo sin querer (cerrar un buffer y salir del
+/// editor) y comparten las mismas teclas: `[s]` guarda, `[d]` descarta,
+/// `[c]`/Esc cancela.
+#[derive(Clone, Copy)]
 enum Confirm {
     /// Cerrar el buffer activo, que esta dirty: `[s]` guarda y cierra, `[d]`
     /// descarta y cierra, `[c]`/Esc cancela.
     CloseBuffer,
+    /// Salir del editor con cambios sin guardar (en el buffer activo o en
+    /// cualquier otro): `[s]` guarda TODOS los dirty y sale, `[d]` sale
+    /// descartandolos, `[c]`/Esc cancela y sigue editando.
+    Quit,
 }
 
 /// Estado de VISTA del run loop: todo lo que vive entre frames y que `draw` lee y
@@ -582,12 +588,15 @@ fn run(
         state.flash = None;
 
         // Con un prompt de confirmacion abierto, las teclas las consume el prompt
-        // (es modal): `s` guarda y cierra, `d` descarta y cierra, `c`/Esc cancela.
-        // Cualquier otra tecla se ignora (el prompt sigue vivo). Tras cerrar, el
-        // buffer recien enfocado arranca arriba, asi que se resetea el scroll.
-        if state.confirm.is_some() {
-            match key.code {
-                KeyCode::Char('s') => {
+        // (es modal): `s` guarda, `d` descarta, `c`/Esc cancela. Cualquier otra
+        // tecla se ignora (el prompt sigue vivo). Tras cerrar un buffer, el que
+        // queda enfocado arranca arriba, asi que se resetea el scroll.
+        if let Some(confirm) = state.confirm {
+            match (confirm, key.code) {
+                // Cancelar (comun a las dos variantes): se sigue editando.
+                (_, KeyCode::Char('c') | KeyCode::Esc) => state.confirm = None,
+
+                (Confirm::CloseBuffer, KeyCode::Char('s')) => {
                     state.confirm = None;
                     // Guardar y, solo si sale bien, cerrar. Si el guardado falla, NO
                     // cerramos (no perder el buffer): se muestra el error y el buffer
@@ -600,12 +609,25 @@ fn run(
                         Err(e) => state.flash = Some(format!("save failed: {e}")),
                     }
                 }
-                KeyCode::Char('d') => {
+                (Confirm::CloseBuffer, KeyCode::Char('d')) => {
                     state.confirm = None;
                     workspace.close_active(keys.keymap.initial_mode());
                     state.scroll = 0;
                 }
-                KeyCode::Char('c') | KeyCode::Esc => state.confirm = None,
+
+                (Confirm::Quit, KeyCode::Char('s')) => {
+                    // Guardar TODO lo dirty y, solo si sale bien, salir. Si algun
+                    // guardado falla NO se sale: se muestra el error y se sigue
+                    // editando (mismo criterio que al cerrar un buffer).
+                    state.confirm = None;
+                    match workspace.save_all_dirty() {
+                        Ok(()) => return Ok(()),
+                        Err(e) => state.flash = Some(format!("save failed: {e}")),
+                    }
+                }
+                // Salir descartando: el usuario ya vio que hay cambios sin guardar.
+                (Confirm::Quit, KeyCode::Char('d')) => return Ok(()),
+
                 _ => {}
             }
             continue;
@@ -748,6 +770,17 @@ fn dispatch_action(
     state: &mut AppState,
 ) -> std::io::Result<bool> {
     match action {
+        // Salir con cambios sin guardar NO sale: abre el prompt modal (lo
+        // resuelve `run`), que ofrece guardar todo, descartar o cancelar. El
+        // chequeo mira TODOS los buffers, no solo el activo: se puede salir
+        // parado en un buffer limpio teniendo otro con cambios. Sin nada dirty
+        // cae al `_` de abajo y sale directo, como siempre.
+        Action::Quit if workspace.dirty_count() > 0 => state.confirm = Some(Confirm::Quit),
+        // `SaveAndQuit` ya guarda el buffer activo; lo que puede perderse es el
+        // resto, asi que solo pregunta si hay OTRO buffer dirty.
+        Action::SaveAndQuit if workspace.any_dirty_besides_active() => {
+            state.confirm = Some(Confirm::Quit)
+        }
         // Estas acciones tocan estado de la vista del loop, no el doc.
         Action::Search => state.overlay = Some(Overlay::new_search(workspace.active())),
         Action::Replace => state.overlay = Some(Overlay::new_replace()),
@@ -1127,6 +1160,7 @@ fn draw(
             // flash y status bar. Mismo estilo invertido que el flash.
             let prompt = match confirm {
                 Confirm::CloseBuffer => i18n::t(i18n::Key::ConfirmCloseUnsaved),
+                Confirm::Quit => i18n::t(i18n::Key::ConfirmQuitUnsaved),
             };
             let style = Style::default().add_modifier(Modifier::REVERSED);
             frame.render_widget(
@@ -2231,6 +2265,83 @@ mod tests {
         doc.path = path.clone();
         assert!(apply_action(&mut doc, Action::SaveAndQuit, 10).unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "contenido");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Salir sin perder cambios ------------------------------------------
+
+    /// Estado minimo del loop para ejercitar `dispatch_action`: workspace con
+    /// un doc de test, preset standard y `AppState` recien creado.
+    fn dispatch_fixture(doc: Document) -> (buffers::Workspace, KeymapState, AppState) {
+        use keybinding::StandardKeymap;
+        (
+            buffers::Workspace::new(doc),
+            KeymapState {
+                keymap: Box::new(StandardKeymap),
+                preset_id: "standard".to_string(),
+                binds: Vec::new(),
+            },
+            AppState::new(false),
+        )
+    }
+
+    #[test]
+    fn quit_con_cambios_sin_guardar_no_sale_y_pide_confirmacion() {
+        let mut doc = doc_with("texto tipeado");
+        doc.dirty = true;
+        let (mut ws, mut keys, mut state) = dispatch_fixture(doc);
+
+        let salir = dispatch_action(Action::Quit, &mut ws, &mut keys, &mut state).unwrap();
+        assert!(!salir, "no deberia salir con cambios sin guardar");
+        assert!(
+            matches!(state.confirm, Some(Confirm::Quit)),
+            "deberia haber abierto el prompt de salida"
+        );
+    }
+
+    #[test]
+    fn quit_sin_cambios_sale_directo() {
+        let (mut ws, mut keys, mut state) = dispatch_fixture(doc_with("limpio"));
+        let salir = dispatch_action(Action::Quit, &mut ws, &mut keys, &mut state).unwrap();
+        assert!(salir, "sin nada que perder, Quit sale sin preguntar");
+        assert!(state.confirm.is_none());
+    }
+
+    #[test]
+    fn quit_pregunta_aunque_el_buffer_dirty_no_sea_el_activo() {
+        // Se puede estar parado en un buffer limpio y tener otro con cambios:
+        // el chequeo mira TODO el workspace, no solo el activo.
+        let mut doc = doc_with("texto tipeado");
+        doc.dirty = true;
+        let (mut ws, mut keys, mut state) = dispatch_fixture(doc);
+        ws.new_buffer(keys.keymap.initial_mode()); // buffer nuevo, limpio y enfocado
+        assert!(!ws.active().dirty);
+
+        let salir = dispatch_action(Action::Quit, &mut ws, &mut keys, &mut state).unwrap();
+        assert!(!salir);
+        assert!(matches!(state.confirm, Some(Confirm::Quit)));
+    }
+
+    #[test]
+    fn save_and_quit_pregunta_solo_por_los_otros_buffers() {
+        // El activo lo guarda el propio SaveAndQuit, asi que con el unico dirty
+        // sale sin preguntar; si hay OTRO dirty, pregunta.
+        let dir = std::env::temp_dir().join(format!("typebar-test-saq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut doc = doc_with("contenido");
+        doc.path = dir.join("activo.md");
+        doc.dirty = true;
+        let (mut ws, mut keys, mut state) = dispatch_fixture(doc);
+
+        // Un segundo buffer dirty (y el activo pasa a ser ese buffer nuevo, asi
+        // que marcamos dirty al nuevo y volvemos al primero).
+        ws.new_buffer(keys.keymap.initial_mode());
+        ws.active_mut().dirty = true;
+        ws.prev_buffer();
+        let salir = dispatch_action(Action::SaveAndQuit, &mut ws, &mut keys, &mut state).unwrap();
+        assert!(!salir, "no deberia salir con otro buffer dirty");
+        assert!(matches!(state.confirm, Some(Confirm::Quit)));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

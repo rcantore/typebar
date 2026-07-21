@@ -141,6 +141,34 @@ impl Workspace {
     pub fn buffers(&self) -> impl Iterator<Item = (&Path, bool)> {
         self.docs.iter().map(|d| (d.path.as_path(), d.unsaved()))
     }
+
+    /// Cantidad de buffers con cambios sin guardar (`dirty`). Lo usa `run` para
+    /// no dejar salir del editor perdiendo trabajo: con alguno dirty pregunta
+    /// antes. Criterio `dirty` (editado desde el ultimo guardado) y no
+    /// `unsaved()`: un untitled todavia vacio no tiene nada que perder.
+    pub fn dirty_count(&self) -> usize {
+        self.docs.iter().filter(|d| d.dirty).count()
+    }
+
+    /// `true` si hay algun buffer dirty que NO sea el activo. Para `SaveAndQuit`,
+    /// que ya guarda el activo: lo que puede perderse es el resto.
+    pub fn any_dirty_besides_active(&self) -> bool {
+        self.docs
+            .iter()
+            .enumerate()
+            .any(|(i, d)| i != self.active && d.dirty)
+    }
+
+    /// Guarda TODOS los buffers dirty (el `[s]` del prompt de salida). Corta en
+    /// el primer error devolviendolo: los ya guardados quedan guardados y los
+    /// que faltaban siguen dirty, asi el llamador puede mostrar el error y NO
+    /// salir del editor.
+    pub fn save_all_dirty(&mut self) -> io::Result<()> {
+        for doc in self.docs.iter_mut().filter(|d| d.dirty) {
+            doc.save()?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +196,49 @@ mod tests {
         assert_eq!(ws.count(), 1);
         assert_eq!(ws.active_index(), 0);
         assert_eq!(ws.active().text(), "hola");
+    }
+
+    #[test]
+    fn cuenta_los_dirty_del_workspace_entero() {
+        let mut ws = ws_from(vec![doc_at("a.md", "a"), doc_at("b.md", "b")]);
+        assert_eq!(ws.dirty_count(), 0);
+        assert!(!ws.any_dirty_besides_active());
+
+        // Solo el buffer NO activo esta dirty: es justo el que se perderia al
+        // salir mirando unicamente el activo.
+        ws.docs[1].dirty = true;
+        assert_eq!(ws.dirty_count(), 1);
+        assert!(ws.any_dirty_besides_active());
+
+        // Con el foco en el dirty, ya no hay "otro" que perder.
+        ws.switch_to(1);
+        assert!(!ws.any_dirty_besides_active());
+        assert_eq!(ws.dirty_count(), 1);
+    }
+
+    #[test]
+    fn save_all_dirty_guarda_solo_los_dirty_y_los_deja_limpios() {
+        let dir = std::env::temp_dir().join(format!("typebar-ws-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sucio = dir.join("sucio.md");
+        let limpio = dir.join("limpio.md");
+
+        let mut d0 = doc_with("con cambios");
+        d0.path = sucio.clone();
+        d0.dirty = true;
+        let mut d1 = doc_with("sin cambios");
+        d1.path = limpio.clone();
+        let mut ws = ws_from(vec![d0, d1]);
+
+        ws.save_all_dirty().unwrap();
+        assert_eq!(ws.dirty_count(), 0);
+        assert_eq!(std::fs::read_to_string(&sucio).unwrap(), "con cambios");
+        assert!(
+            !limpio.exists(),
+            "un buffer limpio no deberia reescribirse en disco"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
