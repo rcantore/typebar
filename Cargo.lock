@@ -4493,7 +4493,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "typebar"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "crossterm",
  "dirs",
@@ -4508,7 +4508,7 @@ dependencies = [
 
 [[package]]
 name = "typebar-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arboard",
  "dirs",

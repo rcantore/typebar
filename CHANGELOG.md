@@ -16,6 +16,8 @@ How to maintain this file:
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-21
+
 ### Added
 
 - Soft wrap: lines longer than the viewport now wrap visually at the available
@@ -25,6 +27,11 @@ How to maintain this file:
   terminal) becoming invisible: typebar previously had neither wrap nor
   horizontal scroll. Table grids clip instead of wrapping, and the file on disk
   is untouched (purely visual, no hard line breaks inserted).
+- Wrapped lines are now marked: continuation rows carry a dimmed `↳` in a
+  one-cell gutter on the left, so a soft-wrapped paragraph no longer reads like
+  two separate lines of the file. The gutter is reserved on every row (blank on
+  the first row of each line) to keep the text aligned in a single column; it
+  takes one cell off the usable width and picks up each theme's marker color.
 
 ## [0.4.0] - 2026-07-08
 

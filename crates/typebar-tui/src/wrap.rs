@@ -25,11 +25,30 @@
 //!
 //! `no_wrap[i] == true` o `width == 0` desactivan el wrap para esa linea (o
 //! para todas): queda en una sola fila, que ratatui clipea al dibujar.
+//!
+//! Canal (gutter) de continuacion: el wrap es solo visual, asi que sin ninguna
+//! pista una linea envuelta se lee igual que dos lineas distintas del archivo.
+//! Para desambiguarlo, `visual_lines` reserva `GUTTER_WIDTH` celdas a la
+//! izquierda de TODAS las filas: en blanco para la primera fila de cada linea,
+//! con `CONTINUATION_MARKER` en las de continuacion. Que el canal sea uniforme
+//! (y no solo en las filas marcadas) mantiene el texto alineado en una misma
+//! columna y hace que el corrimiento del cursor sea constante: quien dibuja
+//! suma `GUTTER_WIDTH` a la `x` que devuelve `row_and_x`, sin casos especiales.
+//! El precio es una columna de ancho util, por eso el llamador debe pedir el
+//! `layout` con el ancho YA descontado (ver `draw` en `main.rs`).
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use typebar_core::text::graphemes_with_width;
+
+/// Marcador dibujado al inicio de cada fila de continuacion (toda fila que no
+/// es la primera de su linea del documento). Ocupa exactamente `GUTTER_WIDTH`
+/// celdas, invariante que cubre un test.
+pub const CONTINUATION_MARKER: &str = "↳";
+
+/// Ancho en celdas del canal izquierdo que `visual_lines` antepone a cada fila.
+pub const GUTTER_WIDTH: usize = 1;
 
 /// Layout de wrap resultante de `layout()`: para cada linea del documento,
 /// los limites (en display cols) donde arranca cada fila visual.
@@ -118,10 +137,29 @@ pub fn layout(lines: &[Line<'static>], no_wrap: &[bool], width: usize) -> WrapLa
 /// Parte las `Line`s en filas visuales segun `layout`, preservando spans y
 /// estilos: un span puede partirse justo en el limite de una fila, y ambas
 /// mitades conservan el estilo original.
-pub fn visual_lines(lines: Vec<Line<'static>>, layout: &WrapLayout) -> Vec<Line<'static>> {
+///
+/// Antepone ademas el canal de continuacion a cada fila (ver doc del modulo):
+/// `GUTTER_WIDTH` celdas en blanco en la primera fila de cada linea, y
+/// `CONTINUATION_MARKER` con `marker_style` en las de continuacion.
+pub fn visual_lines(
+    lines: Vec<Line<'static>>,
+    layout: &WrapLayout,
+    marker_style: Style,
+) -> Vec<Line<'static>> {
     let mut out = Vec::with_capacity(layout.total_rows);
     for (i, line) in lines.into_iter().enumerate() {
-        out.extend(split_line(line, &layout.boundaries[i]));
+        for (row_idx, mut row) in split_line(line, &layout.boundaries[i])
+            .into_iter()
+            .enumerate()
+        {
+            let gutter = if row_idx == 0 {
+                Span::raw(" ".repeat(GUTTER_WIDTH))
+            } else {
+                Span::styled(CONTINUATION_MARKER, marker_style)
+            };
+            row.spans.insert(0, gutter);
+            out.push(row);
+        }
     }
     out
 }
@@ -250,13 +288,27 @@ mod tests {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
+    /// `visual_lines` con el canal de continuacion ya sacado de cada fila:
+    /// deja el contenido crudo del wrap, que es lo que asertan los tests de
+    /// corte y de estilos. El canal en si lo cubren los tests dedicados de mas
+    /// abajo, que llaman a `visual_lines` directo.
+    fn rows_sin_gutter(lines: Vec<Line<'static>>, layout: &WrapLayout) -> Vec<Line<'static>> {
+        visual_lines(lines, layout, Style::default())
+            .into_iter()
+            .map(|mut row| {
+                row.spans.remove(0);
+                row
+            })
+            .collect()
+    }
+
     #[test]
     fn corte_exacto_ascii_en_el_ancho() {
         // "1234567890" con ancho 5: entra exacto en dos filas de 5.
         let lines = vec![plain("1234567890")];
         let layout = layout(&lines, &[false], 5);
         assert_eq!(layout.total_rows(), 2);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         assert_eq!(row_text(&rows[0]), "12345");
         assert_eq!(row_text(&rows[1]), "67890");
     }
@@ -268,7 +320,7 @@ mod tests {
         // "mundo" baja entera a la fila siguiente (no "hola mun"/"do...").
         let lines = vec![plain("hola mundo bien")];
         let layout = layout(&lines, &[false], 8);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         let texts: Vec<String> = rows.iter().map(row_text).collect();
         // El espacio de corte queda en la fila anterior (no se recorta).
         assert_eq!(texts[0], "hola ");
@@ -282,7 +334,7 @@ mod tests {
         // espacio, asi que corta duro cada 4 grafemas.
         let lines = vec![plain("abcdefghij")];
         let layout = layout(&lines, &[false], 4);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         let texts: Vec<String> = rows.iter().map(row_text).collect();
         assert_eq!(texts, vec!["abcd", "efgh", "ij"]);
     }
@@ -295,7 +347,7 @@ mod tests {
         // Fila 3 = "b".
         let lines = vec![plain("a中b")];
         let layout = layout(&lines, &[false], 2);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         let texts: Vec<String> = rows.iter().map(row_text).collect();
         assert_eq!(texts, vec!["a", "中", "b"]);
     }
@@ -306,7 +358,7 @@ mod tests {
         // propia fila corta.
         let lines = vec![plain("x😀y")];
         let layout = layout(&lines, &[false], 2);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         let texts: Vec<String> = rows.iter().map(row_text).collect();
         assert_eq!(texts, vec!["x", "😀", "y"]);
     }
@@ -320,7 +372,7 @@ mod tests {
         let lines = vec![plain(text)];
         let total_width = typebar_core::text::display_width(text);
         let layout = layout(&lines, &[false], 10);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         let sum: usize = rows
             .iter()
             .map(|l| {
@@ -378,7 +430,7 @@ mod tests {
         let lines = vec![plain("")];
         let layout = layout(&lines, &[false], 8);
         assert_eq!(layout.total_rows(), 1);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         assert_eq!(rows.len(), 1);
         assert_eq!(row_text(&rows[0]), "");
         // El cursor en la unica posicion valida (col 0) mapea a la fila 0.
@@ -397,7 +449,7 @@ mod tests {
         let lines = vec![plain("esta linea es mucho mas larga que el ancho")];
         let layout = layout(&lines, &[true], 10);
         assert_eq!(layout.total_rows(), 1);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         assert_eq!(rows.len(), 1);
         assert_eq!(
             row_text(&rows[0]),
@@ -420,7 +472,7 @@ mod tests {
         let line = Line::from(Span::styled("abcdefghij", style));
         let lines = vec![line];
         let layout = layout(&lines, &[false], 6);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         assert_eq!(rows.len(), 2);
         assert_eq!(row_text(&rows[0]), "abcdef");
         assert_eq!(row_text(&rows[1]), "ghij");
@@ -446,7 +498,7 @@ mod tests {
         ]);
         let lines = vec![line];
         let layout = layout(&lines, &[false], 3);
-        let rows = visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].spans.len(), 2);
         assert_eq!(rows[0].spans[0].content.as_ref(), "AA");
@@ -491,5 +543,80 @@ mod tests {
 
         // La suma de filas por linea = total_rows.
         assert_eq!(rows_line0 + rows_line1 + rows_line2, layout.total_rows());
+    }
+
+    #[test]
+    fn el_marcador_de_continuacion_mide_exactamente_gutter_width() {
+        // Invariante que sostiene todo el esquema: el canal es de ancho fijo y
+        // el corrimiento del cursor es constante. Un marcador de otro ancho
+        // desalinearia el texto respecto del cursor. Si algun dia se cambia
+        // `CONTINUATION_MARKER` por un glifo mas ancho, hay que ajustar
+        // `GUTTER_WIDTH` (y el ancho que descuenta `draw`) a la par.
+        assert_eq!(
+            typebar_core::text::display_width(CONTINUATION_MARKER),
+            GUTTER_WIDTH
+        );
+    }
+
+    #[test]
+    fn el_canal_marca_solo_las_filas_de_continuacion() {
+        // Dos lineas: la primera envuelve en 3 filas, la segunda entra en 1.
+        // Solo las filas 2da y 3ra de la primera linea llevan marcador; las
+        // primeras filas de cada linea llevan el canal en blanco.
+        let lines = vec![plain("aaaa bbbb cccc"), plain("corta")];
+        let layout = layout(&lines, &[false, false], 5);
+        let rows = visual_lines(lines, &layout, Style::default());
+        assert_eq!(
+            rows.len(),
+            4,
+            "3 filas de la primera linea + 1 de la segunda"
+        );
+
+        let gutters: Vec<&str> = rows.iter().map(|r| r.spans[0].content.as_ref()).collect();
+        assert_eq!(
+            gutters,
+            vec![" ", CONTINUATION_MARKER, CONTINUATION_MARKER, " "],
+            "canal en blanco en la primera fila de cada linea, marcador en las de continuacion"
+        );
+    }
+
+    #[test]
+    fn el_canal_no_altera_el_texto_ni_el_ancho_de_las_filas() {
+        // El canal es decoracion: sacarlo debe devolver exactamente las filas
+        // que produce el wrap, y cada fila con canal mide a lo sumo
+        // `width + GUTTER_WIDTH` (que es el ancho util que descuenta `draw`).
+        let width = 7;
+        let original = "hola mundo bastante largo";
+        let lines = vec![plain(original)];
+        let layout = layout(&lines, &[false], width);
+        let rows = visual_lines(lines, &layout, Style::default());
+
+        for row in &rows {
+            let w = typebar_core::text::display_width(&row_text(row));
+            assert!(
+                w <= width + GUTTER_WIDTH,
+                "fila {:?} mide {w}, excede el ancho util",
+                row_text(row)
+            );
+        }
+
+        // Sin el canal, la concatenacion reconstruye el texto original exacto.
+        let joined: String = rows
+            .iter()
+            .map(|r| -> String { r.spans[1..].iter().map(|s| s.content.as_ref()).collect() })
+            .collect();
+        assert_eq!(joined, original);
+    }
+
+    #[test]
+    fn el_marcador_usa_el_estilo_pedido_y_el_blanco_no() {
+        // El marcador se dibuja atenuado (en `draw`, con `theme.marker`); el
+        // canal en blanco de las primeras filas no debe llevar ese estilo.
+        let marker_style = Style::default().fg(Color::Red);
+        let lines = vec![plain("aaaaaaaa")];
+        let layout = layout(&lines, &[false], 4);
+        let rows = visual_lines(lines, &layout, marker_style);
+        assert_eq!(rows[0].spans[0].style, Style::default());
+        assert_eq!(rows[1].spans[0].style, marker_style);
     }
 }

@@ -1027,7 +1027,12 @@ fn draw(
     // codigo se extienden casi de lado a lado pero dentro de un margen, en vez de
     // ajustarse al contenido. Padding derecho del Block es 0, por eso no se resta.
     let text_width = editor_area.width.saturating_sub(2 * border + pad_left) as usize;
-    let code_box_width = text_width.saturating_sub(render::CODE_BOX_RIGHT_MARGIN);
+    // Ancho real para el texto: el area util menos el canal de continuacion que
+    // `wrap::visual_lines` antepone a cada fila. Se descuenta una sola vez, aca,
+    // y de el cuelgan tanto el wrap como el ancho de las cajas de codigo (que
+    // conviven con el canal y no deben desbordarlo).
+    let wrap_width = text_width.saturating_sub(wrap::GUTTER_WIDTH);
+    let code_box_width = wrap_width.saturating_sub(render::CODE_BOX_RIGHT_MARGIN);
     let (lines, no_wrap) = render::render(
         &text,
         doc.selection_byte_range(),
@@ -1043,7 +1048,7 @@ fn draw(
     // (una por linea del documento): parte cada linea, salvo las de grilla de
     // tabla (`no_wrap`), en filas visuales segun `text_width`. De aca en mas
     // scroll y cursor razonan en FILAS VISUALES, no en lineas del documento.
-    let layout = wrap::layout(&lines, &no_wrap, text_width);
+    let layout = wrap::layout(&lines, &no_wrap, wrap_width);
 
     // Columna visual del cursor sobre su linea renderizada: si esta sobre una
     // linea de bloque de codigo, el render le aplico un margen izquierdo
@@ -1077,9 +1082,13 @@ fn draw(
     // evita re-tomar `&state` mientras se sigue dibujando.
     let scroll = state.scroll;
 
-    let paragraph = Paragraph::new(wrap::visual_lines(lines, &layout))
-        .block(block)
-        .scroll((scroll as u16, 0));
+    let paragraph = Paragraph::new(wrap::visual_lines(
+        lines,
+        &layout,
+        Style::default().fg(theme.marker),
+    ))
+    .block(block)
+    .scroll((scroll as u16, 0));
     frame.render_widget(paragraph, editor_area);
 
     // Barra de atajos (toolbar estilo WordStar/Norton Commander): los atajos del
@@ -1124,10 +1133,13 @@ fn draw(
     // en la formula por uniformidad) mas `pad_left`/`pad_top`, y restando scroll
     // (ya en filas visuales). `x_in_row` es la columna *visual* dentro de la fila
     // (celdas, no indice de char), resuelta por `layout.row_and_x` mas arriba: ya
-    // incluye `code_indent`, no sumarlo de nuevo. Con un overlay abierto no se
-    // dibuja cursor de editor: lo tapa el popup y ratatui lo oculta.
+    // incluye `code_indent`, no sumarlo de nuevo. Se le suma `GUTTER_WIDTH`
+    // porque `visual_lines` antepone el canal de continuacion a TODAS las filas
+    // (tambien a las primeras, en blanco): el corrimiento es constante. Con un
+    // overlay abierto no se dibuja cursor de editor: lo tapa el popup y ratatui
+    // lo oculta.
     if !overlay_active && cursor_row >= scroll && cursor_row < scroll + viewport_height {
-        let cursor_x = editor_area.x + border + pad_left + x_in_row as u16;
+        let cursor_x = editor_area.x + border + pad_left + (x_in_row + wrap::GUTTER_WIDTH) as u16;
         let cursor_y = editor_area.y + border + pad_top + (cursor_row - scroll) as u16;
         if whitepaper {
             // En papel el cursor real del terminal usa un color fijo que sobre el
@@ -1383,6 +1395,19 @@ mod tests {
     use super::*;
     use typebar_core::document::test_support::doc_with;
 
+    /// `wrap::visual_lines` con el canal de continuacion ya sacado de cada
+    /// fila, para los tests que asertan sobre el TEXTO envuelto y no sobre el
+    /// canal (que tiene sus propios tests en `wrap.rs` y en `draw`).
+    fn rows_sin_gutter(lines: Vec<Line<'static>>, layout: &wrap::WrapLayout) -> Vec<Line<'static>> {
+        wrap::visual_lines(lines, layout, Style::default())
+            .into_iter()
+            .map(|mut row| {
+                row.spans.remove(0);
+                row
+            })
+            .collect()
+    }
+
     /// Renderiza un frame con `draw` sobre un backend de prueba y devuelve todo el
     /// buffer como texto plano (filas separadas por `\n`). Sirve para verificar
     /// que cierto chrome aparece o no en pantalla.
@@ -1562,10 +1587,12 @@ mod tests {
         use ratatui::backend::TestBackend;
         use typebar_core::document::test_support::doc_with;
 
-        // Terminal de 60 columnas, sin marco, pad_left=2 => text_width = 58.
-        // 58 'a' (sin espacios, para forzar corte duro exacto en el ancho) mas
-        // "OVERFLOW": no entra en una sola fila.
-        let long_line = format!("{}OVERFLOW", "a".repeat(58));
+        // Terminal de 60 columnas, sin marco, pad_left=2 => text_width = 58, de
+        // los que el canal de continuacion se lleva `GUTTER_WIDTH`. `fit` es lo
+        // que entra en una fila: 'a' sin espacios, para forzar corte duro
+        // exacto en el ancho, mas "OVERFLOW" que ya no entra.
+        let fit = 58 - wrap::GUTTER_WIDTH;
+        let long_line = format!("{}OVERFLOW", "a".repeat(fit));
         let doc = doc_with(&long_line);
         let km = StandardKeymap;
         let theme = Theme::frappe();
@@ -1579,10 +1606,10 @@ mod tests {
         let rows: Vec<String> = (0..area.height)
             .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect())
             .collect();
-        // Fila visual 0 (pad_top=1 => pantalla y=1): las 58 'a'.
+        // Fila visual 0 (pad_top=1 => pantalla y=1): las 'a' que entran.
         assert!(
-            rows[1].contains(&"a".repeat(58)),
-            "la primera fila visual deberia mostrar las 58 'a': {:?}",
+            rows[1].contains(&"a".repeat(fit)),
+            "la primera fila visual deberia mostrar las {fit} 'a': {:?}",
             rows[1]
         );
         assert!(
@@ -1590,10 +1617,21 @@ mod tests {
             "el sobrante NO deberia verse todavia en la primera fila: {:?}",
             rows[1]
         );
-        // Fila visual 1 (pantalla y=2): el sobrante, visible (no recortado).
+        assert!(
+            !rows[1].contains(wrap::CONTINUATION_MARKER),
+            "la primera fila de una linea no lleva marcador, su canal va en blanco: {:?}",
+            rows[1]
+        );
+        // Fila visual 1 (pantalla y=2): el sobrante, visible (no recortado) y
+        // marcado como continuacion.
         assert!(
             rows[2].contains("OVERFLOW"),
             "el sobrante deberia bajar visible a la fila visual siguiente: {:?}",
+            rows[2]
+        );
+        assert!(
+            rows[2].contains(wrap::CONTINUATION_MARKER),
+            "la fila de continuacion deberia llevar el marcador en su canal: {:?}",
             rows[2]
         );
     }
@@ -1666,22 +1704,31 @@ mod tests {
         // Edge case del wrap: una seleccion que abarca el limite entre dos
         // filas visuales debe pintar el bg de seleccion en AMBAS, no solo en
         // la fila donde arranca. Misma geometria que el smoke test de wrap:
-        // terminal 60x24, pad_left=2 => text_width=58, "a"*58 + "OVERFLOW" se
-        // envuelve en fila 0 = "a"*58 (chars [0,58)) y fila 1 = "OVERFLOW"
-        // (chars [58,66)).
+        // terminal 60x24, pad_left=2 => text_width=58, menos el canal de
+        // continuacion => corte en `fit`. La fila 0 son las 'a' (chars
+        // [0,fit)) y la fila 1 es "OVERFLOW" (chars [fit,fit+8)).
         use keybinding::StandardKeymap;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         use typebar_core::document::test_support::doc_with;
 
-        let long_line = format!("{}OVERFLOW", "a".repeat(58));
+        let fit = 58 - wrap::GUTTER_WIDTH;
+        // x de pantalla del char `i` de la fila 0 y del char `i` de la fila 1
+        // (que arranca en el char `fit`): pad_left=2 mas el canal.
+        let base_x = (2 + wrap::GUTTER_WIDTH) as u16;
+        let x_row0 = |i: usize| base_x + i as u16;
+        let x_row1 = |i: usize| base_x + (i - fit) as u16;
+
+        let long_line = format!("{}OVERFLOW", "a".repeat(fit));
         let mut doc = doc_with(&long_line);
-        // Seleccion [50,62): cruza el limite en 58 (col 50..58 en fila 0,
-        // col 58..62 en fila 1). ASCII puro: char idx == byte idx.
+        // Seleccion [sel_ini, sel_fin) cruzando el corte en `fit`: arranca en la
+        // fila 0 y termina 4 chars adentro de la fila 1. ASCII puro: char idx
+        // == byte idx.
+        let (sel_ini, sel_fin) = (fit - 7, fit + 4);
         doc.line = 0;
-        doc.col = 50;
+        doc.col = sel_ini;
         doc.start_selection();
-        doc.col = 62;
+        doc.col = sel_fin;
         let km = StandardKeymap;
         let theme = Theme::frappe();
         let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
@@ -1691,40 +1738,40 @@ mod tests {
             .unwrap();
         let buf = terminal.backend().buffer().clone();
 
-        // Fila 0 (pantalla y=1): char 49 ('a', fuera de la seleccion, x=51) sin
-        // bg de seleccion; char 50 (primer char seleccionado, x=52) y char 57
-        // (ultimo char seleccionado de la fila, x=59) SI.
+        // Fila 0 (pantalla y=1): el char justo anterior a la seleccion sin bg;
+        // el primero seleccionado y el ultimo de la fila (justo antes del
+        // corte) SI.
         assert_ne!(
-            buf[(51, 1)].bg,
+            buf[(x_row0(sel_ini - 1), 1)].bg,
             theme.selection_bg,
             "char antes de la seleccion no deberia estar resaltado"
         );
         assert_eq!(
-            buf[(52, 1)].bg,
+            buf[(x_row0(sel_ini), 1)].bg,
             theme.selection_bg,
             "primer char seleccionado de la fila 0 deberia estar resaltado"
         );
         assert_eq!(
-            buf[(59, 1)].bg,
+            buf[(x_row0(fit - 1), 1)].bg,
             theme.selection_bg,
             "ultimo char seleccionado de la fila 0 (justo antes del corte) deberia estar resaltado"
         );
 
-        // Fila 1 (pantalla y=2): char 58 ('O', x=2) y char 61 ('R', x=5) SI
-        // resaltados (siguen en la seleccion tras el corte); char 62 ('F',
-        // x=6, fuera de la seleccion) no.
+        // Fila 1 (pantalla y=2): el primer char tras el corte y el ultimo
+        // seleccionado SI resaltados (la seleccion sigue tras el corte); el
+        // char siguiente, ya fuera de la seleccion, no.
         assert_eq!(
-            buf[(2, 2)].bg,
+            buf[(x_row1(fit), 2)].bg,
             theme.selection_bg,
             "el sobrante de la seleccion deberia seguir resaltado en la fila 1"
         );
         assert_eq!(
-            buf[(5, 2)].bg,
+            buf[(x_row1(sel_fin - 1), 2)].bg,
             theme.selection_bg,
             "ultimo char seleccionado de la fila 1 deberia estar resaltado"
         );
         assert_ne!(
-            buf[(6, 2)].bg,
+            buf[(x_row1(sel_fin), 2)].bg,
             theme.selection_bg,
             "char justo despues de la seleccion en la fila 1 no deberia estar resaltado"
         );
@@ -1792,9 +1839,10 @@ mod tests {
         use typebar_core::document::test_support::doc_with;
 
         // Terminal de 120 columnas: columna centrada de ancho WHITEPAPER_WIDTH=72,
-        // pad_left=2 => text_width=70. 70 'a' + "OVERFLOW" (sin espacios): la
-        // primera fila son las 70 'a', la segunda "OVERFLOW".
-        let long_line = format!("{}OVERFLOW", "a".repeat(70));
+        // pad_left=2 => text_width=70, menos el canal de continuacion. La
+        // primera fila son las 'a' que entran, la segunda "OVERFLOW".
+        let fit = 70 - wrap::GUTTER_WIDTH;
+        let long_line = format!("{}OVERFLOW", "a".repeat(fit));
         let doc = doc_with(&long_line);
         let km = StandardKeymap;
         let theme = Theme::latte();
@@ -1806,8 +1854,9 @@ mod tests {
             .unwrap();
         let buf = terminal.backend().buffer().clone();
 
-        // x esperado de la columna centrada: (120-72)/2 = 24, mas pad_left=2 => 26.
-        let expected_x = 26u16;
+        // x esperado del texto: columna centrada (120-72)/2 = 24, mas pad_left=2
+        // => 26, mas el canal de continuacion que corre todas las filas por igual.
+        let expected_x = 26u16 + wrap::GUTTER_WIDTH as u16;
         assert_eq!(
             buf[(expected_x, 2)].symbol(),
             "a",
@@ -1883,7 +1932,7 @@ mod tests {
         let original = "中".repeat(40); // 40 * ancho 2 = 80 celdas
         let (lines, no_wrap) = render::render(&original, None, &[], None, &theme, Some(0), 1, 0);
         let layout = wrap::layout(&lines, &no_wrap, text_width);
-        let rows = wrap::visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
 
         assert!(rows.len() > 1, "80 celdas con ancho 58 deberia envolver");
         for row in &rows {
@@ -1927,7 +1976,7 @@ mod tests {
             1,
             "el texto contraido (56 'a') entra en una sola fila de ancho 58"
         );
-        let rows = wrap::visual_lines(lines, &layout);
+        let rows = rows_sin_gutter(lines, &layout);
         let text: String = rows[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(
             text,
@@ -2001,7 +2050,8 @@ mod tests {
             .unwrap();
         let buf = terminal.backend().buffer().clone();
         // 'h' del documento, fuera del popup (que arranca en x=9, y=2): atenuada.
-        let h = &buf[(2, 1)];
+        // x = pad_left=2 mas el canal de continuacion que corre el texto.
+        let h = &buf[(2 + wrap::GUTTER_WIDTH as u16, 1)];
         assert_eq!(
             h.symbol(),
             "h",
