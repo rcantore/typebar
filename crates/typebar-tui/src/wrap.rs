@@ -11,7 +11,11 @@
 //! ratatui). El corte SIEMPRE cae en un limite de grafema: un CJK/emoji ancho
 //! nunca se parte ni se cuenta a medias.
 //!
-//! Algoritmo de wrap (greedy, por linea, independiente entre lineas):
+//! El corte en si lo hace `typebar_core::text::wrap_boundaries`: vive en el
+//! core porque el movimiento vertical del cursor (que razona en filas visuales,
+//! ver `Document::move_up`/`move_down`) tiene que cortar igual que el render.
+//! Aca solo se aplica a las `Line`s ya renderizadas. Resumen del algoritmo
+//! (greedy, por linea, independiente entre lineas):
 //! - Se recorren los grafemas de la linea acumulando ancho.
 //! - Si el proximo grafema no entra en la fila: cortar despues del ULTIMO
 //!   espacio (`' '`) que haya entrado en la fila (el espacio se queda en esa
@@ -90,11 +94,7 @@ impl WrapLayout {
     /// `display_col` es el fin de linea, sin caso especial.
     pub fn row_and_x(&self, line: usize, display_col: usize) -> (usize, usize) {
         let b = &self.boundaries[line];
-        let n_rows = b.len() - 1;
-        // Cuenta cuantos arranques de fila (b[0..n_rows]) son <= display_col;
-        // ese conteo - 1 es la fila. b[0] == 0 siempre es <= display_col, asi
-        // que el conteo nunca es 0.
-        let row = b[..n_rows].partition_point(|&start| start <= display_col) - 1;
+        let row = typebar_core::text::row_at(b, display_col);
         (self.first_row[line] + row, display_col - b[row])
     }
 }
@@ -119,7 +119,7 @@ pub fn layout(lines: &[Line<'static>], no_wrap: &[bool], width: usize) -> WrapLa
         } else {
             let widths: Vec<usize> = graphemes.iter().map(|&(w, _)| w).collect();
             let spaces: Vec<bool> = graphemes.iter().map(|&(_, s)| s).collect();
-            wrap_boundaries(&widths, &spaces, width)
+            typebar_core::text::wrap_boundaries(&widths, &spaces, width)
         };
 
         first_row.push(total_rows);
@@ -174,70 +174,6 @@ fn line_grapheme_meta(line: &Line<'static>) -> Vec<(usize, bool)> {
         }
     }
     out
-}
-
-/// Greedy word-wrap sobre una secuencia de grafemas (ancho + flag de
-/// espacio), ya separada de la linea. Devuelve los limites en display cols
-/// (`[0, .., ancho_total]`, longitud = filas + 1). Precondicion: se llama
-/// solo cuando el wrap esta activo (`width > 0` y no `no_wrap`); el ancho
-/// total mayor al `width` es justamente el caso que produce mas de una fila.
-fn wrap_boundaries(widths: &[usize], is_space: &[bool], width: usize) -> Vec<usize> {
-    let total: usize = widths.iter().sum();
-    if total <= width {
-        // Entra entera (incluida la linea vacia): una sola fila.
-        return vec![0, total];
-    }
-
-    let n = widths.len();
-    let mut boundaries = vec![0];
-    let mut idx = 0; // indice de grafema donde arranca la fila actual
-    let mut start_col = 0; // display col donde arranca la fila actual
-
-    while idx < n {
-        let mut col = start_col;
-        // Ultimo punto (indice de grafema siguiente, col) justo despues de un
-        // espacio que entro en esta fila: preferimos cortar ahi.
-        let mut last_space: Option<(usize, usize)> = None;
-        let mut j = idx;
-
-        loop {
-            if j >= n {
-                // El resto de la linea entero cabe en esta fila: ultima fila.
-                boundaries.push(total);
-                idx = n;
-                break;
-            }
-            let w = widths[j];
-            if col - start_col + w <= width {
-                col += w;
-                if is_space[j] {
-                    last_space = Some((j + 1, col));
-                }
-                j += 1;
-                continue;
-            }
-            // El grafema `j` no entra en la fila actual.
-            if col == start_col {
-                // Fila vacia: forzar este grafema igual, para garantizar
-                // progreso (nunca partirlo, pero tampoco dejar la fila vacia).
-                col += w;
-                j += 1;
-            } else if let Some((next_idx, break_col)) = last_space {
-                // Cortar despues del ultimo espacio: la palabra entera que no
-                // entraba baja completa a la fila siguiente.
-                col = break_col;
-                j = next_idx;
-            }
-            // (si no hay espacio y la fila no esta vacia: corte duro,
-            // `col`/`j` ya son el punto de corte tal cual quedaron)
-            boundaries.push(col);
-            idx = j;
-            start_col = col;
-            break;
-        }
-    }
-
-    boundaries
 }
 
 /// Parte una `Line` en filas visuales segun `boundaries` (limites en display

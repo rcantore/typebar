@@ -387,6 +387,12 @@ struct AppState {
     /// Antes del primer draw queda en 1, fallback razonable para no entregar 0 a
     /// un calculo de pagina.
     viewport_height: usize,
+    /// Ancho (en celdas) al que `draw` envolvio el texto en el ultimo frame,
+    /// descontados margenes y canal de continuacion. El loop se lo pasa al
+    /// documento (`set_wrap_width`) para que el cursor suba y baje por las
+    /// mismas FILAS VISUALES que se dibujaron. `0` antes del primer draw = sin
+    /// wrap, que es exactamente el comportamiento previo.
+    wrap_width: usize,
     /// Zen/focus mode: oculta el chrome (borde, toolbar, status) para dejar solo
     /// el texto. Estado de la vista, no del documento. Se togglea con el submenu
     /// "view" y, en presets modeless, sale tambien con Esc.
@@ -435,6 +441,7 @@ impl AppState {
         AppState {
             scroll: 0,
             viewport_height: 1,
+            wrap_width: 0,
             zen: false,
             whitepaper: false,
             light_on,
@@ -545,6 +552,12 @@ fn run(
             // frame ya dibujado (editor, chrome y pickers de una). No-op en oscuros.
             apply_theme_fill(frame, &theme);
         })?;
+        // El ancho de wrap recien lo sabe `draw` (depende de zen/whitepaper y del
+        // tamaño de la terminal): se lo pasamos al buffer enfocado antes de leer
+        // la proxima tecla, asi el cursor se mueve por las filas visuales que
+        // acaban de dibujarse. Cambiar de buffer o de tamaño lo re-sincroniza en
+        // el frame siguiente, siempre antes de procesar teclas.
+        workspace.active_mut().set_wrap_width(state.wrap_width);
 
         let ev = event::read()?;
         // Click izquierdo en la fila de tabs (y=0): cambia de buffer. Si la captura
@@ -1032,6 +1045,10 @@ fn draw(
     // y de el cuelgan tanto el wrap como el ancho de las cajas de codigo (que
     // conviven con el canal y no deben desbordarlo).
     let wrap_width = text_width.saturating_sub(wrap::GUTTER_WIDTH);
+    // Lo exponemos al loop para que se lo pase al documento: el movimiento
+    // vertical del cursor tiene que razonar en las mismas filas visuales que
+    // se dibujan aca (ver `Document::set_wrap_width`).
+    state.wrap_width = wrap_width;
     let code_box_width = wrap_width.saturating_sub(render::CODE_BOX_RIGHT_MARGIN);
     let (lines, no_wrap) = render::render(
         &text,
@@ -1918,6 +1935,39 @@ mod tests {
         assert!(
             screen.contains("END"),
             "el final del doc (donde esta el cursor) deberia seguir visible"
+        );
+    }
+
+    #[test]
+    fn draw_publica_el_ancho_de_wrap_y_el_cursor_baja_por_filas_visuales() {
+        // Cableado completo: `draw` deja el ancho en `state`, el loop se lo pasa
+        // al documento y recien ahi bajar avanza UNA fila visual dentro de la
+        // misma linea, en vez de saltarse el parrafo entero.
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use typebar_core::document::test_support::doc_with;
+
+        // Una linea larga (mas de un ancho de pantalla) y otra corta detras.
+        let parrafo = "palabra ".repeat(20);
+        let mut doc = doc_with(&format!("{parrafo}\nsegunda"));
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+        let mut state = AppState::new(false);
+        terminal
+            .draw(|f| draw(f, &doc, &km, &theme, 2, &mut state, None))
+            .unwrap();
+        assert!(state.wrap_width > 0, "draw deberia publicar el ancho");
+
+        // Lo que hace el loop tras dibujar, y despues la tecla ↓.
+        doc.set_wrap_width(state.wrap_width);
+        apply_action(&mut doc, Action::CursorDown, state.viewport_height).unwrap();
+
+        assert_eq!(doc.line, 0, "bajar no deberia saltarse el parrafo entero");
+        assert!(
+            doc.col > 0,
+            "deberia haber avanzado a la fila visual de abajo"
         );
     }
 

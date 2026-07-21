@@ -8,6 +8,7 @@
 //! la logica de movimiento (grapheme-based) no se duplica.
 
 use super::Document;
+use crate::text::LineGraphemes;
 
 impl Document {
     fn move_left_core(&mut self) {
@@ -27,25 +28,68 @@ impl Document {
         self.sync_preferred();
     }
 
+    /// Filas visuales de una linea (limites en columnas de pantalla, ver
+    /// `text::wrap_boundaries`) junto con su analisis de grafemas. Sin soft
+    /// wrap (`wrap_width == 0`) da siempre una sola fila, y todo el movimiento
+    /// vertical de abajo colapsa al de siempre: linea a linea.
+    fn line_rows(&self, line: usize) -> (LineGraphemes, Vec<usize>) {
+        let g = self.graphemes(line);
+        let rows = g.row_boundaries(self.wrap_width);
+        (g, rows)
+    }
+
+    /// Columna (en chars) a la que aterriza el cursor al caer en la fila `row`
+    /// de `line`, respetando la columna visual deseada.
+    ///
+    /// El limite derecho de una fila que NO es la ultima de su linea pertenece
+    /// ya a la fila siguiente (es donde se dibujaria el proximo caracter), asi
+    /// que ahi se retrocede un grafema: sin eso, bajar una fila podria dejar el
+    /// cursor visualmente en la fila de mas abajo, como si la tecla se hubiera
+    /// comido un renglon.
+    fn col_in_row(&self, g: &LineGraphemes, rows: &[usize], row: usize) -> usize {
+        let end = rows[row + 1];
+        let target = (rows[row] + self.preferred_display_col).min(end);
+        let col = g.col_for_display(target);
+        let is_last_row = row + 2 == rows.len();
+        if !is_last_row && g.display_col(col) == end {
+            // Toda fila tiene al menos un grafema, asi que el limite anterior
+            // nunca se pasa al arranque de la fila.
+            g.prev_boundary(col)
+        } else {
+            col
+        }
+    }
+
     fn move_up_core(&mut self) {
         self.last_was_insert = false;
-        if self.line > 0 {
+        let (g, rows) = self.line_rows(self.line);
+        let row = crate::text::row_at(&rows, g.display_col(self.col));
+        if row > 0 {
+            // Hay una fila visual arriba dentro de la MISMA linea del doc.
+            self.col = self.col_in_row(&g, &rows, row - 1);
+        } else if self.line > 0 {
+            // Primera fila de la linea: se pasa a la ULTIMA fila de la anterior.
             self.line -= 1;
-            self.col = self
-                .graphemes(self.line)
-                .col_for_display(self.preferred_display_col);
+            let (g, rows) = self.line_rows(self.line);
+            self.col = self.col_in_row(&g, &rows, rows.len() - 2);
         }
     }
 
     fn move_down_core(&mut self) {
         self.last_was_insert = false;
-        // Ultima linea valida: len_lines()-1, pero si el buffer termina en '\n'
-        // ropey cuenta una linea extra vacia; la permitimos como destino valido.
-        if self.line + 1 < self.buffer.len_lines() {
+        let (g, rows) = self.line_rows(self.line);
+        let row = crate::text::row_at(&rows, g.display_col(self.col));
+        if row + 2 < rows.len() {
+            // Hay otra fila visual abajo dentro de la MISMA linea del doc.
+            self.col = self.col_in_row(&g, &rows, row + 1);
+        } else if self.line + 1 < self.buffer.len_lines() {
+            // Ultima fila de la linea: se pasa a la PRIMERA de la siguiente.
+            // Ultima linea valida: len_lines()-1, pero si el buffer termina en
+            // '\n' ropey cuenta una linea extra vacia; la permitimos como
+            // destino valido.
             self.line += 1;
-            self.col = self
-                .graphemes(self.line)
-                .col_for_display(self.preferred_display_col);
+            let (g, rows) = self.line_rows(self.line);
+            self.col = self.col_in_row(&g, &rows, 0);
         }
     }
 
@@ -121,36 +165,43 @@ impl Document {
         self.sync_preferred();
     }
 
-    /// Mueve el cursor `page_size` lineas hacia arriba, preservando la columna
-    /// visual deseada (igual que `move_up`). Si `page_size` excede la posicion
-    /// actual, queda en la linea 0. `page_size` lo decide el caller a partir
-    /// del alto del viewport (ver `main::draw`).
+    /// Mueve el cursor `page_size` FILAS visuales hacia arriba, preservando la
+    /// columna visual deseada (es un `move_up` repetido, asi que con soft wrap
+    /// pagina lo mismo que se ve en pantalla y no la linea logica, que puede
+    /// valer varias filas). Si `page_size` excede la posicion actual, queda al
+    /// principio del documento. `page_size` lo decide el caller a partir del
+    /// alto del viewport (ver `main::draw`).
     pub fn move_page_up(&mut self, page_size: usize) {
-        self.last_was_insert = false;
         self.clear_selection();
-        self.line = self.line.saturating_sub(page_size);
-        self.col = self
-            .graphemes(self.line)
-            .col_for_display(self.preferred_display_col);
+        for _ in 0..page_size {
+            let before = (self.line, self.col);
+            self.move_up_core();
+            if (self.line, self.col) == before {
+                break; // ya esta arriba de todo
+            }
+        }
     }
 
-    /// Mueve el cursor `page_size` lineas hacia abajo, preservando la columna
-    /// visual deseada. Si excede el documento, queda en la ultima linea valida
-    /// (igual criterio que `move_down`/`move_to_doc_end`: ignora la linea
-    /// extra vacia que ropey cuenta cuando el buffer termina en '\n').
+    /// Mueve el cursor `page_size` FILAS visuales hacia abajo, preservando la
+    /// columna visual deseada. Si excede el documento, queda en la ultima linea
+    /// valida (igual criterio que `move_to_doc_end`: ignora la linea extra
+    /// vacia que ropey cuenta cuando el buffer termina en '\n').
     pub fn move_page_down(&mut self, page_size: usize) {
-        self.last_was_insert = false;
         self.clear_selection();
+        for _ in 0..page_size {
+            let before = (self.line, self.col);
+            self.move_down_core();
+            if (self.line, self.col) == before {
+                break; // ya esta abajo de todo
+            }
+        }
+        // Paginar hasta el fondo no deberia aterrizar en la linea vacia que
+        // ropey cuenta despues del '\n' final: se vuelve a la ultima con
+        // contenido (una fila visual arriba).
         let last_idx = self.buffer.len_lines().saturating_sub(1);
-        let last_valid = if last_idx > 0 && self.line_len_chars(last_idx) == 0 {
-            last_idx - 1
-        } else {
-            last_idx
-        };
-        self.line = (self.line + page_size).min(last_valid);
-        self.col = self
-            .graphemes(self.line)
-            .col_for_display(self.preferred_display_col);
+        if self.line == last_idx && last_idx > 0 && self.line_len_chars(last_idx) == 0 {
+            self.move_up_core();
+        }
     }
 
     /// Mueve el cursor al fin del documento: ultima linea con contenido (mismo
@@ -285,6 +336,83 @@ mod tests {
         let mut d = doc_with("ab\ncd\n");
         d.move_to_doc_end();
         assert_eq!((d.line, d.col), (1, 2)); // fin de "cd", no la linea vacia
+    }
+
+    // --- Movimiento vertical con soft wrap ---------------------------------
+    //
+    // Todos usan la misma linea envuelta a 8 celdas: "aaa bbb ccc ddd" corta
+    // tras el espacio, o sea filas [0,8) = "aaa bbb " y [8,15) = "ccc ddd".
+
+    #[test]
+    fn bajar_en_una_linea_envuelta_va_a_la_fila_de_abajo_no_a_la_linea_siguiente() {
+        // El bug que motivo esto: con soft wrap, un parrafo largo es UNA linea
+        // del documento y varias filas en pantalla; bajar tiene que avanzar una
+        // fila, no saltarse el parrafo entero.
+        let mut d = doc_with("aaa bbb ccc ddd\nsegunda");
+        d.set_wrap_width(8);
+        d.move_down();
+        assert_eq!((d.line, d.col), (0, 8));
+        d.move_down(); // recien ahora se pasa a la linea siguiente
+        assert_eq!((d.line, d.col), (1, 0));
+    }
+
+    #[test]
+    fn subir_entra_a_la_ultima_fila_de_la_linea_anterior() {
+        let mut d = doc_with("aaa bbb ccc ddd\nsegunda");
+        d.set_wrap_width(8);
+        d.line = 1;
+        d.move_up();
+        assert_eq!((d.line, d.col), (0, 8)); // arranque de la ULTIMA fila
+        d.move_up();
+        assert_eq!((d.line, d.col), (0, 0));
+    }
+
+    #[test]
+    fn la_columna_deseada_es_relativa_a_la_fila_visual() {
+        let mut d = doc_with("aaa bbb ccc ddd");
+        d.set_wrap_width(8);
+        d.col = 10; // 3ra celda de la fila de abajo ("ccc ddd" -> la 2da 'c')
+        d.move_right(); // fija la columna deseada (x=3 dentro de la fila)
+        d.move_left(); // y vuelve a la 10 sin perderla
+        d.move_up();
+        assert_eq!((d.line, d.col), (0, 2)); // misma x, fila de arriba
+        d.move_down();
+        assert_eq!((d.line, d.col), (0, 10)); // y de vuelta
+    }
+
+    #[test]
+    fn subir_a_una_fila_llena_no_aterriza_en_el_limite_de_la_siguiente() {
+        // "aaa bbb cccccccc": filas [0,8) y [8,16), las dos de ancho 8. Desde el
+        // fin de la de abajo (x=8) la de arriba no tiene celda 8: la columna 8 ya
+        // es el arranque de la fila de abajo y el cursor se dibujaria ahi mismo
+        // (parece que subir no hizo nada), asi que se retrocede un grafema.
+        let mut d = doc_with("aaa bbb cccccccc");
+        d.set_wrap_width(8);
+        d.move_to_line_end();
+        assert_eq!(d.col, 16);
+        d.move_up();
+        assert_eq!(d.col, 7); // ultima celda de la fila de arriba
+    }
+
+    #[test]
+    fn paginar_cuenta_filas_visuales() {
+        // Dos "paginas" de 2 filas: la primera se consume dentro de la linea
+        // envuelta (2 filas), no saltando 2 lineas del documento.
+        let mut d = doc_with("aaa bbb ccc ddd\nsegunda\ntercera");
+        d.set_wrap_width(8);
+        d.move_page_down(2);
+        assert_eq!((d.line, d.col), (1, 0));
+        d.move_page_up(2);
+        assert_eq!((d.line, d.col), (0, 0));
+    }
+
+    #[test]
+    fn sin_wrap_width_el_movimiento_vertical_es_por_linea() {
+        // `wrap_width == 0` (default, y lo que ve cualquier consumidor del core
+        // que no dibuje) deja el comportamiento de siempre: linea a linea.
+        let mut d = doc_with("aaa bbb ccc ddd\nsegunda");
+        d.move_down();
+        assert_eq!((d.line, d.col), (1, 0));
     }
 
     // --- Grafemas anchos / multi-char --------------------------------------

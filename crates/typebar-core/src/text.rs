@@ -74,6 +74,9 @@ pub struct LineGraphemes {
     boundaries: Vec<usize>,
     /// Ancho en celdas del grafema `i` (entre `boundaries[i]` y `[i+1]`).
     widths: Vec<usize>,
+    /// `true` si el grafema `i` es un espacio (punto de corte preferido del
+    /// soft wrap, ver `wrap_boundaries`).
+    is_space: Vec<bool>,
 }
 
 impl LineGraphemes {
@@ -81,13 +84,27 @@ impl LineGraphemes {
     pub fn analyze(line: &str) -> Self {
         let mut boundaries = vec![0];
         let mut widths = Vec::new();
+        let mut is_space = Vec::new();
         let mut chars = 0;
         for g in line.graphemes(true) {
             chars += g.chars().count();
             boundaries.push(chars);
             widths.push(grapheme_width(g));
+            is_space.push(g == " ");
         }
-        Self { boundaries, widths }
+        Self {
+            boundaries,
+            widths,
+            is_space,
+        }
+    }
+
+    /// Limites (en columnas de pantalla) de las filas visuales en que cae esta
+    /// linea con soft wrap a `width` celdas: el mismo corte que dibuja la TUI,
+    /// para que el movimiento vertical del cursor razone en las filas que el
+    /// usuario ve. `width == 0` = sin wrap (una sola fila).
+    pub fn row_boundaries(&self, width: usize) -> Vec<usize> {
+        wrap_boundaries(&self.widths, &self.is_space, width)
     }
 
     /// Cantidad de chars de la linea (= indice de char del fin de linea).
@@ -149,6 +166,97 @@ impl LineGraphemes {
     }
 }
 
+/// Corte greedy de una secuencia de grafemas (ancho en celdas + flag de
+/// espacio) en filas visuales de `width` celdas. Devuelve los limites en
+/// columnas de pantalla: `[0, .., ancho_total]`, longitud = filas + 1, con la
+/// fila `k` ocupando `[b[k], b[k+1])`.
+///
+/// Vive en el core (y no en el motor de wrap de la TUI, su otro consumidor)
+/// porque el movimiento vertical del cursor tiene que cortar las lineas
+/// EXACTAMENTE igual que el render: dos implementaciones que se desincronicen
+/// dejarian el cursor en una fila distinta de la que se ve.
+///
+/// Reglas:
+/// - Se cortan las filas despues del ULTIMO espacio que entro (el espacio se
+///   queda en la fila anterior: los rangos son contiguos y cubren la linea),
+///   asi la palabra entera baja a la fila siguiente.
+/// - Sin ningun espacio en la fila (palabra mas larga que el ancho): corte duro
+///   en el grafema donde dejo de entrar, nunca en medio de un cluster.
+/// - Si ni el primer grafema entra (mas ancho que el viewport) se fuerza igual,
+///   para garantizar progreso: nunca queda una fila vacia.
+/// - `width == 0` o linea que entra entera: una sola fila.
+pub fn wrap_boundaries(widths: &[usize], is_space: &[bool], width: usize) -> Vec<usize> {
+    let total: usize = widths.iter().sum();
+    if width == 0 || total <= width {
+        // Entra entera (incluida la linea vacia) o el wrap esta apagado.
+        return vec![0, total];
+    }
+
+    let n = widths.len();
+    let mut boundaries = vec![0];
+    let mut idx = 0; // indice de grafema donde arranca la fila actual
+    let mut start_col = 0; // display col donde arranca la fila actual
+
+    while idx < n {
+        let mut col = start_col;
+        // Ultimo punto (indice de grafema siguiente, col) justo despues de un
+        // espacio que entro en esta fila: preferimos cortar ahi.
+        let mut last_space: Option<(usize, usize)> = None;
+        let mut j = idx;
+
+        loop {
+            if j >= n {
+                // El resto de la linea entero cabe en esta fila: ultima fila.
+                boundaries.push(total);
+                idx = n;
+                break;
+            }
+            let w = widths[j];
+            if col - start_col + w <= width {
+                col += w;
+                if is_space[j] {
+                    last_space = Some((j + 1, col));
+                }
+                j += 1;
+                continue;
+            }
+            // El grafema `j` no entra en la fila actual.
+            if col == start_col {
+                // Fila vacia: forzar este grafema igual, para garantizar
+                // progreso (nunca partirlo, pero tampoco dejar la fila vacia).
+                col += w;
+                j += 1;
+            } else if let Some((next_idx, break_col)) = last_space {
+                // Cortar despues del ultimo espacio: la palabra entera que no
+                // entraba baja completa a la fila siguiente.
+                col = break_col;
+                j = next_idx;
+            }
+            // (si no hay espacio y la fila no esta vacia: corte duro,
+            // `col`/`j` ya son el punto de corte tal cual quedaron)
+            boundaries.push(col);
+            idx = j;
+            start_col = col;
+            break;
+        }
+    }
+
+    boundaries
+}
+
+/// Indice de la fila visual (dentro de `boundaries`, formato `wrap_boundaries`)
+/// que contiene la columna de pantalla `display_col`.
+///
+/// Regla del limite exacto: una columna que cae justo en el limite entre la
+/// fila `k` y la `k+1` pertenece a la `k+1` (ahi aparece lo proximo que se
+/// tipee), salvo el fin de la ULTIMA fila, que se queda en ella. Sale solo de
+/// buscar el arranque de fila mas grande que sea `<= display_col` (el sentinela
+/// final no es un arranque valido, por eso se excluye de la busqueda).
+pub fn row_at(boundaries: &[usize], display_col: usize) -> usize {
+    let n_rows = boundaries.len() - 1;
+    boundaries[..n_rows].partition_point(|&start| start <= display_col) - 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +279,33 @@ mod tests {
     fn ancho_katakana_halfwidth_dakuten() {
         // ﾞ sola: unicode-width la da 0, pero ocupa 1 celda en terminal.
         assert_eq!(grapheme_width("\u{FF9E}"), 1);
+    }
+
+    #[test]
+    fn row_boundaries_corta_la_linea_en_filas_visuales() {
+        let g = LineGraphemes::analyze("aaa bbb ccc ddd");
+        // Corta tras el espacio que entro: "aaa bbb " | "ccc ddd".
+        assert_eq!(g.row_boundaries(8), vec![0, 8, 15]);
+        // Ancho 0 (sin wrap) o linea que entra entera: una sola fila.
+        assert_eq!(g.row_boundaries(0), vec![0, 15]);
+        assert_eq!(g.row_boundaries(80), vec![0, 15]);
+    }
+
+    #[test]
+    fn row_at_ubica_la_columna_en_su_fila() {
+        let rows = vec![0, 8, 15];
+        assert_eq!(row_at(&rows, 0), 0);
+        assert_eq!(row_at(&rows, 7), 0);
+        assert_eq!(row_at(&rows, 8), 1); // el limite exacto es de la fila de abajo
+        assert_eq!(row_at(&rows, 15), 1); // ...salvo el fin de la ultima fila
+    }
+
+    #[test]
+    fn row_boundaries_con_grafemas_anchos_no_parte_clusters() {
+        // "中中中" son 3 grafemas de 2 celdas: con ancho 5 entran 2 por fila
+        // (la 5ta celda queda libre, el CJK no se parte).
+        let g = LineGraphemes::analyze("中中中");
+        assert_eq!(g.row_boundaries(5), vec![0, 4, 6]);
     }
 
     #[test]
