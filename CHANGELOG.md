@@ -16,6 +16,8 @@ How to maintain this file:
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-21
+
 ### Added
 
 - Soft wrap: lines longer than the viewport now wrap visually at the available
