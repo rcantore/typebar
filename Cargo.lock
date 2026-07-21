@@ -4522,7 +4522,7 @@ dependencies = [
 
 [[package]]
 name = "typebar-gui"
-version = "0.3.1"
+version = "0.4.1"
 dependencies = [
  "serde",
  "serde_json",

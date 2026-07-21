@@ -19,7 +19,7 @@ crate-type = ["lib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-typebar-core = { path = "../typebar-core", version = "0.3.1" }
+typebar-core = { path = "../typebar-core", version = "0.4.1" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
