@@ -331,8 +331,9 @@ pub struct StyleSpan {
 /// Tipo de elemento revelable. Los inline (`Bold`/`Italic`/`Code`/`Link`) tienen
 /// como rango el nodo entero (marcadores incluidos); los de linea/bloque
 /// (`Heading`/`ListItem`/`Blockquote`) el rango del nodo de tree-sitter, que para
-/// un heading atx es su linea y para un item de lista o una cita puede abarcar
-/// varias lineas.
+/// un heading atx es su linea y para un item de lista puede abarcar varias.
+/// La `Blockquote` es la excepcion: como repite su `>` en cada linea, se emite
+/// un elemento POR LINEA (ver `style_elements`) y nunca abarca mas de una.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementKind {
     Bold,
@@ -394,13 +395,21 @@ struct StyleRange {
 /// estilo. Es la traduccion de las mismas reglas del renderer de la TUI (ver
 /// `collect_styles`) a nuestro enum acotado. Las ramas van de la mas especifica
 /// a la mas generica: los `_marker`/`_delimiter` genericos quedan al final.
-fn classify(kind: &str, parent: Option<&str>) -> Option<SpanKind> {
+fn classify(kind: &str, parent: Option<&str>, grandparent: Option<&str>) -> Option<SpanKind> {
     match kind {
-        // El texto de un heading es el nodo `inline` hijo del heading (atx o
-        // setext). El marcador `#`/`##` se atenua aparte (rama generica).
-        "inline" if matches!(parent, Some("atx_heading" | "setext_heading")) => {
+        // El texto de un heading es el nodo `inline` hijo del heading. En un atx
+        // cuelga directo del `atx_heading`; en un setext, tree-sitter interpone
+        // un `paragraph` (setext_heading > paragraph > inline), asi que ese caso
+        // se reconoce por el ABUELO. Sin esta segunda rama el titulo de un setext
+        // no recibia ningun tramo y quedaba como texto plano.
+        "inline" if parent == Some("atx_heading") => Some(SpanKind::Heading),
+        "inline" if parent == Some("paragraph") && grandparent == Some("setext_heading") => {
             Some(SpanKind::Heading)
         }
+        // El subrayado de un setext (`===` / `---`) es SU marcador. Va explicito
+        // porque el nodo no termina en `_marker` ni `_delimiter` y por lo tanto
+        // no lo agarra la rama generica de abajo.
+        "setext_h1_underline" | "setext_h2_underline" => Some(SpanKind::Marker),
         "strong_emphasis" => Some(SpanKind::Bold),
         "emphasis" => Some(SpanKind::Italic),
         "code_span" => Some(SpanKind::Code),
@@ -432,6 +441,40 @@ fn classify(kind: &str, parent: Option<&str>) -> Option<SpanKind> {
     }
 }
 
+/// Rangos en BYTES de los marcadores `>` de las lineas de CONTINUACION de la
+/// cita que ocupa `[start, end)`. Incluye el espacio que sigue al `>`, igual que
+/// el `block_quote_marker` que emite tree-sitter para la primera linea ("> ").
+///
+/// Hace falta porque tree-sitter-md solo marca el `>` de la PRIMERA linea: las
+/// siguientes continuan el mismo parrafo y sus `>` quedan adentro del nodo
+/// `inline`, sin nodo propio. Sin esto no serian marcadores, o sea que no se
+/// atenuarian en el Nivel 1 ni se podrian ocultar en el Nivel 2: la cita
+/// multilinea mostraba el primer `>` tenue y los demas como texto comun.
+fn continuation_quote_markers(source: &str, start: usize, end: usize) -> Vec<(usize, usize)> {
+    let bytes = source.as_bytes();
+    let mut out = Vec::new();
+    for (i, b) in bytes.iter().enumerate().take(end).skip(start) {
+        if *b != b'\n' {
+            continue;
+        }
+        // Arranque de la linea siguiente, con hasta 3 espacios de sangria (lo
+        // que CommonMark tolera antes de un marcador de bloque).
+        let mut j = i + 1;
+        let limite = (j + 3).min(end);
+        while j < limite && bytes[j] == b' ' {
+            j += 1;
+        }
+        if j < end && bytes[j] == b'>' {
+            let mut fin = j + 1;
+            if fin < end && bytes[fin] == b' ' {
+                fin += 1;
+            }
+            out.push((j, fin));
+        }
+    }
+    out
+}
+
 /// DFS iterativo del arbol de tree-sitter-md que junta los tramos estilizados en
 /// BYTES con su profundidad. Mismo recorrido block+inline que usa la TUI.
 fn collect_style_ranges(source: &str) -> Vec<StyleRange> {
@@ -454,13 +497,41 @@ fn collect_style_ranges(source: &str) -> Vec<StyleRange> {
         let depth = stack.len();
         let parent = stack.last().copied();
 
-        if let Some(k) = classify(kind, parent) {
+        let grandparent = stack.iter().rev().nth(1).copied();
+        if let Some(k) = classify(kind, parent, grandparent) {
+            // El subrayado de un setext se lleva puesto el `\n` que lo separa del
+            // titulo: es parte del marcador (sin el salto de linea no hay
+            // subrayado) y asi, cuando el Nivel 2 lo oculta, no queda una linea
+            // vacia colgando bajo el titulo (el texto no salta verticalmente al
+            // entrar y salir del bloque).
+            let mut start = range.start;
+            if matches!(kind, "setext_h1_underline" | "setext_h2_underline")
+                && start > 0
+                && source.as_bytes()[start - 1] == b'\n'
+            {
+                start -= 1;
+            }
             ranges.push(StyleRange {
-                start: range.start,
+                start,
                 end: range.end,
                 kind: k,
                 depth,
             });
+        }
+
+        // Los `>` de las lineas de continuacion de una cita no tienen nodo
+        // propio; los agregamos nosotros (ver `continuation_quote_markers`).
+        // Pisar un rango ya pintado no molesta: el aplanado de `style_spans` es
+        // por byte, asi que repetir el mismo kind sobre el mismo byte es inocuo.
+        if kind == "block_quote" {
+            for (ini, fin) in continuation_quote_markers(source, range.start, range.end) {
+                ranges.push(StyleRange {
+                    start: ini,
+                    end: fin,
+                    kind: SpanKind::Blockquote,
+                    depth: depth + 1,
+                });
+            }
         }
 
         if cursor.goto_first_child() {
@@ -578,6 +649,34 @@ fn element_kind(kind: &str) -> Option<ElementKind> {
     }
 }
 
+/// Parte el rango de bytes `[start, end)` en un sub-rango POR LINEA y los apila
+/// en `out` con el mismo `kind`. Los `\n` separadores quedan afuera y las lineas
+/// vacias se descartan (un rango vacio no es un elemento).
+///
+/// Lo usa `style_elements` con las citas: a diferencia del resto de los nodos de
+/// bloque, una cita repite su marcador en cada linea, y el consumidor necesita
+/// un elemento por linea para revelar solo el marcador de la linea del caret.
+fn push_line_elements(
+    out: &mut Vec<(usize, usize, ElementKind)>,
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    kind: ElementKind,
+) {
+    let mut line_start = start;
+    for (i, b) in bytes.iter().enumerate().take(end).skip(start) {
+        if *b == b'\n' {
+            if line_start < i {
+                out.push((line_start, i, kind));
+            }
+            line_start = i + 1;
+        }
+    }
+    if line_start < end {
+        out.push((line_start, end, kind));
+    }
+}
+
 /// Devuelve los rangos COMPLETOS de los elementos revelables del `source`, en
 /// offsets UTF-16, para el "Nivel 2" del bloque en edicion. Cada rango abarca el
 /// nodo entero (marcadores incluidos): una negrita con sus `**`, un heading con
@@ -587,6 +686,10 @@ fn element_kind(kind: &str) -> Option<ElementKind> {
 ///
 /// A los nodos de linea/bloque (heading, item, cita) se les recorta el `\n` final
 /// para que el rango NO invada el arranque del bloque siguiente.
+///
+/// Las citas multilinea se parten en un elemento POR LINEA: su marcador `>` se
+/// repite en cada linea, asi que cada linea es su propia unidad de revelado (con
+/// el nodo entero, el caret en una linea revelaba los `>` de TODA la cita).
 pub fn style_elements(source: &str) -> Vec<StyleElement> {
     // Mismo `\n` sintetico que `style_spans`: sin el, un bloque a medio tipear
     // ("# T", "> cita") parsea como ERROR y no daria elemento. Recortamos al
@@ -622,7 +725,21 @@ pub fn style_elements(source: &str) -> Vec<StyleElement> {
                 end -= 1;
             }
             if start < end {
-                byte_elems.push((start, end, kind));
+                // Una cita multilinea repite su marcador `>` en CADA linea, asi
+                // que cada linea se edita por su cuenta: la partimos en un
+                // elemento POR LINEA para que el caret revele solo el `>` de su
+                // linea y no los de la cita entera.
+                //
+                // El item de lista NO se parte: tiene un unico marcador al
+                // principio y sus lineas de continuacion pertenecen al mismo
+                // elemento, asi que el caret en la continuacion sigue "dentro"
+                // del item y su vineta se revela, que es lo que se espera. Una
+                // lista de varios items ya da un elemento por item.
+                if kind == ElementKind::Blockquote {
+                    push_line_elements(&mut byte_elems, bytes, start, end, kind);
+                } else {
+                    byte_elems.push((start, end, kind));
+                }
             }
         }
 
@@ -958,6 +1075,168 @@ mod tests {
         let code = style_elements("`x`");
         let c = first_el(&code, ElementKind::Code).expect("code");
         assert_eq!((c.start, c.end), (0, 3));
+    }
+
+    #[test]
+    fn elements_cita_multilinea_da_un_elemento_por_linea() {
+        // "> a\n> b\n> c": la cita se parte en UNA unidad de revelado por linea,
+        // para que el caret en una linea no revele los `>` de las otras.
+        let src = "> a\n> b\n> c";
+        let els = style_elements(src);
+        let citas: Vec<_> = els
+            .iter()
+            .filter(|e| e.kind == ElementKind::Blockquote)
+            .map(|e| (e.start, e.end))
+            .collect();
+        assert_eq!(citas, vec![(0, 3), (4, 7), (8, 11)], "els: {els:?}");
+    }
+
+    #[test]
+    fn elements_cita_de_una_linea_no_se_parte() {
+        // Sin `\n` adentro no hay nada que partir: sigue siendo un solo elemento
+        // que cubre la linea entera, marcador incluido.
+        let els = style_elements("> hola");
+        let citas: Vec<_> = els
+            .iter()
+            .filter(|e| e.kind == ElementKind::Blockquote)
+            .map(|e| (e.start, e.end))
+            .collect();
+        assert_eq!(citas, vec![(0, 6)], "els: {els:?}");
+    }
+
+    #[test]
+    fn elements_cita_multilinea_no_cubre_los_marcadores_de_otras_lineas() {
+        // La propiedad que le importa al consumidor: el marcador `>` de la
+        // segunda linea NO cae dentro del elemento de la primera, asi que el
+        // caret en la primera ya no lo revela.
+        let src = "> uno\n> dos";
+        let els = style_elements(src);
+        let primera = els
+            .iter()
+            .find(|e| e.kind == ElementKind::Blockquote)
+            .expect("cita");
+        let marcador_segunda_linea = 6; // el `>` de "> dos"
+        assert!(
+            marcador_segunda_linea >= primera.end,
+            "el elemento de la primera linea no deberia llegar al `>` de la \
+             segunda; primera: {primera:?}"
+        );
+    }
+
+    #[test]
+    fn elements_cita_con_lazy_continuation() {
+        // "> uno\ndos": la segunda linea pertenece a la cita pero no tiene `>`.
+        // Igual da su propio elemento (no hay marcador que revelar, pero el
+        // rango por linea se mantiene consistente).
+        let src = "> uno\ndos";
+        let els = style_elements(src);
+        let citas: Vec<_> = els
+            .iter()
+            .filter(|e| e.kind == ElementKind::Blockquote)
+            .map(|e| (e.start, e.end))
+            .collect();
+        assert_eq!(citas, vec![(0, 5), (6, 9)], "els: {els:?}");
+    }
+
+    #[test]
+    fn style_spans_cita_multilinea_marca_todos_los_mayor_que() {
+        // tree-sitter solo da nodo al `>` de la primera linea; los de las lineas
+        // de continuacion los agregamos nosotros. Sin esto, el segundo y el
+        // tercer `>` quedaban como texto comun (ni tenues ni ocultables).
+        let src = "> uno\n> dos\n> tres\n";
+        let spans = style_spans(src);
+        let citas: Vec<_> = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::Blockquote)
+            .map(|s| (s.start, s.end))
+            .collect();
+        assert_eq!(citas, vec![(0, 2), (6, 8), (12, 14)], "spans: {spans:?}");
+        for (ini, fin) in citas {
+            assert_eq!(&src[ini..fin], "> ");
+        }
+    }
+
+    #[test]
+    fn style_spans_cita_con_sangria_y_sin_espacio() {
+        // `>` pegado al texto (sin espacio) y con sangria de hasta 3 espacios.
+        let src = "> uno\n  >dos\n";
+        let spans = style_spans(src);
+        let citas: Vec<_> = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::Blockquote)
+            .map(|s| (s.start, s.end))
+            .collect();
+        assert_eq!(citas, vec![(0, 2), (8, 9)], "spans: {spans:?}");
+    }
+
+    #[test]
+    fn style_spans_cita_con_lazy_continuation_no_inventa_marcador() {
+        // Segunda linea sin `>`: no hay marcador que marcar.
+        let spans = style_spans("> uno\ndos\n");
+        let citas = spans
+            .iter()
+            .filter(|s| s.kind == SpanKind::Blockquote)
+            .count();
+        assert_eq!(citas, 1, "spans: {spans:?}");
+    }
+
+    #[test]
+    fn style_spans_mayor_que_fuera_de_cita_no_es_marcador() {
+        // Un `>` en medio de un parrafo comun no se toca.
+        let spans = style_spans("a > b\n");
+        assert!(
+            !spans.iter().any(|s| s.kind == SpanKind::Blockquote),
+            "spans: {spans:?}"
+        );
+    }
+
+    // --- Headings setext (`Titulo\n======`) -------------------------------
+
+    #[test]
+    fn style_spans_setext_marca_titulo_y_subrayado() {
+        // El titulo de un setext es un tramo heading (antes quedaba sin tramo:
+        // su `inline` cuelga de un `paragraph`, no del `setext_heading`), y el
+        // subrayado es su marcador.
+        let src = "Titulo\n======\n";
+        let spans = style_spans(src);
+        let heading = first(&spans, SpanKind::Heading).expect("tramo heading");
+        assert_eq!((heading.start, heading.end), (0, 6), "spans: {spans:?}");
+        let marker = first(&spans, SpanKind::Marker).expect("tramo marcador");
+        // El marcador arranca en el `\n` (6), no en el primer `=` (7).
+        assert_eq!((marker.start, marker.end), (6, 13), "spans: {spans:?}");
+    }
+
+    #[test]
+    fn style_spans_setext_h2_tambien() {
+        let spans = style_spans("Sub\n---\n");
+        assert!(
+            first(&spans, SpanKind::Heading).is_some(),
+            "spans: {spans:?}"
+        );
+        assert!(
+            first(&spans, SpanKind::Marker).is_some(),
+            "spans: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn style_spans_parrafo_normal_no_es_heading() {
+        // Guarda de la rama nueva: un `inline` dentro de un `paragraph` que NO
+        // cuelga de un setext_heading sigue siendo texto plano.
+        let spans = style_spans("un parrafo comun\n");
+        assert!(
+            first(&spans, SpanKind::Heading).is_none(),
+            "spans: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn elements_setext_cubre_titulo_y_subrayado() {
+        // El elemento heading abarca las dos lineas, asi el caret en el titulo
+        // revela el subrayado (y viceversa).
+        let els = style_elements("Titulo\n======\n");
+        let h = first_el(&els, ElementKind::Heading).expect("heading");
+        assert_eq!((h.start, h.end), (0, 13), "els: {els:?}");
     }
 
     #[test]

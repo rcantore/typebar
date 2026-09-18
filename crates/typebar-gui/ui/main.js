@@ -285,9 +285,45 @@ function setCaretOffset(root, offset) {
 // Nivel de heading (1..6) de un source de bloque, o 0 si no es un heading ATX.
 // Sirve para escalar la superficie editable a la altura del heading, ya que el
 // nucleo marca el texto del heading pero el tamano lo decide el frontend.
+// Una linea que ARRANCA un bloque de otro tipo (heading atx, cita, item de
+// lista): si el bloque empieza asi, su segunda linea de `---` es un separador o
+// un item, no el subrayado de un setext.
+const BLOCK_START_RE = /^[ \t]{0,3}(#{1,6}\s|>|([-*+]|\d{1,9}[.)])\s)/;
+
+// Subrayado de un heading setext: una linea de solo `=` (h1) o solo `-` (h2).
+// El bloque suele traer la linea en blanco que lo separa del siguiente, asi que
+// toleramos los saltos de linea del final (`\n*`), no uno solo.
+const SETEXT_UNDERLINE_RE = /^[ \t]{0,3}(=+|-+)[ \t]*\n*$/;
+
+// Nivel de heading del source de un bloque, o 0 si no es un heading. Cubre las
+// dos formas de markdown:
+//   - atx:    `## Titulo`           -> nivel = cantidad de `#`
+//   - setext: `Titulo\n======`      -> `=` es h1, `-` es h2
+// Solo decide la ESCALA tipografica del bloque en edicion; el renderizado y los
+// tramos los resuelve el nucleo. Por eso alcanza con este reconocimiento
+// superficial, mientras no se pase de largo: un falso positivo agrandaria texto
+// que no es un titulo, asi que el setext exige exactamente dos lineas, que la
+// primera no arranque otro bloque y que el bloque no sea un code fence (un
+// "```\n---" a medio tipear no es un titulo).
 function headingLevel(source) {
-  const m = /^(#{1,6})\s/.exec(source);
-  return m ? m[1].length : 0;
+  const atx = /^(#{1,6})\s/.exec(source);
+  if (atx) {
+    return atx[1].length;
+  }
+  const corte = source.indexOf("\n");
+  if (corte < 0 || isFenceBlock(source)) {
+    return 0;
+  }
+  const primera = source.slice(0, corte);
+  const resto = source.slice(corte + 1);
+  if (!primera.trim() || BLOCK_START_RE.test(primera)) {
+    return 0;
+  }
+  const subrayado = SETEXT_UNDERLINE_RE.exec(resto);
+  if (!subrayado) {
+    return 0;
+  }
+  return subrayado[1].startsWith("=") ? 1 : 2;
 }
 
 // Un bloque es un code fence completo si arranca con ``` o ~~~. En ese caso toda

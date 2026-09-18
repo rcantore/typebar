@@ -204,11 +204,22 @@ body {
 /* Nivel 2: marcador OCULTO. display:none lo saca del render pero NO del DOM, asi
    el textContent sigue siendo el markdown exacto (los offsets, el undo y el copy
    crudo dependen de eso). El JS togglea esta clase segun donde este el caret.
-   Aceptamos el reflow HORIZONTAL al revelar/ocultar (Typora tambien lo tiene);
-   como el prefijo de heading ya no escala la linea, no hay saltos verticales.
-   Si en algun WebView el caret se trabara al cruzar un nodo display:none, el
-   fallback documentado es colapsar el ancho (font-size:0 / letter-spacing) en vez
-   de display:none, que mantiene el nodo navegable por el caret. */
+
+   Caret en WKWebView: MEDIDO, no hace falta fallback. Recorriendo un bloque con
+   las flechas, el caret nunca se traba al cruzar un nodo display:none. Entrando
+   por la izquierda pasa por el marcador (al tocar el borde del elemento este ya
+   se revelo); entrando por la derecha lo SALTEA de una, que es justo lo que se
+   quiere: no se pulsa una flecha por cada caracter que no se ve. Si algun dia un
+   WebView si lo trabara, el fallback es colapsar el ancho (font-size:0 /
+   letter-spacing) en lugar de display:none, que deja el nodo navegable.
+
+   Reflow al revelar/ocultar, tambien medido: HORIZONTAL de 17 a 30 px segun el
+   marcador (`**` 30, `` ` `` 17, `>` 19), solo dentro del bloque en edicion y
+   sin mover la linea de arriba ni la de abajo. Typora tiene el mismo efecto.
+   VERTICAL solo en los headings setext: al revelar el subrayado `======` el
+   bloque crece una linea (~37 px). Es el precio de tratar el subrayado como el
+   marcador que es; si molestara, la salida es dejarlo siempre visible (atenuado)
+   en vez de ocultarlo. */
 .md-hidden {
   display: none;
 }
