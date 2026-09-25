@@ -2411,4 +2411,161 @@ mod tests {
         let preset = resolve_preset(None, &config);
         assert_eq!(preset, DEFAULT_PRESET);
     }
+    /// Bench de frames (ignorado por default). Renderiza N frames de `draw` sobre un
+    /// `TestBackend` con el fixture de `TYPEBAR_BENCH_FIXTURE` y reporta el tiempo
+    /// por frame, en dos escenarios: documento quieto (cache caliente) y tipeando
+    /// (una insercion por frame, que invalida cualquier cache). Correr con:
+    /// `TYPEBAR_BENCH_FIXTURE=doc.md cargo test --release -p typebar bench_frames -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_frames() {
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use std::time::Instant;
+
+        let path = std::env::var("TYPEBAR_BENCH_FIXTURE").expect("TYPEBAR_BENCH_FIXTURE");
+        let frames: usize = std::env::var("TYPEBAR_BENCH_FRAMES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut doc = doc_with(&text);
+        // Cursor a mitad del documento: el scroll tiene que trabajar.
+        let lines = text.lines().count();
+        for _ in 0..lines / 2 {
+            doc.move_down();
+        }
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut state = AppState::new(false);
+
+        let mut frame = |doc: &Document, state: &mut AppState| {
+            terminal
+                .draw(|f| draw(f, doc, &km, &theme, 2, state, None))
+                .unwrap();
+        };
+        // Warmup.
+        for _ in 0..3 {
+            frame(&doc, &mut state);
+        }
+        let mut idle = Vec::with_capacity(frames);
+        for _ in 0..frames {
+            let t = Instant::now();
+            frame(&doc, &mut state);
+            idle.push(t.elapsed());
+        }
+        let mut typing = Vec::with_capacity(frames);
+        for _ in 0..frames {
+            doc.insert_char('x');
+            let t = Instant::now();
+            frame(&doc, &mut state);
+            typing.push(t.elapsed());
+        }
+        idle.sort();
+        typing.sort();
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        eprintln!(
+            "bench_frames {} lines={} bytes={} idle: min {:.3} med {:.3} ms | typing: min {:.3} med {:.3} ms",
+            path,
+            lines,
+            text.len(),
+            ms(idle[0]),
+            ms(idle[idle.len() / 2]),
+            ms(typing[0]),
+            ms(typing[typing.len() / 2]),
+        );
+    }
+    /// Bench por etapas del pipeline de un frame (ignorado por default), para ver
+    /// donde se va el tiempo. Mismo fixture/env que `bench_frames`.
+    #[test]
+    #[ignore]
+    fn bench_stages() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::widgets::{Paragraph, Widget};
+        use std::time::Instant;
+
+        let path = std::env::var("TYPEBAR_BENCH_FIXTURE").expect("TYPEBAR_BENCH_FIXTURE");
+        let text0 = std::fs::read_to_string(&path).unwrap();
+        let mut doc = doc_with(&text0);
+        let lines_n = text0.lines().count();
+        for _ in 0..lines_n / 2 {
+            doc.move_down();
+        }
+        let theme = Theme::frappe();
+        let reps = 5;
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / reps as f64;
+
+        let t = Instant::now();
+        let mut text = String::new();
+        for _ in 0..reps {
+            text = doc.text();
+        }
+        eprintln!("  doc.text():        {:.3} ms", ms(t.elapsed()));
+
+        let t = Instant::now();
+        for _ in 0..reps {
+            let mut p = tree_sitter_md::MarkdownParser::default();
+            let _ = p.parse(text.as_bytes(), None);
+        }
+        eprintln!("  ts parse (x1):     {:.3} ms", ms(t.elapsed()));
+
+        let mut out = None;
+        let t = Instant::now();
+        for _ in 0..reps {
+            out = Some(render::render(
+                &text,
+                None,
+                &[],
+                None,
+                &theme,
+                Some(doc.line),
+                2,
+                100,
+            ));
+        }
+        eprintln!("  render::render:    {:.3} ms", ms(t.elapsed()));
+        let (lines, no_wrap) = out.unwrap();
+
+        let t = Instant::now();
+        for _ in 0..reps {
+            let _ = render::code_line_flags(&text);
+        }
+        eprintln!("  code_line_flags:   {:.3} ms", ms(t.elapsed()));
+
+        let t = Instant::now();
+        let mut layout = None;
+        for _ in 0..reps {
+            layout = Some(wrap::layout(&lines, &no_wrap, 100));
+        }
+        eprintln!("  wrap::layout:      {:.3} ms", ms(t.elapsed()));
+        let layout = layout.unwrap();
+
+        let t = Instant::now();
+        let mut vis = None;
+        for _ in 0..reps {
+            vis = Some(wrap::visual_lines(lines.clone(), &layout, Style::default()));
+        }
+        eprintln!(
+            "  wrap::visual_lines:{:.3} ms (incluye clone de lines)",
+            ms(t.elapsed())
+        );
+        let vis = vis.unwrap();
+
+        let (row, _) = layout.row_and_x(doc.line, 0);
+        let area = Rect::new(0, 0, 120, 40);
+        let t = Instant::now();
+        for _ in 0..reps {
+            let mut buf = Buffer::empty(area);
+            Paragraph::new(vis.clone())
+                .scroll((row as u16, 0))
+                .render(area, &mut buf);
+        }
+        eprintln!(
+            "  Paragraph render:  {:.3} ms (incluye clone de vis)",
+            ms(t.elapsed())
+        );
+    }
 }
