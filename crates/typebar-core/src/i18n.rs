@@ -156,6 +156,9 @@ pub enum Key {
     /// Prompt de confirmacion al cerrar un buffer con cambios sin guardar. Las
     /// teclas (`s`/`d`/`c`) son fijas; el texto entre corchetes las anuncia.
     ConfirmCloseUnsaved,
+    /// Prompt de confirmacion al SALIR del editor con cambios sin guardar (en
+    /// cualquier buffer, no solo el activo). Mismas teclas que el de cerrar.
+    ConfirmQuitUnsaved,
 
     // --- Mensajes de error (defaults) -------------------------------------
     UsingDefaults,
@@ -304,6 +307,12 @@ pub fn t_for(locale: Locale, key: Key) -> &'static str {
         }
         (Locale::En, Key::ConfirmCloseUnsaved) => {
             "unsaved changes — [s] save & close · [d] discard · [c] cancel"
+        }
+        (Locale::Es, Key::ConfirmQuitUnsaved) => {
+            "cambios sin guardar — [s] guardar y salir · [d] salir sin guardar · [c] cancelar"
+        }
+        (Locale::En, Key::ConfirmQuitUnsaved) => {
+            "unsaved changes — [s] save & quit · [d] quit without saving · [c] cancel"
         }
 
         // --- Errores ------------------------------------------------------

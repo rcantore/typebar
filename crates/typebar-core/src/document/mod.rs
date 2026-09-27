@@ -45,10 +45,19 @@ pub struct Document {
     /// Columna del cursor en chars dentro de la linea (0-based). Invariante:
     /// siempre sobre un limite de grafema.
     pub col: usize,
-    /// Columna *visual* (en celdas) deseada para movimiento vertical: al
-    /// subir/bajar tratamos de volver a esta columna de pantalla aunque
-    /// pasemos por lineas mas cortas o con anchos distintos.
+    /// Columna *visual* (en celdas) deseada para movimiento vertical, RELATIVA
+    /// al arranque de la fila visual del cursor: al subir/bajar tratamos de
+    /// volver a esta columna de pantalla aunque pasemos por filas mas cortas o
+    /// con anchos distintos. Sin soft wrap (`wrap_width == 0`) toda linea es
+    /// una sola fila que arranca en 0, asi que equivale a la columna visual
+    /// dentro de la linea.
     preferred_display_col: usize,
+    /// Ancho (en celdas) al que la vista envuelve las lineas largas, o `0` si
+    /// no hay soft wrap. Lo fija la UI en cada frame (`set_wrap_width`) y solo
+    /// afecta al MOVIMIENTO: el buffer no cambia, pero el cursor sube y baja
+    /// por las filas visuales que se ven en pantalla en vez de saltar la linea
+    /// logica entera (un parrafo largo son varias filas y una sola linea).
+    wrap_width: usize,
     pub mode: Mode,
     pub path: PathBuf,
     pub dirty: bool,
@@ -120,6 +129,7 @@ impl Document {
             line: 0,
             col: 0,
             preferred_display_col: 0,
+            wrap_width: 0,
             mode: Mode::Normal,
             path,
             dirty: false,
@@ -215,9 +225,21 @@ impl Document {
     }
 
     /// Fija la columna visual deseada a la actual (tras moverse en horizontal o
-    /// editar; NO se llama al moverse en vertical, para preservarla).
+    /// editar; NO se llama al moverse en vertical, para preservarla). Con soft
+    /// wrap la columna se guarda relativa al arranque de la fila visual, que es
+    /// lo que el movimiento vertical trata de conservar (ver `wrap_width`).
     fn sync_preferred(&mut self) {
-        self.preferred_display_col = self.display_col();
+        let g = self.graphemes(self.line);
+        let display_col = g.display_col(self.col);
+        let rows = g.row_boundaries(self.wrap_width);
+        self.preferred_display_col = display_col - rows[crate::text::row_at(&rows, display_col)];
+    }
+
+    /// Fija el ancho al que la vista envuelve las lineas largas (`0` = sin soft
+    /// wrap). La UI lo actualiza en cada frame, antes de procesar teclas, para
+    /// que el movimiento vertical use las mismas filas visuales que se dibujan.
+    pub fn set_wrap_width(&mut self, width: usize) {
+        self.wrap_width = width;
     }
 
     /// Reposiciona el cursor (line, col) a partir de un char-index absoluto,
@@ -267,6 +289,7 @@ pub mod test_support {
             line: 0,
             col: 0,
             preferred_display_col: 0,
+            wrap_width: 0,
             mode: Mode::Normal,
             path: PathBuf::from("scratch.md"),
             dirty: false,
