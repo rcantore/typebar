@@ -132,6 +132,27 @@ fn collect_styles(
             "inline" if parent == Some("atx_heading") => {
                 heading_level.map(|level| heading_style(theme, level))
             }
+            // Setext: el nivel lo da el subrayado (`===` nivel 1, `---` nivel 2),
+            // hijo del `setext_heading`. El `inline` del titulo cuelga de un
+            // `paragraph` que a su vez cuelga del `setext_heading`.
+            "setext_heading" => {
+                let mut c = node.walk();
+                heading_level = node.children(&mut c).find_map(|child| match child.kind() {
+                    "setext_h1_underline" => Some(1),
+                    "setext_h2_underline" => Some(2),
+                    _ => None,
+                });
+                None
+            }
+            "inline"
+                if parent == Some("paragraph")
+                    && stack.len() >= 2
+                    && stack[stack.len() - 2] == "setext_heading" =>
+            {
+                heading_level.map(|level| heading_style(theme, level))
+            }
+            // El subrayado queda visible (tambien en Nivel 2), atenuado como regla.
+            "setext_h1_underline" | "setext_h2_underline" => Some(marker_style(theme)),
             "strong_emphasis" => Some(Style::default().add_modifier(Modifier::BOLD)),
             "emphasis" => Some(Style::default().add_modifier(Modifier::ITALIC)),
             "code_span" => Some(Style::default().fg(theme.code_fg).bg(theme.code_bg)),
@@ -288,7 +309,7 @@ fn collect_styles(
                 break;
             }
             match stack.pop() {
-                Some("atx_heading") => heading_level = None,
+                Some("atx_heading" | "setext_heading") => heading_level = None,
                 Some(_) => {}
                 None => break 'dfs, // volvimos a la raiz del walk principal: terminamos el DFS
             }
@@ -1468,5 +1489,70 @@ mod tests {
         let source = "uno **dos** tres\n";
         let (lines, _no_wrap) = render(source, None, &[], None, &theme, None, 2, 0);
         assert_eq!(line_text(&lines, 0), "uno dos tres");
+    }
+
+    #[test]
+    fn setext_h1_y_h2_con_estilo_de_heading() {
+        let theme = test_theme();
+        let source = "Titulo\n======\n\nSub\n---\n\ntexto\n";
+        // Cursor en "texto" (linea 6): todos los headings quedan inactivos.
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(6), 2, 0);
+
+        let h1 = span_of(&lines, 0, "Titulo").unwrap();
+        assert_eq!(h1.style.fg, Some(theme.heading_1));
+        assert!(h1.style.add_modifier.contains(Modifier::BOLD));
+
+        let h2 = span_of(&lines, 3, "Sub").unwrap();
+        assert_eq!(h2.style.fg, Some(theme.heading_2));
+        assert!(h2.style.add_modifier.contains(Modifier::BOLD));
+
+        assert_eq!(
+            span_of(&lines, 1, "======").unwrap().style.fg,
+            Some(theme.marker)
+        );
+        assert_eq!(
+            span_of(&lines, 4, "---").unwrap().style.fg,
+            Some(theme.marker)
+        );
+    }
+
+    #[test]
+    fn setext_subrayado_visible_en_nivel1() {
+        let theme = test_theme();
+        let source = "Titulo\n======\n\ntexto\n";
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(3), 1, 0);
+        assert_eq!(
+            span_of(&lines, 1, "======").unwrap().style.fg,
+            Some(theme.marker)
+        );
+        assert_eq!(
+            span_of(&lines, 0, "Titulo").unwrap().style.fg,
+            Some(theme.heading_1)
+        );
+    }
+
+    #[test]
+    fn setext_de_dos_lineas_pinta_ambas() {
+        let theme = test_theme();
+        let source = "linea uno\nlinea dos\n===\n\ntexto\n";
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(4), 2, 0);
+        assert_eq!(
+            span_of(&lines, 0, "linea uno").unwrap().style.fg,
+            Some(theme.heading_1)
+        );
+        assert_eq!(
+            span_of(&lines, 1, "linea dos").unwrap().style.fg,
+            Some(theme.heading_1)
+        );
+    }
+
+    #[test]
+    fn thematic_break_no_es_subrayado_setext() {
+        let theme = test_theme();
+        let source = "parrafo\n\n---\n\ntexto\n";
+        let (lines, _no_wrap) = render(source, None, &[], None, &theme, Some(4), 2, 0);
+        let p = span_of(&lines, 0, "parrafo").unwrap();
+        assert_eq!(p.style.fg, None);
+        assert!(!p.style.add_modifier.contains(Modifier::BOLD));
     }
 }
