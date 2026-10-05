@@ -2,7 +2,7 @@
 //!
 //! Render "soft WYSIWYG": los marcadores (`**`, `*`, backticks, `#`) siempre
 //! quedan visibles y dimmeados. El mapeo cursor->pantalla YA NO es 1:1 linea a
-//! linea: `draw` corre `render::render` (una `Line` por linea del documento,
+//! linea: `draw` corre `render::render_frame` (una `Line` por linea del documento,
 //! ver `render.rs`) a traves de la capa de soft wrap (`crate::wrap`), que la
 //! parte en filas visuales segun el ancho del viewport. Scroll y cursor
 //! razonan en esas filas visuales via `WrapLayout::row_and_x`.
@@ -1083,7 +1083,11 @@ fn draw(
     // se dibujan aca (ver `Document::set_wrap_width`).
     state.wrap_width = wrap_width;
     let code_box_width = wrap_width.saturating_sub(render::CODE_BOX_RIGHT_MARGIN);
-    let (lines, no_wrap) = render::render(
+    let render::RenderOutput {
+        lines,
+        no_wrap,
+        code_lines,
+    } = render::render_frame(
         &text,
         doc.selection_byte_range(),
         &matches,
@@ -1105,11 +1109,7 @@ fn draw(
     // (`CODE_BOX_LEFT_PAD`) que corre el texto a la derecha, asi que lo sumamos
     // antes de mapear a fila/x (la linea activa siempre se renderiza Level 1
     // cruda, asi que el mapeo sigue valiendo).
-    let code_indent = if render::code_line_flags(&text)
-        .get(doc.line)
-        .copied()
-        .unwrap_or(false)
-    {
+    let code_indent = if code_lines.get(doc.line).copied().unwrap_or(false) {
         render::CODE_BOX_LEFT_PAD
     } else {
         0
@@ -2676,7 +2676,7 @@ mod tests {
         let mut out = None;
         let t = Instant::now();
         for _ in 0..reps {
-            out = Some(render::render(
+            out = Some(render::render_frame(
                 &text,
                 None,
                 &[],
@@ -2687,14 +2687,8 @@ mod tests {
                 100,
             ));
         }
-        eprintln!("  render::render:    {:.3} ms", ms(t.elapsed()));
-        let (lines, no_wrap) = out.unwrap();
-
-        let t = Instant::now();
-        for _ in 0..reps {
-            let _ = render::code_line_flags(&text);
-        }
-        eprintln!("  code_line_flags:   {:.3} ms", ms(t.elapsed()));
+        eprintln!("  render::render_frame: {:.3} ms", ms(t.elapsed()));
+        let render::RenderOutput { lines, no_wrap, .. } = out.unwrap();
 
         let t = Instant::now();
         let mut layout = None;
