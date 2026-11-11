@@ -24,7 +24,7 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use tree_sitter::Node;
-use tree_sitter_md::MarkdownParser;
+use tree_sitter_md::{MarkdownParser, MarkdownTree};
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
@@ -88,14 +88,10 @@ struct StyleSpan {
 /// El render decide por linea si aplicar `hide_byte`/`replace_byte` (ver
 /// `render`). Los colores salen del `theme`.
 fn collect_styles(
+    tree: &MarkdownTree,
     source: &str,
     theme: &Theme,
 ) -> (Vec<StyleSpan>, Vec<bool>, Vec<Option<char>>, Vec<usize>) {
-    let mut parser = MarkdownParser::default();
-    let tree = parser
-        .parse(source.as_bytes(), None)
-        .expect("tree-sitter-md no pudo parsear el documento");
-
     let mut spans: Vec<StyleSpan> = Vec::new();
     let mut hide_byte: Vec<bool> = vec![false; source.len()];
     let mut replace_byte: Vec<Option<char>> = vec![None; source.len()];
@@ -422,14 +418,9 @@ struct TableLine {
 /// linea-pantalla: cada fila ocupa una sola linea. El marco superior/inferior se
 /// dibuja REUSANDO las lineas en blanco que rodean la tabla (truco estilo editxr):
 /// no agrega lineas, asi el cursor sigue mapeando 1:1.
-fn collect_tables(source: &str) -> Vec<Option<TableLine>> {
+fn collect_tables(tree: &MarkdownTree, source: &str) -> Vec<Option<TableLine>> {
     let src_lines: Vec<&str> = source.split('\n').collect();
     let mut out: Vec<Option<TableLine>> = (0..src_lines.len()).map(|_| None).collect();
-
-    let mut parser = MarkdownParser::default();
-    let Some(tree) = parser.parse(source.as_bytes(), None) else {
-        return out;
-    };
 
     let mut cursor = tree.block_tree().walk();
     loop {
@@ -653,6 +644,7 @@ fn render_table_line(info: &TableLine, theme: &Theme) -> Vec<Span<'static>> {
 // Los argumentos son todos contexto de render (texto, theme, estado del
 // overlay/seleccion, modo WYSIWYG); agrupar en una struct intermedia anadiria
 // indireccion sin claridad.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     source: &str,
@@ -664,9 +656,48 @@ pub fn render(
     level: u8,
     code_box_width: usize,
 ) -> (Vec<Line<'static>>, Vec<bool>) {
-    let (spans, hide_byte, replace_byte, code_pad) = collect_styles(source, theme);
+    let out = render_frame(
+        source,
+        selection,
+        matches,
+        current,
+        theme,
+        active_line,
+        level,
+        code_box_width,
+    );
+    (out.lines, out.no_wrap)
+}
+
+/// Resultado de un frame de render: las `Line`s pre-wrap, el `no_wrap` paralelo
+/// (ver `render`) y `code_lines`, el mismo vector que devuelve `code_line_flags`.
+pub struct RenderOutput {
+    pub lines: Vec<Line<'static>>,
+    pub no_wrap: Vec<bool>,
+    pub code_lines: Vec<bool>,
+}
+
+/// Igual que `render` (mismos argumentos y semantica) pero parsea el documento
+/// UNA sola vez y comparte el arbol entre estilos, tablas y flags de codigo.
+#[allow(clippy::too_many_arguments)]
+pub fn render_frame(
+    source: &str,
+    selection: Option<std::ops::Range<usize>>,
+    matches: &[std::ops::Range<usize>],
+    current: Option<usize>,
+    theme: &Theme,
+    active_line: Option<usize>,
+    level: u8,
+    code_box_width: usize,
+) -> RenderOutput {
+    let mut parser = MarkdownParser::default();
+    let tree = parser
+        .parse(source.as_bytes(), None)
+        .expect("tree-sitter-md no pudo parsear el documento");
+    let (spans, hide_byte, replace_byte, code_pad) = collect_styles(&tree, source, theme);
     // Layout de grilla por linea para las tablas (None si la linea no es tabla).
-    let table_lines = collect_tables(source);
+    let table_lines = collect_tables(&tree, source);
+    let code_lines = code_flags_from_tree(&tree, source);
 
     // Estilo por byte. Pintamos los tramos de menor a mayor profundidad, asi
     // el mas profundo (mas especifico) queda arriba.
@@ -801,21 +832,30 @@ pub fn render(
 
         lines.push(Line::from(line_spans));
     }
-    (lines, no_wrap)
+    RenderOutput {
+        lines,
+        no_wrap,
+        code_lines,
+    }
 }
 
 /// Marca, por linea (0-based, indexando como `source.split('\n')`), si pertenece
 /// a un bloque de codigo (fenced o indentado). `main` lo usa para correr el
 /// cursor `CODE_BOX_LEFT_PAD` celdas cuando esta sobre una linea de codigo, ya
 /// que el render aplica ese margen izquierdo a la caja.
+#[cfg(test)]
 pub fn code_line_flags(source: &str) -> Vec<bool> {
+    let mut parser = MarkdownParser::default();
+    match parser.parse(source.as_bytes(), None) {
+        Some(tree) => code_flags_from_tree(&tree, source),
+        None => vec![false; source.split('\n').count()],
+    }
+}
+
+/// Igual que `code_line_flags` pero sobre un arbol ya parseado.
+fn code_flags_from_tree(tree: &MarkdownTree, source: &str) -> Vec<bool> {
     let line_count = source.split('\n').count();
     let mut flags = vec![false; line_count];
-
-    let mut parser = MarkdownParser::default();
-    let Some(tree) = parser.parse(source.as_bytes(), None) else {
-        return flags;
-    };
 
     let mut line_starts: Vec<usize> = vec![0];
     for (i, b) in source.bytes().enumerate() {
@@ -1142,6 +1182,21 @@ mod tests {
         assert!(flags[2], "let x = 1;");
         assert!(flags[3], "```");
         assert!(!flags[4], "despues");
+    }
+
+    #[test]
+    fn render_frame_coincide_con_render_y_code_line_flags() {
+        let theme = test_theme();
+        let source = "# t\n\n```rust\nlet x = 1;\n```\n\n    let y = 2;\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nfin **x**\n";
+        let out = render_frame(source, None, &[], None, &theme, Some(0), 2, 40);
+        let (lines, no_wrap) = render(source, None, &[], None, &theme, Some(0), 2, 40);
+        assert_eq!(out.lines, lines);
+        assert_eq!(out.no_wrap, no_wrap);
+        let flags = code_line_flags(source);
+        assert_eq!(out.code_lines, flags);
+        assert!(flags[2] && flags[3] && flags[4], "fenced");
+        assert!(flags[6], "indentado");
+        assert!(!flags[0] && !flags[12]);
     }
 
     // --- Tablas: grilla en filas inactivas, crudo en la activa -------------
