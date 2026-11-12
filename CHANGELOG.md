@@ -16,6 +16,51 @@ How to maintain this file:
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-12
+
+### Added
+
+- Quitting now asks before discarding unsaved work. `Quit` used to leave the
+  loop without looking at anything, so edits were lost without even a warning.
+  The confirmation prompt offers `[s]` save and quit, `[d]` discard and quit,
+  `[c]`/Esc cancel, and it checks the *whole* workspace, not just the active
+  buffer: you could previously quit from a clean buffer while another one still
+  had changes. `SaveAndQuit` (^K D) had the same gap and now asks too. If a save
+  fails, typebar does not quit: the error is shown and the editor is left
+  intact.
+
+### Changed
+
+- The cursor now moves by the visual rows of a soft-wrapped line. Soft wrap was
+  purely visual, so the cursor still reasoned in logical lines: in a long
+  paragraph, moving down skipped the entire paragraph and reaching its middle
+  meant walking character by character. Up/down (and Shift+arrows) now walk the
+  visual rows of the current line and only move to the neighbouring line once
+  they run out, entering through its last/first row; page up/down paginate
+  visual rows. The desired column is kept relative to the start of the row, so
+  moving down a paragraph preserves the horizontal position. The greedy wrap
+  computation moved to the core so the cursor and the renderer can never
+  disagree about where a line breaks.
+- The renderer parses the document once per frame instead of three times.
+  Measured on an M4: a typing frame went from 4.782 ms to 1.814 ms (2.64x) with
+  a 6.3 KB document, and from 21.968 ms to 8.591 ms (2.56x) with 31 KB.
+
+### Fixed
+
+- Pasting is fast again, and no longer mangles what you paste. Bracketed paste
+  was not enabled, so a paste arrived as individual keystrokes: one frame per
+  character (a 6 KB paste took about 18 seconds), list markers were duplicated
+  because each newline continued the list, and in the vim preset's Normal mode
+  every pasted character ran as a command. A paste is now a single edit and a
+  single frame (6 KB in 6.7 ms, measured), inserted literally, with `\r\n` and
+  `\r` normalized to `\n`, and it counts as one undo step. Pastes are ignored
+  while a confirmation prompt, the palette, the theme picker or the file
+  switcher is open.
+- Setext headings are styled in the render. A title underlined with `===` now
+  gets the H1 style and one underlined with `---` the H2 style, with the
+  underline itself drawn in the marker style (kept visible at WYSIWYG level 2).
+  ATX headings and thematic breaks are unaffected.
+
 ## [0.4.1] - 2026-07-21
 
 ### Added
