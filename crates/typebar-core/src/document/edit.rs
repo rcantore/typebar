@@ -7,6 +7,26 @@ use crate::markdown::InlineKind;
 use super::Document;
 
 impl Document {
+    /// Inserta `s` literal en el cursor (pegado de la terminal / bracketed paste).
+    ///
+    /// Es UNA sola edicion: un unico `snapshot()` (un paso de undo), y no pasa por
+    /// `insert_newline`, asi que no continua listas ni toca marcadores. Normaliza
+    /// `\r\n` y `\r` solos a `\n`. Deja el cursor al final del texto, `dirty` y
+    /// `last_was_insert = false` (no coalesce con el tipeo previo ni posterior).
+    pub fn insert_str(&mut self, s: &str) {
+        let text = s.replace("\r\n", "\n").replace('\r', "\n");
+        if text.is_empty() {
+            return;
+        }
+        self.snapshot();
+        self.last_was_insert = false;
+        let idx = self.cursor_char_idx();
+        self.buffer.insert(idx, &text);
+        self.set_cursor_char_idx(idx + text.chars().count());
+        self.sync_preferred();
+        self.dirty = true;
+    }
+
     /// Inserta un char imprimible en el cursor y avanza una columna (char).
     pub fn insert_char(&mut self, c: char) {
         // Coalescing: solo tomar snapshot al ARRANCAR una corrida de tipeo. Los
@@ -552,5 +572,42 @@ mod tests {
         d.col = 1; // sobre la 'x'
         d.toggle_inline(InlineKind::Bold);
         assert_eq!(d.text(), "***x***");
+    }
+
+    #[test]
+    fn insert_str_lista_markdown_queda_literal() {
+        let mut d = doc_with("");
+        d.insert_str("- uno\n- dos\n");
+        assert_eq!(d.text(), "- uno\n- dos\n");
+    }
+
+    #[test]
+    fn insert_str_es_un_solo_paso_de_undo() {
+        let mut d = doc_with("hola\nmundo");
+        d.insert_char('!'); // tipeo previo: no debe coalescer con el pegado
+        let antes = d.text();
+        d.insert_str("uno\ndos\ntres");
+        assert_ne!(d.text(), antes);
+        d.undo();
+        assert_eq!(d.text(), antes);
+    }
+
+    #[test]
+    fn insert_str_normaliza_fines_de_linea() {
+        let mut d = doc_with("");
+        d.insert_str("a\r\nb\rc\nd");
+        assert_eq!(d.text(), "a\nb\nc\nd");
+        assert!(!d.text().contains('\r'));
+    }
+
+    #[test]
+    fn insert_str_deja_el_cursor_al_final_y_no_coalesce_despues() {
+        let mut d = doc_with("");
+        d.insert_str("ab\ncd");
+        assert_eq!((d.line, d.col), (1, 2));
+        assert!(d.dirty);
+        d.insert_char('x'); // el tipeo posterior arranca su propio grupo de undo
+        d.undo();
+        assert_eq!(d.text(), "ab\ncd");
     }
 }
