@@ -334,6 +334,12 @@ fn main() -> std::io::Result<()> {
             ratatui::crossterm::event::EnableMouseCapture
         );
     }
+    // Bracketed paste: la terminal entrega el pegado como UN evento. Tolerante a
+    // fallos (si falla, el editor anda igual, solo sin bracketed paste).
+    let _ = ratatui::crossterm::execute!(
+        std::io::stdout(),
+        ratatui::crossterm::event::EnableBracketedPaste
+    );
     let result = run(
         &mut terminal,
         document,
@@ -350,6 +356,10 @@ fn main() -> std::io::Result<()> {
         configured_is_light,
         base_theme_id,
         wysiwyg_level,
+    );
+    let _ = ratatui::crossterm::execute!(
+        std::io::stdout(),
+        ratatui::crossterm::event::DisableBracketedPaste
     );
     if config.ui.mouse {
         let _ = ratatui::crossterm::execute!(
@@ -578,6 +588,12 @@ fn run(
             }
             continue;
         }
+        // Pegado (bracketed paste): una edicion y un frame (el proximo giro).
+        if let Event::Paste(text) = &ev {
+            state.flash = None;
+            handle_paste(workspace.active_mut(), &state, text);
+            continue;
+        }
         let Event::Key(key) = ev else {
             continue;
         };
@@ -752,6 +768,21 @@ fn run(
             Resolve::None => state.pending.clear(),
         }
     }
+}
+
+/// Pegado de la terminal (bracketed paste): inserta `text` literal en el documento
+/// activo, sin importar el preset ni el modo (en vim Normal NO se interpreta como
+/// comandos). Con cualquier overlay/prompt/picker abierto se ignora.
+fn handle_paste(doc: &mut Document, state: &AppState, text: &str) {
+    if state.confirm.is_some()
+        || state.palette.is_some()
+        || state.theme_picker.is_some()
+        || state.switcher.is_some()
+        || state.overlay.is_some()
+    {
+        return;
+    }
+    doc.insert_str(text);
 }
 
 /// Despacha un `Action` resuelto (sea por el keymap o elegido en la paleta) sobre
@@ -2572,6 +2603,32 @@ mod tests {
         let preset = resolve_preset(None, &config);
         assert_eq!(preset, DEFAULT_PRESET);
     }
+    #[test]
+    fn paste_en_vim_normal_inserta_literal_sin_ejecutar_comandos() {
+        use keybinding::{Keymap, VimKeymap};
+        let mut doc = doc_with("");
+        doc.mode = VimKeymap.initial_mode();
+        assert_eq!(doc.mode, Mode::Normal);
+        let state = AppState::new(false);
+        handle_paste(&mut doc, &state, "xqu");
+        assert_eq!(doc.text(), "xqu"); // ni borra (x), ni sale (q), ni deshace (u)
+        assert_eq!(doc.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn paste_con_overlay_abierto_se_ignora() {
+        let mut doc = doc_with("hola");
+        let mut state = AppState::new(false);
+        state.overlay = Some(Overlay::new_replace());
+        handle_paste(&mut doc, &state, "pegado");
+        assert_eq!(doc.text(), "hola");
+        assert!(!doc.dirty);
+        state.overlay = None;
+        state.confirm = Some(Confirm::Quit);
+        handle_paste(&mut doc, &state, "pegado");
+        assert_eq!(doc.text(), "hola");
+    }
+
     /// Bench de frames (ignorado por default). Renderiza N frames de `draw` sobre un
     /// `TestBackend` con el fixture de `TYPEBAR_BENCH_FIXTURE` y reporta el tiempo
     /// por frame, en dos escenarios: documento quieto (cache caliente) y tipeando
@@ -2636,6 +2693,70 @@ mod tests {
             ms(idle[idle.len() / 2]),
             ms(typing[0]),
             ms(typing[typing.len() / 2]),
+        );
+    }
+    /// Bench del pegado (ignorado por default): compara el camino de hoy (un
+    /// `insert_char` + un frame completo por caracter) con el de bracketed paste
+    /// (un `insert_str` + UN frame). Trunca el fixture a `TYPEBAR_BENCH_PASTE_BYTES`
+    /// bytes (default 6000, en limite de char). Correr con:
+    /// `TYPEBAR_BENCH_FIXTURE=$PWD/README.md cargo test --release -p typebar bench_paste -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_paste() {
+        use keybinding::StandardKeymap;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use std::time::Instant;
+
+        let path = std::env::var("TYPEBAR_BENCH_FIXTURE").expect("TYPEBAR_BENCH_FIXTURE");
+        let max: usize = std::env::var("TYPEBAR_BENCH_PASTE_BYTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(6000);
+        let full = std::fs::read_to_string(&path).unwrap();
+        let mut end = max.min(full.len());
+        while !full.is_char_boundary(end) {
+            end -= 1;
+        }
+        let text = &full[..end];
+        let km = StandardKeymap;
+        let theme = Theme::frappe();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut state = AppState::new(false);
+        let mut frame = |doc: &Document, state: &mut AppState| {
+            terminal
+                .draw(|f| draw(f, doc, &km, &theme, 2, state, None))
+                .unwrap();
+        };
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+
+        // Camino de hoy: cada caracter es una tecla (el '\n' es Enter).
+        let mut doc = doc_with("");
+        let t = Instant::now();
+        for c in text.chars() {
+            if c == '\n' {
+                doc.insert_newline();
+            } else {
+                doc.insert_char(c);
+            }
+            frame(&doc, &mut state);
+        }
+        let char_by_char = ms(t.elapsed());
+
+        // Camino nuevo: una edicion y un frame.
+        let mut doc = doc_with("");
+        let t = Instant::now();
+        doc.insert_str(text);
+        frame(&doc, &mut state);
+        let bracketed = ms(t.elapsed());
+
+        eprintln!(
+            "bench_paste {} bytes={} char-by-char: {:.3} ms | bracketed: {:.3} ms | ratio: {:.0}x",
+            path,
+            text.len(),
+            char_by_char,
+            bracketed,
+            char_by_char / bracketed
         );
     }
     /// Bench por etapas del pipeline de un frame (ignorado por default), para ver
